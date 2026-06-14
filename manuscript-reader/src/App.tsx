@@ -11,15 +11,17 @@ import { QuillIcon, MenuIcon, AnnotateIcon, ReportIcon, LibraryIcon } from './co
 import { parseMarkdown } from './engine/ingestion/parseMarkdown';
 import type { Manuscript } from './engine/types';
 
-function IconBtn({ onClick, active, title, children }: {
+function IconBtn({ onClick, active, title, label, children }: {
   onClick?: () => void;
   active?: boolean;
   title?: string;
+  label?: string;
   children: React.ReactNode;
 }) {
   return (
     <button className={`icon-btn${active ? ' active-btn' : ''}`} onClick={onClick} title={title} aria-label={title}>
       {children}
+      {label && <span className="icon-btn-label">{label}</span>}
     </button>
   );
 }
@@ -98,16 +100,17 @@ export function App() {
             <>
               <span id="topbar-chapter">{chapterLabel}</span>
               <div style={{ position:'relative', display:'inline-flex' }}>
-                <IconBtn onClick={toggleAnnSidebar} active={annSidebarOpen} title="Annotations (⌘E)"><AnnotateIcon /></IconBtn>
+                <IconBtn onClick={toggleAnnSidebar} active={annSidebarOpen} title="Annotations (⌘E)" label="Annotations"><AnnotateIcon /></IconBtn>
                 {hasAnnotations && <span id="revision-mode-badge" className="visible" />}
               </div>
-              <IconBtn onClick={toggleReportPanel} active={reportPanelOpen} title="Report"><ReportIcon /></IconBtn>
-              <IconBtn onClick={handleLibraryNav} title="Library"><LibraryIcon /></IconBtn>
+              <IconBtn onClick={toggleReportPanel} active={reportPanelOpen} title="Report" label="Report"><ReportIcon /></IconBtn>
+              {/* Divider fences the per-manuscript panel toggles off from the
+                  leave-the-reader / settings controls, so Library isn't a stray click away. */}
+              <span aria-hidden="true" style={{ width: '1px', height: '18px', background: 'var(--border)', margin: '0 6px', alignSelf: 'center' }} />
             </>
           )}
-          {screen === 'load' && <IconBtn onClick={handleLibraryNav} title="Library"><LibraryIcon /></IconBtn>}
           {(screen === 'reader' || screen === 'load') && (
-            <span aria-hidden="true" style={{ width: '1px', height: '18px', background: 'var(--border)', margin: '0 6px', alignSelf: 'center' }} />
+            <IconBtn onClick={handleLibraryNav} title="Library" label="Library"><LibraryIcon /></IconBtn>
           )}
           <SettingsMenu />
         </div>
