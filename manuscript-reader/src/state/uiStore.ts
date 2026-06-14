@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { loadTheme, saveTheme, loadFontSize, saveFontSize } from '../engine/storage';
 
-export type Screen = 'library' | 'load' | 'reader';
+export type Screen = 'landing' | 'library' | 'load' | 'reader';
 
 interface UIStore {
   screen: Screen;

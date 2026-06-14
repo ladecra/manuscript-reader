@@ -360,14 +360,14 @@ function AnnotationEditPopup({ annId, note, onSave, onDelete, onClose }: { annId
     <>
       <div style={{ position: 'fixed', inset: 0, zIndex: 199 }} onMouseDown={onClose} />
       <div id="ann-edit-popup" className="visible" style={{ left: pos.left, top: pos.top }} onMouseDown={e => e.stopPropagation()}>
-        <div style={{ fontFamily: "'Geist', sans-serif", fontSize: '9px', letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--dim)', marginBottom: '8px' }}>Edit note</div>
+        <div style={{ fontFamily: "'Schibsted Grotesk', system-ui, sans-serif", fontSize: '9px', letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--dim)', marginBottom: '8px' }}>Edit note</div>
         <textarea ref={ref} value={text} onChange={e => setText(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); onSave(text.trim()); } if (e.key === 'Escape') onClose(); }}
           style={{ width: '100%', minHeight: '64px', background: 'none', border: 'none', borderBottom: '1px solid var(--border)', color: 'var(--primary)', fontFamily: "'EB Garamond', Georgia, serif", fontSize: '15px', lineHeight: '1.5', outline: 'none', resize: 'none', padding: '0 0 8px' }}
         />
         <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '10px' }}>
-          <button style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: "'Geist', sans-serif", fontSize: '10px', letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--border)' }} onClick={onDelete}>Delete</button>
-          <button style={{ background: 'none', border: '1px solid var(--primary)', fontFamily: "'Geist', sans-serif", fontSize: '10px', fontWeight: 500, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--primary)', padding: '5px 14px', cursor: 'pointer' }} onClick={() => onSave(text.trim())}>Save</button>
+          <button style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: "'Schibsted Grotesk', system-ui, sans-serif", fontSize: '10px', letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--border)' }} onClick={onDelete}>Delete</button>
+          <button style={{ background: 'none', border: '1px solid var(--primary)', fontFamily: "'Schibsted Grotesk', system-ui, sans-serif", fontSize: '10px', fontWeight: 500, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--primary)', padding: '5px 14px', cursor: 'pointer' }} onClick={() => onSave(text.trim())}>Save</button>
         </div>
       </div>
     </>

@@ -43,7 +43,7 @@ export function ChapterTree({ combinedMarkdown, onChange }: ChapterTreeProps) {
 
   if (!combinedMarkdown) {
     return (
-      <div style={{ fontFamily: "'Geist', sans-serif", fontSize: '11px', color: 'var(--border)', padding: '8px 0' }}>
+      <div style={{ fontFamily: "'Schibsted Grotesk', system-ui, sans-serif", fontSize: '11px', color: 'var(--border)', padding: '8px 0' }}>
         Reload manuscript to manage chapters.
       </div>
     );

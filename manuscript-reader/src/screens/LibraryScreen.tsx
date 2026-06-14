@@ -139,7 +139,7 @@ function ManuscriptRow({ ms, expanded, onToggleExpand, onOpen, onDelete, onUpdat
       <div className="ms-row-top">
         <div style={{ minWidth: 0 }}>
           <div className="ms-title" onClick={onOpen}>{title}</div>
-          {author && <div style={{ fontFamily: "'Geist', sans-serif", fontSize: '11px', color: 'var(--dim)', marginTop: '3px', letterSpacing: '0.02em' }}>by {author}</div>}
+          {author && <div style={{ fontFamily: "'Schibsted Grotesk', system-ui, sans-serif", fontSize: '11px', color: 'var(--dim)', marginTop: '3px', letterSpacing: '0.02em' }}>by {author}</div>}
         </div>
         <div className="ms-actions">
           <button className="ms-edit-btn" onClick={() => setShareOpen(true)} disabled={!combinedMarkdown} title={combinedMarkdown ? 'Share reader file' : 'Re-import to share'} style={!combinedMarkdown ? { opacity: 0.4, cursor: 'not-allowed' } : undefined}>Share</button>
@@ -154,7 +154,7 @@ function ManuscriptRow({ ms, expanded, onToggleExpand, onOpen, onDelete, onUpdat
           border: '1px solid var(--ann-question-solid)',
           borderLeft: '3px solid var(--ann-question-solid)',
           color: 'var(--ann-question-solid)',
-          fontFamily: "'Geist', sans-serif",
+          fontFamily: "'Schibsted Grotesk', system-ui, sans-serif",
           fontSize: '11px',
           lineHeight: 1.5,
           letterSpacing: '0.02em',

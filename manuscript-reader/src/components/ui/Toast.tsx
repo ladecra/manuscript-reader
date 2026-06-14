@@ -48,7 +48,7 @@ export function Toast({ message, visible }: ToastProps) {
         background: 'var(--surface-high)',
         border: '1px solid var(--border)',
         color: 'var(--on-surface)',
-        fontFamily: "'Geist', sans-serif",
+        fontFamily: "'Schibsted Grotesk', system-ui, sans-serif",
         fontSize: '12px',
         letterSpacing: '0.04em',
         padding: '9px 18px',

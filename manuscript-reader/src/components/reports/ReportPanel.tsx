@@ -195,7 +195,7 @@ function Finding({
           ))}
         </div>
       ) : (
-        <div style={{ color: 'var(--dim)', fontFamily: "'Geist', sans-serif", fontSize: '12px', fontStyle: 'italic', padding: '6px 0' }}>
+        <div style={{ color: 'var(--dim)', fontFamily: "'Schibsted Grotesk', system-ui, sans-serif", fontSize: '12px', fontStyle: 'italic', padding: '6px 0' }}>
           None yet.
         </div>
       )}
