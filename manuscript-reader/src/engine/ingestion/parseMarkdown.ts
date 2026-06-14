@@ -26,6 +26,19 @@ function inline(s: string): string {
   return s;
 }
 
+// The number is rendered separately (the "Chapter 01" marker span + nav ch-num),
+// so a "Chapter N — " / "Prologue — " label prefix on the title itself just
+// doubles it. Strip the leading keyword+number+separator so the displayed title
+// is the bare subtitle ("White Hunger"), falling back to the original when there
+// is nothing left (an untitled "Chapter 5").
+const CHAPTER_LABEL_PREFIX =
+  /^(?:chapter|part|book|section|prologue|epilogue|interlude|afterword|foreword|prelude)(?:\s+(?:\d{1,3}|[ivxlcdm]+))?\s*[—–:-]\s*/i;
+
+export function stripChapterLabel(title: string): string {
+  const stripped = title.replace(CHAPTER_LABEL_PREFIX, '').trim();
+  return stripped || title;
+}
+
 /**
  * Parse normalized Markdown into HTML + chapters.
  * Expects text that has already been through preprocessMarkdown.
@@ -50,7 +63,7 @@ export function parseMarkdown(md: string): ParsedManuscript {
     if (/^# /.test(line)) {
       if (inBlock) html += '</div>';
       chIdx++;
-      const title = line.replace(/^# /, '').trim();
+      const title = stripChapterLabel(line.replace(/^# /, '').trim());
       const id = `ch-${chIdx}`;
       chapters.push({ index: chIdx, title, id });
       html +=
@@ -135,7 +148,7 @@ export function parseMarkdown(md: string): ParsedManuscript {
     if (i + 1 < lines.length && /^={3,}\s*$/.test(lines[i + 1].trim())) {
       if (inBlock) html += '</div>';
       chIdx++;
-      const title = line.trim();
+      const title = stripChapterLabel(line.trim());
       const id = `ch-${chIdx}`;
       chapters.push({ index: chIdx, title, id });
       html +=

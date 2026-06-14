@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { useUIStore } from './state/uiStore';
 import { useLibraryStore } from './state/libraryStore';
 import { useReaderStore } from './state/readerStore';
+import { LandingScreen } from './screens/LandingScreen';
 import { LibraryScreen } from './screens/LibraryScreen';
 import { LoadScreen } from './screens/LoadScreen';
 import { ReaderScreen } from './screens/ReaderScreen';
@@ -75,8 +76,20 @@ export function App() {
     window.scrollTo(0, 0);
   }
 
+  // The wordmark is the "home" affordance — back out to the marketing landing.
+  function handleHomeNav() {
+    setScreen('landing');
+    closeManuscript();
+    window.scrollTo(0, 0);
+  }
+
   const title = manuscript?.metadata.title ?? '';
   const hasAnnotations = annotations.length > 0;
+
+  // The marketing front door owns the full viewport — no app topbar.
+  if (screen === 'landing') {
+    return <LandingScreen onOpenApp={handleLibraryNav} />;
+  }
 
   return (
     <>
@@ -88,7 +101,7 @@ export function App() {
               <span id="topbar-title">{title}</span>
             </>
           ) : (
-            <button id="brand" className="show" onClick={handleLibraryNav}>
+            <button id="brand" className="show" onClick={handleHomeNav} title="Home">
               <QuillIcon size={18} />
               <span className="brand-word">VELLIBRIS</span>
             </button>
