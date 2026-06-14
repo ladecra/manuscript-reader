@@ -1,14 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;1,400;1,500&display=swap');
-@font-face {
-  font-family: 'Geist';
-  src: url('https://cdn.jsdelivr.net/npm/geist-font@1.1.0/fonts/geist-sans/Geist-Regular.woff2') format('woff2');
-  font-weight: 400;
-}
-@font-face {
-  font-family: 'Geist';
-  src: url('https://cdn.jsdelivr.net/npm/geist-font@1.1.0/fonts/geist-sans/Geist-Medium.woff2') format('woff2');
-  font-weight: 500;
-}
+@import url('https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;1,400;1,500&family=Schibsted+Grotesk:ital,wght@0,400;0,500;0,600;1,400&display=swap');
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -97,7 +87,7 @@ body {
 #topbar-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
 #topbar-right { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 #topbar-title {
-  font-family: 'Geist', sans-serif; font-size: 11px; font-weight: 400;
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 11px; font-weight: 400;
   letter-spacing: 0.08em; text-transform: uppercase;
   color: var(--dim); white-space: nowrap; overflow: hidden;
   text-overflow: ellipsis; max-width: 45vw; transition: color 0.35s;
@@ -109,12 +99,12 @@ body {
 }
 .brand-quill { width: 18px; height: 18px; color: var(--brand); flex-shrink: 0; }
 .brand-word {
-  font-family: 'Geist', sans-serif; font-size: 12px; font-weight: 500;
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 12px; font-weight: 500;
   letter-spacing: 0.22em; color: var(--primary); transition: color 0.35s;
 }
 #brand:hover .brand-word { color: var(--muted); }
 #topbar-chapter {
-  font-family: 'Geist', sans-serif; font-size: 10px;
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 10px;
   color: var(--border); letter-spacing: 0.06em; white-space: nowrap; transition: color 0.35s;
 }
 
@@ -140,14 +130,14 @@ body {
 .icon-btn.active-btn { color: var(--primary); }
 .icon-btn svg { width: 17px; height: 17px; display: block; }
 .icon-btn-label {
-  font-family: 'Geist', sans-serif; font-size: 11px;
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 11px;
   letter-spacing: 0.04em; color: inherit; white-space: nowrap;
 }
 /* Collapse to icon-only on narrow viewports — keeps the topbar uncluttered on mobile. */
 @media (max-width: 720px) { .icon-btn-label { display: none; } }
 .text-btn {
   background: none; border: none; cursor: pointer;
-  font-family: 'Geist', sans-serif; font-size: 10px; font-weight: 400;
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 10px; font-weight: 400;
   letter-spacing: 0.08em; text-transform: uppercase;
   color: var(--dim); padding: 6px;
   transition: color 0.2s var(--ease-std);
@@ -157,7 +147,7 @@ body {
 .outline-btn {
   display: flex; align-items: center; gap: 8px;
   background: none; border: 1px solid var(--border);
-  padding: 9px 16px; font-family: 'Geist', sans-serif;
+  padding: 9px 16px; font-family: 'Schibsted Grotesk', system-ui, sans-serif;
   font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase;
   color: var(--muted); cursor: pointer;
   transition: border-color 0.25s var(--ease-std), color 0.25s var(--ease-std), background 0.35s;
@@ -182,7 +172,7 @@ body {
   transform: translateX(-50%);
   display: flex; align-items: center; gap: 16px;
   background: var(--surface); border: 1px solid var(--border);
-  padding: 8px 18px; font-family: 'Geist', sans-serif; font-size: 11px;
+  padding: 8px 18px; font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 11px;
   color: var(--dim); letter-spacing: 0.05em;
   opacity: 0; transition: opacity 0.5s var(--ease-std), background 0.35s, border-color 0.35s;
   white-space: nowrap; pointer-events: none; z-index: 80;
@@ -205,14 +195,14 @@ body {
 }
 #chapter-nav.open { transform: translateX(0); }
 .nav-section-label {
-  font-family: 'Geist', sans-serif; font-size: 10px; font-weight: 500;
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 10px; font-weight: 500;
   letter-spacing: 0.14em; text-transform: uppercase;
   color: var(--dim); padding: 0 24px 12px;
 }
 .chapter-link {
   display: block; width: 100%; padding: 10px 24px;
   background: none; border: none; text-align: left;
-  font-family: 'Geist', sans-serif; font-size: 12px;
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 12px;
   color: var(--muted); letter-spacing: 0.02em; cursor: pointer; line-height: 1.4;
   transition: color 0.15s, background 0.15s; -webkit-tap-highlight-color: transparent;
 }
@@ -240,7 +230,7 @@ body {
 .ann-sidebar-header { padding: 18px 20px 0; border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .ann-sidebar-title-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
 .ann-sidebar-title {
-  font-family: 'Geist', sans-serif; font-size: 10px; font-weight: 500;
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 10px; font-weight: 500;
   letter-spacing: 0.16em; text-transform: uppercase; color: var(--dim);
 }
 #ann-close {
@@ -253,7 +243,7 @@ body {
 .ann-tab {
   flex-shrink: 0; padding: 10px 14px;
   background: none; border: none; border-bottom: 2px solid transparent;
-  font-family: 'Geist', sans-serif; font-size: 10px;
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 10px;
   letter-spacing: 0.08em; text-transform: uppercase;
   color: var(--dim); cursor: pointer;
   transition: color 0.15s, border-color 0.15s;
@@ -276,12 +266,12 @@ body {
 .ann-item-header { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
 .ann-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
 .ann-type-label {
-  font-family: 'Geist', sans-serif; font-size: 9px; font-weight: 500;
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 9px; font-weight: 500;
   letter-spacing: 0.1em; text-transform: uppercase; color: var(--dim); flex: 1;
 }
-.ann-loc { font-family: 'Geist', sans-serif; font-size: 9px; color: var(--border); letter-spacing: 0.06em; }
+.ann-loc { font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 9px; color: var(--border); letter-spacing: 0.06em; }
 .ann-reader {
-  font-family: 'Geist', sans-serif; font-size: 8.5px; font-weight: 500;
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 8.5px; font-weight: 500;
   letter-spacing: 0.04em; color: var(--ann-bookmark-solid);
   border: 1px solid var(--ann-bookmark-solid); border-radius: 2px;
   padding: 1px 5px; white-space: nowrap; max-width: 110px;
@@ -297,11 +287,11 @@ body {
   font-style: italic; color: var(--muted); line-height: 1.5; margin-bottom: 6px;
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
 }
-.ann-note-text { font-family: 'Geist', sans-serif; font-size: 11px; color: var(--on-surface); line-height: 1.55; }
+.ann-note-text { font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 11px; color: var(--on-surface); line-height: 1.55; }
 .ann-sidebar-footer { padding: 14px 20px; border-top: 1px solid var(--border); flex-shrink: 0; }
 #export-btn {
   width: 100%; padding: 11px; background: none;
-  border: 1px solid var(--border); font-family: 'Geist', sans-serif;
+  border: 1px solid var(--border); font-family: 'Schibsted Grotesk', system-ui, sans-serif;
   font-size: 11px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase;
   color: var(--muted); cursor: pointer;
   transition: border-color 0.25s, color 0.25s;
@@ -325,7 +315,7 @@ body {
 .ann-type-btn {
   flex: 1; display: flex; align-items: center; gap: 7px;
   padding: 10px 10px; background: none; border: none; border-right: 1px solid var(--border);
-  font-family: 'Geist', sans-serif; font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase;
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase;
   color: var(--dim); cursor: pointer; white-space: nowrap;
   transition: color 0.15s, background 0.15s; -webkit-tap-highlight-color: transparent;
 }
@@ -372,14 +362,14 @@ body {
 .rp-header { padding: 18px 20px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .rp-header-row { display: flex; align-items: center; justify-content: space-between; }
 .rp-title {
-  font-family: 'Geist', sans-serif; font-size: 10px; font-weight: 500;
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 10px; font-weight: 500;
   letter-spacing: 0.16em; text-transform: uppercase; color: var(--dim);
 }
 .rp-body { flex: 1; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 .rp-footer { padding: 14px 20px; border-top: 1px solid var(--border); flex-shrink: 0; }
 .rp-export-btn {
   width: 100%; padding: 11px; background: none;
-  border: 1px solid var(--border); font-family: 'Geist', sans-serif;
+  border: 1px solid var(--border); font-family: 'Schibsted Grotesk', system-ui, sans-serif;
   font-size: 11px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase;
   color: var(--muted); cursor: pointer; transition: border-color 0.25s, color 0.25s;
 }
@@ -387,7 +377,7 @@ body {
 .rp-empty { padding: 48px 20px; text-align: center; color: var(--dim); font-family: 'EB Garamond', Georgia, serif; font-size: 17px; line-height: 1.6; }
 .rp-section { padding: 20px 20px 0; }
 .rp-section-label {
-  font-family: 'Geist', sans-serif; font-size: 9px; font-weight: 500;
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 9px; font-weight: 500;
   letter-spacing: 0.16em; text-transform: uppercase;
   color: var(--dim); margin-bottom: 14px;
   padding-bottom: 8px; border-bottom: 1px solid var(--border);
@@ -395,18 +385,18 @@ body {
 .rp-overview-grid { display: flex; gap: 24px; margin-bottom: 4px; }
 .rp-stat { display: flex; flex-direction: column; gap: 2px; }
 .rp-stat-num { font-family: 'EB Garamond', Georgia, serif; font-size: 28px; color: var(--primary); line-height: 1; }
-.rp-stat-label { font-family: 'Geist', sans-serif; font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--dim); }
+.rp-stat-label { font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--dim); }
 .rp-type-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .rp-type-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
-.rp-type-name { font-family: 'Geist', sans-serif; font-size: 11px; color: var(--muted); min-width: 72px; }
+.rp-type-name { font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 11px; color: var(--muted); min-width: 72px; }
 .rp-type-bar-track { flex: 1; height: 2px; background: var(--border); border-radius: 1px; overflow: hidden; }
 .rp-type-bar-fill { height: 100%; border-radius: 1px; transition: width 0.6s var(--ease-expo); }
-.rp-type-val { font-family: 'Geist', sans-serif; font-size: 10px; color: var(--dim); min-width: 56px; text-align: right; }
+.rp-type-val { font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 10px; color: var(--dim); min-width: 56px; text-align: right; }
 .rp-finding { margin-bottom: 18px; }
 .rp-finding-head { display: flex; align-items: center; gap: 7px; margin-bottom: 4px; }
 .rp-finding-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
-.rp-finding-title { font-family: 'Geist', sans-serif; font-size: 11px; font-weight: 500; color: var(--on-surface); }
-.rp-finding-desc { font-family: 'Geist', sans-serif; font-size: 11px; color: var(--dim); line-height: 1.5; margin-bottom: 8px; }
+.rp-finding-title { font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 11px; font-weight: 500; color: var(--on-surface); }
+.rp-finding-desc { font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 11px; color: var(--dim); line-height: 1.5; margin-bottom: 8px; }
 .rp-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .rp-chip {
   display: flex; align-items: center; gap: 6px;
@@ -416,8 +406,8 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 .rp-chip:hover { border-color: var(--primary); background: var(--surface-high); }
-.rp-chip-name { font-family: 'Geist', sans-serif; font-size: 10px; color: var(--muted); }
-.rp-chip-count { font-family: 'Geist', sans-serif; font-size: 10px; color: var(--dim); }
+.rp-chip-name { font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 10px; color: var(--muted); }
+.rp-chip-count { font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 10px; color: var(--dim); }
 
 /* ── Screens ── */
 #screen-library, #screen-load, #screen-reader { display: none; }
@@ -444,7 +434,7 @@ body {
 }
 .lib-stat { display: flex; flex-direction: column; gap: 3px; }
 .lib-stat-num { font-family: 'EB Garamond', Georgia, serif; font-size: 24px; font-weight: 500; color: var(--primary); line-height: 1; }
-.lib-stat-label { font-family: 'Geist', sans-serif; font-size: 9px; font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase; color: var(--dim); }
+.lib-stat-label { font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 9px; font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase; color: var(--dim); }
 .ms-row { padding: 28px 0; -webkit-tap-highlight-color: transparent; }
 .ms-row-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
 .ms-title {
@@ -457,7 +447,7 @@ body {
 .ms-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; margin-left: 16px; padding-top: 4px; }
 .ms-edit-btn, .ms-delete-btn {
   background: none; border: none; cursor: pointer;
-  font-family: 'Geist', sans-serif; font-size: 10px;
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 10px;
   letter-spacing: 0.06em; text-transform: uppercase;
   padding: 3px 0; transition: color 0.2s; -webkit-tap-highlight-color: transparent;
 }
@@ -467,12 +457,12 @@ body {
 .ms-delete-btn:hover { color: #c0392b; }
 .ms-meta {
   display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
-  font-family: 'Geist', sans-serif; font-size: 11px; color: var(--dim); letter-spacing: 0.03em;
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 11px; color: var(--dim); letter-spacing: 0.03em;
   margin-bottom: 4px;
 }
 .ms-meta .dot { width: 3px; height: 3px; border-radius: 50%; background: var(--border); flex-shrink: 0; }
 .ms-status {
-  font-family: 'Geist', sans-serif; font-size: 9px; font-weight: 500;
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 9px; font-weight: 500;
   letter-spacing: 0.12em; text-transform: uppercase;
   border: 1px solid; padding: 2px 8px;
   cursor: pointer; transition: filter 0.2s;
@@ -490,7 +480,7 @@ body {
   border: 1px solid var(--border); display: none; flex-direction: column; gap: 20px;
 }
 .ms-edit-form.open { display: flex; }
-.edit-field-label { font-family: 'Geist', sans-serif; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--dim); margin-bottom: 4px; display: block; }
+.edit-field-label { font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--dim); margin-bottom: 4px; display: block; }
 .edit-input {
   width: 100%; background: none; border: none; border-bottom: 1px solid var(--border);
   font-family: 'EB Garamond', Georgia, serif; font-size: 18px;
@@ -499,7 +489,7 @@ body {
 .edit-input:focus { border-bottom-color: var(--primary); }
 .status-options { display: flex; gap: 8px; flex-wrap: wrap; }
 .status-opt {
-  font-family: 'Geist', sans-serif; font-size: 10px; letter-spacing: 0.06em;
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 10px; letter-spacing: 0.06em;
   text-transform: uppercase; border: 1px solid var(--border);
   padding: 4px 10px; cursor: pointer; color: var(--dim);
   transition: all 0.15s; -webkit-tap-highlight-color: transparent; background: none;
@@ -507,22 +497,22 @@ body {
 .status-opt:hover, .status-opt.selected { border-color: var(--primary); color: var(--primary); }
 .edit-save-btn {
   align-self: flex-end; background: none; border: 1px solid var(--primary);
-  font-family: 'Geist', sans-serif; font-size: 10px; font-weight: 500;
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 10px; font-weight: 500;
   letter-spacing: 0.1em; text-transform: uppercase; color: var(--primary);
   padding: 7px 16px; cursor: pointer; transition: background 0.2s, color 0.2s;
 }
 .edit-save-btn:hover { background: var(--primary); color: var(--bg); }
 .library-empty { text-align: center; padding: 80px 0; }
 .library-empty p { font-family: 'EB Garamond', Georgia, serif; font-size: 20px; color: var(--dim); line-height: 1.6; margin-bottom: 32px; }
-.library-footer { text-align: center; margin-top: 80px; font-family: 'Geist', sans-serif; font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--border); opacity: 0.35; }
+.library-footer { text-align: center; margin-top: 80px; font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--border); opacity: 0.35; }
 
 /* ── Load screen ── */
 .load-title { font-family: 'EB Garamond', Georgia, serif; font-size: clamp(28px, 5vw, 40px); font-weight: 400; color: var(--primary); margin-bottom: 8px; }
-.load-sub { font-family: 'Geist', sans-serif; font-size: 12px; color: var(--dim); letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 32px; }
+.load-sub { font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 12px; color: var(--dim); letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 32px; }
 .load-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 28px; }
 .load-tab {
   padding: 10px 20px; background: none; border: none; border-bottom: 2px solid transparent;
-  font-family: 'Geist', sans-serif; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
   color: var(--dim); cursor: pointer; margin-bottom: -1px;
   transition: color 0.15s, border-color 0.15s; -webkit-tap-highlight-color: transparent;
 }
@@ -539,9 +529,9 @@ body {
 .file-row {
   display: flex; align-items: center; gap: 14px;
   padding: 10px 0; border-bottom: 1px solid var(--border);
-  font-family: 'Geist', sans-serif; font-size: 13px; color: var(--muted); letter-spacing: 0.02em;
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 13px; color: var(--muted); letter-spacing: 0.02em;
 }
-.file-num { font-family: 'Geist', sans-serif; font-size: 10px; color: var(--border); min-width: 22px; letter-spacing: 0.06em; }
+.file-num { font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 10px; color: var(--border); min-width: 22px; letter-spacing: 0.06em; }
 
 /* ── Reader screen ── */
 #screen-reader {
@@ -552,7 +542,7 @@ body {
 }
 #content { max-width: var(--max-w); margin: 0 auto; }
 .chapter-marker {
-  display: block; font-family: 'Geist', sans-serif; font-size: 10px;
+  display: block; font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 10px;
   letter-spacing: 0.18em; text-transform: uppercase; color: var(--dim);
   margin-top: 88px; margin-bottom: 14px;
   scroll-margin-top: calc(var(--topbar-h) + 24px);
@@ -596,7 +586,7 @@ body {
 #content ul li::before { content: '—'; position: absolute; left: 0; color: var(--border); }
 #content ol { counter-reset: ol-c; }
 #content ol li { counter-increment: ol-c; }
-#content ol li::before { content: counter(ol-c, decimal-leading-zero); position: absolute; left: 0; font-family: 'Geist', sans-serif; font-size: 10px; color: var(--dim); top: 9px; }
+#content ol li::before { content: counter(ol-c, decimal-leading-zero); position: absolute; left: 0; font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 10px; color: var(--dim); top: 9px; }
 
 /* ── Annotation marks ── */
 mark[data-ann] {
@@ -612,7 +602,7 @@ mark[data-ann]:hover { filter: brightness(1.2); }
 
 #end-mark {
   text-align: center; margin-top: 96px;
-  font-family: 'Geist', sans-serif; font-size: 10px;
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 10px;
   letter-spacing: 0.22em; text-transform: uppercase; color: var(--border); opacity: 0.4;
 }
 
@@ -643,7 +633,7 @@ mark[data-ann]:hover { filter: brightness(1.2); }
   padding: 18px 20px; border-bottom: 1px solid var(--border); flex-shrink: 0;
 }
 .modal-title {
-  font-family: 'Geist', sans-serif; font-size: 11px; font-weight: 500;
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 11px; font-weight: 500;
   letter-spacing: 0.14em; text-transform: uppercase; color: var(--dim);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
@@ -656,7 +646,7 @@ mark[data-ann]:hover { filter: brightness(1.2); }
 .modal-footer { padding: 14px 20px; border-top: 1px solid var(--border); flex-shrink: 0; }
 .modal-primary-btn {
   width: 100%; padding: 12px; background: none;
-  border: 1px solid var(--primary); font-family: 'Geist', sans-serif;
+  border: 1px solid var(--primary); font-family: 'Schibsted Grotesk', system-ui, sans-serif;
   font-size: 11px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase;
   color: var(--primary); cursor: pointer; transition: background 0.2s, color 0.2s;
 }
@@ -672,7 +662,7 @@ mark[data-ann]:hover { filter: brightness(1.2); }
 .share-toggle-btn {
   flex: 1; padding: 11px 12px; background: none; border: none;
   border-right: 1px solid var(--border);
-  font-family: 'Geist', sans-serif; font-size: 10px; font-weight: 500;
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 10px; font-weight: 500;
   letter-spacing: 0.06em; text-transform: uppercase;
   color: var(--dim); cursor: pointer; transition: background 0.15s, color 0.15s;
 }
@@ -680,14 +670,14 @@ mark[data-ann]:hover { filter: brightness(1.2); }
 .share-toggle-btn:hover { color: var(--muted); }
 .share-toggle-btn.active { color: var(--primary); background: var(--surface); }
 .share-mode-desc {
-  font-family: 'Geist', sans-serif; font-size: 12px; color: var(--dim);
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 12px; color: var(--dim);
   line-height: 1.6; margin: 0;
 }
 
 /* ── Secondary export buttons in annotation sidebar ── */
 .ann-export-secondary {
   width: 100%; padding: 10px; background: none;
-  border: 1px solid var(--border); font-family: 'Geist', sans-serif;
+  border: 1px solid var(--border); font-family: 'Schibsted Grotesk', system-ui, sans-serif;
   font-size: 10px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase;
   color: var(--dim); cursor: pointer; transition: border-color 0.25s, color 0.25s;
 }
@@ -699,7 +689,7 @@ mark[data-ann]:hover { filter: brightness(1.2); }
 .add-ch-tab {
   flex: 1; padding: 12px; background: none; border: none;
   border-bottom: 2px solid transparent;
-  font-family: 'Geist', sans-serif; font-size: 11px;
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 11px;
   letter-spacing: 0.08em; text-transform: uppercase;
   color: var(--dim); cursor: pointer; margin-bottom: -1px;
   transition: color 0.15s, border-color 0.15s;
@@ -727,14 +717,14 @@ mark[data-ann]:hover { filter: brightness(1.2); }
 }
 .add-ch-file-drop:hover, .add-ch-file-drop.drag-over { border-color: var(--primary); background: var(--surface); }
 .add-ch-file-drop-label { font-family: 'EB Garamond', Georgia, serif; font-size: 17px; color: var(--muted); margin-bottom: 6px; }
-.add-ch-file-drop-sub { font-family: 'Geist', sans-serif; font-size: 11px; color: var(--dim); letter-spacing: 0.04em; }
-#add-ch-file-list { font-family: 'Geist', sans-serif; font-size: 12px; color: var(--muted); }
+.add-ch-file-drop-sub { font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 11px; color: var(--dim); letter-spacing: 0.04em; }
+#add-ch-file-list { font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 12px; color: var(--muted); }
 .add-ch-file-item { padding: 7px 0; border-bottom: 1px solid var(--border); display: flex; gap: 10px; }
 .add-ch-file-item:last-child { border-bottom: none; }
 .add-ch-footer { padding: 14px 20px; border-top: 1px solid var(--border); flex-shrink: 0; }
 #add-ch-submit {
   width: 100%; padding: 12px; background: none;
-  border: 1px solid var(--primary); font-family: 'Geist', sans-serif;
+  border: 1px solid var(--primary); font-family: 'Schibsted Grotesk', system-ui, sans-serif;
   font-size: 11px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase;
   color: var(--primary); cursor: pointer; transition: background 0.2s, color 0.2s;
 }
@@ -759,7 +749,7 @@ mark[data-ann]:hover { filter: brightness(1.2); }
 .ch-tree-drag:active { cursor: grabbing; }
 .ch-tree-drag svg { width: 10px; height: 14px; display: block; }
 .ch-tree-num {
-  font-family: 'Geist', sans-serif; font-size: 10px; color: var(--border);
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 10px; color: var(--border);
   letter-spacing: 0.06em; flex-shrink: 0; min-width: 20px;
 }
 .ch-tree-title {
