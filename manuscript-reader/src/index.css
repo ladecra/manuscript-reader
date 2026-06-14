@@ -130,7 +130,7 @@ body {
 /* ── Buttons ── */
 .icon-btn {
   background: none; border: none; cursor: pointer;
-  color: var(--dim); padding: 6px;
+  color: var(--dim); padding: 6px; gap: 7px;
   display: flex; align-items: center; justify-content: center;
   position: relative;
   transition: color 0.2s var(--ease-std);
@@ -139,6 +139,12 @@ body {
 .icon-btn:hover, .icon-btn:active { color: var(--primary); }
 .icon-btn.active-btn { color: var(--primary); }
 .icon-btn svg { width: 17px; height: 17px; display: block; }
+.icon-btn-label {
+  font-family: 'Geist', sans-serif; font-size: 11px;
+  letter-spacing: 0.04em; color: inherit; white-space: nowrap;
+}
+/* Collapse to icon-only on narrow viewports — keeps the topbar uncluttered on mobile. */
+@media (max-width: 720px) { .icon-btn-label { display: none; } }
 .text-btn {
   background: none; border: none; cursor: pointer;
   font-family: 'Geist', sans-serif; font-size: 10px; font-weight: 400;
@@ -162,7 +168,9 @@ body {
 
 /* ── Revision badge ── */
 #revision-mode-badge {
-  position: absolute; top: 4px; right: 4px;
+  /* Anchored over the icon (left), not the button's right edge, so it stays on
+     the icon whether or not the "Annotations" text label is showing. */
+  position: absolute; top: 4px; left: 19px;
   width: 5px; height: 5px; border-radius: 50%;
   background: var(--brand); display: none; pointer-events: none;
 }
@@ -593,14 +601,13 @@ body {
 /* ── Annotation marks ── */
 mark[data-ann] {
   background: var(--ann-highlight); color: inherit;
-  border-bottom: 2px solid var(--ann-highlight-solid);
   cursor: pointer; padding: 1px 0;
 }
-mark[data-ann].type-note      { background: var(--ann-note);      border-bottom-color: var(--ann-note-solid); }
-mark[data-ann].type-bookmark  { background: var(--ann-bookmark);  border-bottom-color: var(--ann-bookmark-solid); }
-mark[data-ann].type-question  { background: var(--ann-question);  border-bottom-color: var(--ann-question-solid); }
-mark[data-ann].type-continuity { background: var(--ann-continuity); border-bottom-color: var(--ann-continuity-solid); }
-mark[data-ann].type-structural { background: var(--ann-structural); border-bottom-color: var(--ann-structural-solid); }
+mark[data-ann].type-note      { background: var(--ann-note); }
+mark[data-ann].type-bookmark  { background: var(--ann-bookmark); }
+mark[data-ann].type-question  { background: var(--ann-question); }
+mark[data-ann].type-continuity { background: var(--ann-continuity); }
+mark[data-ann].type-structural { background: var(--ann-structural); }
 mark[data-ann]:hover { filter: brightness(1.2); }
 
 #end-mark {

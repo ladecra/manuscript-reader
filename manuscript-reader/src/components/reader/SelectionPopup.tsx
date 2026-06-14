@@ -14,14 +14,17 @@ const NOTE_TYPES = new Set<AnnotationType>(['note', 'question', 'continuity', 's
 export function SelectionPopup({ visible, position, onSave, onClose }: SelectionPopupProps) {
   const [pendingType, setPendingType] = useState<AnnotationType | null>(null);
   const [noteText, setNoteText] = useState('');
+  const [wasVisible, setWasVisible] = useState(visible);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  useEffect(() => {
+  // Clear the pending selection when the popup hides (reset during render).
+  if (visible !== wasVisible) {
+    setWasVisible(visible);
     if (!visible) {
       setPendingType(null);
       setNoteText('');
     }
-  }, [visible]);
+  }
 
   useEffect(() => {
     if (pendingType && textareaRef.current) {

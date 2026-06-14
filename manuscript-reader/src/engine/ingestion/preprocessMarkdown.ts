@@ -101,11 +101,142 @@ export function isNarrativeOpener(rawLine: string): boolean {
   return false;
 }
 
+// ─── Heading-less chapter detection (DOCX without heading styles) ─────────────
+// Many real manuscripts mark chapters purely visually — a bare number, "N TITLE",
+// or a bold "CHAPTER 1" / title pair — using paragraph styles or character
+// formatting that mammoth can't map to headings. After conversion these arrive
+// as plain prose (sometimes wrapped in **/__ emphasis). We promote them to `# `
+// headings, but ONLY when a chapter-sized body paragraph follows shortly after.
+// That single guard rejects tables of contents, whose number/title lines are
+// followed by more short lines rather than prose.
+
+const NUM_WORD_RE = Object.keys(NUM_WORDS).join('|');
+// A leading chapter "number": digits, roman numerals, or spelled-out words.
+const LEADING_NUM = new RegExp(
+  `^(\\d{1,3}|[ivxlcdm]+|(?:${NUM_WORD_RE})(?:[\\s-]+(?:${NUM_WORD_RE}|and))*)\\b`,
+  'i',
+);
+const CHAPTER_KEYWORD = /^(chapter|part|book|section|prologue|epilogue|interlude|prelude|afterword)\b/i;
+
+/** A line that reads like a heading: ALL CAPS, or Title Case (each significant
+ *  word capitalized). Sentences fail this because interior words start lower. */
+export function isHeadingLike(raw: string): boolean {
+  const t = raw.trim();
+  if (!/[A-Za-z]/.test(t)) return false;
+  const letters = t.replace(/[^A-Za-z]/g, '');
+  if (letters === letters.toUpperCase()) return true; // ALL CAPS
+  const words = t.split(/\s+/).filter(w => /[A-Za-z]/.test(w));
+  return words.every((w, idx) => {
+    const first = (w.match(/[A-Za-z]/) ?? [''])[0];
+    if (first && first === first.toUpperCase()) return true;
+    const bare = w.toLowerCase().replace(/[^a-z]/g, '');
+    return idx !== 0 && SMALL_WORDS.has(bare);
+  });
+}
+
+/** A line substantial enough to be chapter body (not a TOC entry / page number). */
+function isChapterBody(raw: string): boolean {
+  const t = raw.trim();
+  if (!t || /^[#>]/.test(t)) return false;
+  return t.split(/\s+/).length >= 8;
+}
+
+/** A short, heading-cased line that isn't a sentence — a plausible chapter title.
+ *  The trailing-period check rejects catalog/prose lines like "Young Women—Fiction." */
+function looksLikeTitle(raw: string): boolean {
+  const t = raw.trim();
+  return t.length <= 60 && !/\.$/.test(t) && isHeadingLike(t);
+}
+
+/** If the whole trimmed line is wrapped in one emphasis run (**x**, __x__, *x*,
+ *  _x_), return the inner text — these whole-line bolds are almost always
+ *  headings, not inline emphasis. Otherwise return the trimmed line unchanged. */
+function unwrapEmphasis(line: string): string {
+  const t = line.trim();
+  const m = /^(\*\*|__|\*|_)([\s\S]+?)\1$/.exec(t);
+  return m ? m[2].trim() : t;
+}
+
+/** The title text remaining after a chapter label's keyword + number are removed
+ *  ("Chapter 2: The Gate" → "The Gate", "Chapter 1" → "", "1" → ""). */
+function labelTitlePart(label: string): string {
+  let t = label.replace(CHAPTER_KEYWORD, '').trim();
+  t = t.replace(LEADING_NUM, '').replace(/^[\s.):–—-]+/, '').trim();
+  return t;
+}
+
+/** True if a (de-emphasized) line opens a chapter: an explicit keyword, or a
+ *  number/word-number marker at the start. */
+function isChapterLabel(s: string): boolean {
+  const t = s.trim();
+  if (!t || t.length > 60) return false;
+  return CHAPTER_KEYWORD.test(t) || LEADING_NUM.test(t);
+}
+
+/** Promote heading-less chapter markers to `# ` headings. */
+export function promoteHeadinglessChapters(text: string): string {
+  const lines = text.split('\n');
+  const out: string[] = [];
+  const nextNonBlank = (from: number): number => {
+    for (let k = from; k < lines.length; k++) if (lines[k].trim()) return k;
+    return -1;
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^#/.test(line)) { out.push(line); continue; } // leave real headings alone
+
+    const label = unwrapEmphasis(line);
+    if (!isChapterLabel(label)) { out.push(line); continue; }
+
+    const hasKeyword = CHAPTER_KEYWORD.test(label);
+    const inlineTitle = labelTitlePart(label);
+
+    // A number/word marker with no chapter keyword must carry a title-cased,
+    // non-sentence title (inline or on the next line) — otherwise it's just
+    // prose/catalog data that happens to start with "One"/"I"/a number.
+    if (!hasKeyword && inlineTitle && !looksLikeTitle(inlineTitle)) {
+      out.push(line);
+      continue;
+    }
+
+    let combined = label;
+    let consumedUpto = i;
+
+    if (!inlineTitle) {
+      // Label alone ("1", "CHAPTER 1", "__CHAPTER 1__") — the title, if any, is
+      // the next non-blank line. Consume it when it reads like a heading.
+      const j = nextNonBlank(i + 1);
+      if (j !== -1) {
+        const t = unwrapEmphasis(lines[j]);
+        if (looksLikeTitle(t) && !isChapterLabel(t) && !isChapterBody(t)) {
+          combined = `${label} — ${t}`;
+          consumedUpto = j;
+        }
+      }
+      // A bare number/word with neither inline nor following title is too weak
+      // a signal on its own — require the keyword form to stand alone.
+      if (!hasKeyword && consumedUpto === i) { out.push(line); continue; }
+    }
+
+    // Guard: a real chapter is followed by prose. TOC rows are not.
+    const b = nextNonBlank(consumedUpto + 1);
+    if (b !== -1 && isChapterBody(lines[b])) {
+      out.push(`# ${normalizeChapterHeading(combined)}`);
+      i = consumedUpto;
+      continue;
+    }
+
+    out.push(line);
+  }
+  return out.join('\n');
+}
+
 // ─── Heading normalization ────────────────────────────────────────────────────
 
 /** Convert a raw heading string to a canonical "Chapter N — Subtitle" form. */
 export function normalizeChapterHeading(raw: string): string {
-  let s = raw.replace(/^#+\s*/, '').trim();
+  const s = raw.replace(/^#+\s*/, '').trim();
 
   const kw = /^(chapter|part|book|section|prologue|epilogue|interlude|afterword|foreword|prelude)\b/i.exec(s);
   if (!kw) {
@@ -124,7 +255,7 @@ export function normalizeChapterHeading(raw: string): string {
   }
 
   const keyword = kw[1].toLowerCase();
-  let rest = s.slice(kw[0].length);
+  const rest = s.slice(kw[0].length);
   let subtitle = '';
   const sep = rest.match(/\s*[\u2013\u2014]\s*(.+)$/) || rest.match(/\s*:\s*(.+)$/) || rest.match(/\s+-\s+(.+)$/);
   let numPart = rest;
@@ -271,10 +402,19 @@ const CHAPTER_PATTERN = /^[ \t]*(chapter\s+(?:one|two|three|four|five|six|seven|
  * 5. Collapse excessive blank lines
  */
 export function preprocessMarkdown(text: string): string {
-  // 1. Undo mammoth's over-escaping of . # ) etc.
-  text = text.replace(/\\([.#)\u2019'"&%$@!?])/g, '$1');
+  // 1. Undo mammoth's over-escaping of punctuation. Word/mammoth backslash-escape
+  //    a wide range of characters (- ( ) . , : ; etc.). We strip the backslash
+  //    before punctuation that is harmless to unescape, but deliberately leave
+  //    * _ ` alone so we never turn literal text into accidental emphasis/code.
+  text = text.replace(/\\([-\u2013\u2014.,:;!?()[\]{}'"\u201c\u201d\u2018\u2019#&%$@/<>=~|])/g, '$1');
 
-  // 2. Promote prose chapter lines to # headings
+  // 2. Promote heading-less chapter markers (bare "1", "1 TITLE", bold
+  //    "CHAPTER 1" + title) from DOCX files whose chapter styles mammoth
+  //    couldn't map. Runs first so multi-line label/title pairs are combined
+  //    before the single-line prose pattern below can split them apart.
+  text = promoteHeadinglessChapters(text);
+
+  // 2b. Promote remaining single-line prose chapter lines to # headings
   text = text.replace(CHAPTER_PATTERN, (match) => {
     const trimmed = match.trim();
     if (trimmed.startsWith('#')) return match; // already a heading

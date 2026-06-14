@@ -197,7 +197,7 @@ export function computeChapterWords(md: string): Map<number, number> {
     if (chIdx > 0) {
       const text = buffer.join(' ')
         .replace(/<!--[\s\S]*?-->/g, ' ')
-        .replace(/[#>*_`~\-]+/g, ' ');
+        .replace(/[#>*_`~-]+/g, ' ');
       const words = text.trim().split(/\s+/).filter(Boolean).length;
       result.set(chIdx, (result.get(chIdx) ?? 0) + words);
     }
@@ -210,7 +210,7 @@ export function computeChapterWords(md: string): Map<number, number> {
     if (/^# /.test(line)) {
       flush();
       chIdx++;
-      i; // heading title itself excluded from body word count
+      // heading title itself excluded from body word count
       continue;
     }
     if (isSetextH1) {

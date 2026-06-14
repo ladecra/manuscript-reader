@@ -31,7 +31,6 @@ export function validateShareableReaderHTML(html: string): void {
   }
   const script = html.slice(open + scriptOpen.length, close);
   try {
-    // eslint-disable-next-line no-new-func
     new Function(script);
   } catch {
     throw new ShareReaderBuildError('Reader file script is invalid — not downloaded.');
@@ -65,12 +64,12 @@ function buildAnnotationScript(): string {
   function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
   var css = [
-    'mark[data-ann]{background:rgba(217,172,60,.25);color:inherit;border-bottom:2px solid #d9ac3c;cursor:pointer;padding:1px 0}',
-    'mark[data-ann].type-note{background:rgba(142,145,146,.22);border-bottom-color:#8e9192}',
-    'mark[data-ann].type-bookmark{background:rgba(99,102,241,.22);border-bottom-color:#6366f1}',
-    'mark[data-ann].type-question{background:rgba(239,100,97,.22);border-bottom-color:#ef6461}',
-    'mark[data-ann].type-continuity{background:rgba(52,211,153,.22);border-bottom-color:#34d399}',
-    'mark[data-ann].type-structural{background:rgba(251,146,60,.22);border-bottom-color:#fb923c}',
+    'mark[data-ann]{background:rgba(217,172,60,.25);color:inherit;cursor:pointer;padding:1px 0}',
+    'mark[data-ann].type-note{background:rgba(142,145,146,.22)}',
+    'mark[data-ann].type-bookmark{background:rgba(99,102,241,.22)}',
+    'mark[data-ann].type-question{background:rgba(239,100,97,.22)}',
+    'mark[data-ann].type-continuity{background:rgba(52,211,153,.22)}',
+    'mark[data-ann].type-structural{background:rgba(251,146,60,.22)}',
     '.sp-popup{position:fixed;z-index:200;background:var(--surface);border:1px solid var(--border);display:none;flex-direction:column;min-width:230px;box-shadow:0 8px 32px rgba(0,0,0,.4)}',
     '.sp-popup.vis{display:flex}',
     '.sp-row{display:flex;border-bottom:1px solid var(--border)}',

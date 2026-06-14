@@ -1,0 +1,17 @@
+# Vite / npm
+manuscript-reader/node_modules/
+manuscript-reader/dist/
+
+# Environment files
+.env
+.env.local
+
+# macOS
+.DS_Store
+
+# Logs
+npm-debug.log*
+
+# Real manuscripts used as test fixtures — unpublished work, do not publish.
+# The synthetic .md fixtures and check-fixtures.mjs ARE tracked on purpose.
+manuscript-reader/fixtures/*.docx
