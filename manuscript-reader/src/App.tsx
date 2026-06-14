@@ -6,7 +6,8 @@ import { LibraryScreen } from './screens/LibraryScreen';
 import { LoadScreen } from './screens/LoadScreen';
 import { ReaderScreen } from './screens/ReaderScreen';
 import { Toast, useToast } from './components/ui/Toast';
-import { QuillIcon, MenuIcon, MoonIcon, SunIcon, AnnotateIcon, ReportIcon, LibraryIcon } from './components/ui/Icons';
+import { SettingsMenu } from './components/ui/SettingsMenu';
+import { QuillIcon, MenuIcon, AnnotateIcon, ReportIcon, LibraryIcon } from './components/ui/Icons';
 import { parseMarkdown } from './engine/ingestion/parseMarkdown';
 import type { Manuscript } from './engine/types';
 
@@ -24,7 +25,7 @@ function IconBtn({ onClick, active, title, children }: {
 }
 
 export function App() {
-  const { screen, theme, fontSize, annSidebarOpen, reportPanelOpen, setScreen, toggleTheme, increaseFontSize, decreaseFontSize, toggleNav, toggleAnnSidebar, toggleReportPanel } = useUIStore();
+  const { screen, theme, fontSize, annSidebarOpen, reportPanelOpen, setScreen, toggleNav, toggleAnnSidebar, toggleReportPanel } = useUIStore();
   const { library, upsertManuscript, updateManuscript, cycleStatus, deleteManuscript, replaceMarkdown, getReadingPosition } = useLibraryStore();
   const { manuscript, annotations, openManuscript, closeManuscript } = useReaderStore();
   const { toastState, showToast } = useToast();
@@ -35,6 +36,7 @@ export function App() {
   useEffect(() => {
     document.documentElement.classList.toggle('light', theme === 'light');
     document.documentElement.style.setProperty('--body-size', `${fontSize}px`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- apply persisted theme/font once on mount; later changes go through uiStore
   }, []);
 
   useEffect(() => {
@@ -95,9 +97,6 @@ export function App() {
           {screen === 'reader' && (
             <>
               <span id="topbar-chapter">{chapterLabel}</span>
-              <button className="text-btn" onClick={decreaseFontSize} title="Decrease font">A−</button>
-              <span className="text-btn" style={{ cursor:'default', color:'var(--border)', padding:'6px 2px' }}>{fontSize}</span>
-              <button className="text-btn" onClick={increaseFontSize} title="Increase font">A+</button>
               <div style={{ position:'relative', display:'inline-flex' }}>
                 <IconBtn onClick={toggleAnnSidebar} active={annSidebarOpen} title="Annotations (⌘E)"><AnnotateIcon /></IconBtn>
                 {hasAnnotations && <span id="revision-mode-badge" className="visible" />}
@@ -107,9 +106,10 @@ export function App() {
             </>
           )}
           {screen === 'load' && <IconBtn onClick={handleLibraryNav} title="Library"><LibraryIcon /></IconBtn>}
-          <IconBtn onClick={toggleTheme} title="Toggle theme">
-            {theme === 'dark' ? <MoonIcon /> : <SunIcon />}
-          </IconBtn>
+          {(screen === 'reader' || screen === 'load') && (
+            <span aria-hidden="true" style={{ width: '1px', height: '18px', background: 'var(--border)', margin: '0 6px', alignSelf: 'center' }} />
+          )}
+          <SettingsMenu />
         </div>
       </header>
 

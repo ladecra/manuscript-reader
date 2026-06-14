@@ -4,7 +4,10 @@ import { MANUSCRIPT_STATUSES } from '../engine/types';
 import { loadAnnotations, getAnnotationStats } from '../engine/storage';
 import { PlusIcon } from '../components/ui/Icons';
 import { ChapterTree } from '../components/library/ChapterTree';
+import { ShareModal } from '../components/reader/ShareModal';
 import { applyChapterEdits, type ChapterEdit } from '../engine/manuscript/chapterEdit';
+import { exportShareableReader, ShareReaderBuildError } from '../engine/exports/shareableReader';
+import { showToast } from '../components/ui/Toast';
 
 function timeAgo(ts: number | undefined): string {
   if (!ts) return '—';
@@ -27,7 +30,7 @@ interface LibraryScreenProps {
   onOpen: (ms: Manuscript) => void;
   onNew: () => void;
   onDelete: (id: string) => void;
-  onUpdate: (id: string, patch: { title?: string; status?: string }) => void;
+  onUpdate: (id: string, patch: { title?: string; author?: string; status?: string }) => void;
   onCycleStatus: (id: string) => void;
   onReplaceMarkdown: (id: string, newMarkdown: string) => void;
   getReadingPosition: (id: string) => number;
@@ -93,20 +96,22 @@ export function LibraryScreen({ library, onOpen, onNew, onDelete, onUpdate, onCy
 
 function ManuscriptRow({ ms, expanded, onToggleExpand, onOpen, onDelete, onUpdate, onCycleStatus, onReplaceMarkdown, progress }: {
   ms: Manuscript; expanded: boolean; onToggleExpand: () => void; onOpen: () => void;
-  onDelete: () => void; onUpdate: (patch: { title?: string; status?: string }) => void;
+  onDelete: () => void; onUpdate: (patch: { title?: string; author?: string; status?: string }) => void;
   onCycleStatus: () => void; onReplaceMarkdown: (md: string) => void; progress: number;
 }) {
-  const { title, wordCount, chapterCount, status, lastOpened, uncached, combinedMarkdown } = ms.metadata;
+  const { title, author, wordCount, chapterCount, status, lastOpened, uncached, combinedMarkdown } = ms.metadata;
   const [titleInput, setTitleInput] = useState(title);
+  const [authorInput, setAuthorInput] = useState(author ?? '');
   const [selectedStatus, setSelectedStatus] = useState(status ?? 'Draft');
   const [chapterEdits, setChapterEdits] = useState<ChapterEdit[]>([]);
+  const [shareOpen, setShareOpen] = useState(false);
   const pct = Math.round(progress * 100);
   const annList = loadAnnotations(ms.id);
   const annCount = annList.length;
   const readerCount = new Set(annList.map(a => a.readerName).filter(Boolean)).size;
 
   const handleSave = () => {
-    onUpdate({ title: titleInput, status: selectedStatus });
+    onUpdate({ title: titleInput, author: authorInput.trim(), status: selectedStatus });
     // Apply chapter reorder/rename/delete if the tree produced a different result.
     if (combinedMarkdown && chapterEdits.length > 0) {
       const newMd = applyChapterEdits(combinedMarkdown, chapterEdits);
@@ -117,15 +122,46 @@ function ManuscriptRow({ ms, expanded, onToggleExpand, onOpen, onDelete, onUpdat
     onToggleExpand();
   };
 
+  const handleShare = (withAnnotations: boolean) => {
+    if (!combinedMarkdown) { showToast('Re-import this file to share it.'); return; }
+    try {
+      exportShareableReader(title, combinedMarkdown, withAnnotations);
+      setShareOpen(false);
+      showToast('Reader file downloaded.');
+    } catch (e) {
+      console.error('Share reader build failed:', e);
+      showToast(e instanceof ShareReaderBuildError ? e.message : 'Could not generate file.');
+    }
+  };
+
   return (
     <div className="ms-row">
       <div className="ms-row-top">
-        <div className="ms-title" onClick={onOpen}>{title}</div>
+        <div style={{ minWidth: 0 }}>
+          <div className="ms-title" onClick={onOpen}>{title}</div>
+          {author && <div style={{ fontFamily: "'Geist', sans-serif", fontSize: '11px', color: 'var(--dim)', marginTop: '3px', letterSpacing: '0.02em' }}>by {author}</div>}
+        </div>
         <div className="ms-actions">
+          <button className="ms-edit-btn" onClick={() => setShareOpen(true)} disabled={!combinedMarkdown} title={combinedMarkdown ? 'Share reader file' : 'Re-import to share'} style={!combinedMarkdown ? { opacity: 0.4, cursor: 'not-allowed' } : undefined}>Share</button>
           <button className="ms-edit-btn" onClick={onToggleExpand}>{expanded ? 'Close' : 'Edit'}</button>
           <button className="ms-delete-btn" onClick={() => { if (window.confirm(`Remove "${title}"?`)) onDelete(); }}>Remove</button>
         </div>
       </div>
+      {uncached && (
+        <div role="alert" style={{
+          margin: '4px 0 10px',
+          padding: '9px 12px',
+          border: '1px solid var(--ann-question-solid)',
+          borderLeft: '3px solid var(--ann-question-solid)',
+          color: 'var(--ann-question-solid)',
+          fontFamily: "'Geist', sans-serif",
+          fontSize: '11px',
+          lineHeight: 1.5,
+          letterSpacing: '0.02em',
+        }}>
+          ⚠ Source text offloaded to free storage space. Reading and chapter editing are paused for this manuscript — re-import the file from <strong>Load</strong> to restore it.
+        </div>
+      )}
       <div className="ms-meta">
         {wordCount ? <span>{wordCount.toLocaleString()} words</span> : null}
         {wordCount ? <span className="dot" /> : null}
@@ -138,7 +174,6 @@ function ManuscriptRow({ ms, expanded, onToggleExpand, onOpen, onDelete, onUpdat
         {readerCount > 0 && <><span className="dot" /><span>{readerCount} reader{readerCount !== 1 ? 's' : ''}</span></>}
         <span className="dot" />
         <span>{timeAgo(lastOpened)}</span>
-        {uncached && <><span className="dot" /><span style={{ color: 'var(--ann-question-solid)', fontSize: '10px', fontFamily: "'Geist', sans-serif", letterSpacing: '0.06em' }}>Reload needed</span></>}
       </div>
       <div className="ms-progress-bar"><div className="ms-progress-fill" style={{ width: `${pct}%` }} /></div>
       {expanded && (
@@ -146,6 +181,10 @@ function ManuscriptRow({ ms, expanded, onToggleExpand, onOpen, onDelete, onUpdat
           <div>
             <label className="edit-field-label">Title</label>
             <input className="edit-input" type="text" value={titleInput} onChange={e => setTitleInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSave()} autoFocus />
+          </div>
+          <div>
+            <label className="edit-field-label">Author</label>
+            <input className="edit-input" type="text" value={authorInput} placeholder="Author (optional)" onChange={e => setAuthorInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSave()} />
           </div>
           <div>
             <label className="edit-field-label">Status</label>
@@ -163,6 +202,14 @@ function ManuscriptRow({ ms, expanded, onToggleExpand, onOpen, onDelete, onUpdat
         </div>
       )}
       <div className="ms-divider" />
+      <ShareModal
+        open={shareOpen}
+        title={title}
+        wordCount={wordCount}
+        chapterCount={chapterCount}
+        onClose={() => setShareOpen(false)}
+        onDownload={handleShare}
+      />
     </div>
   );
 }

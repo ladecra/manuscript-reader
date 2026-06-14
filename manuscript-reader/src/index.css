@@ -593,14 +593,13 @@ body {
 /* ── Annotation marks ── */
 mark[data-ann] {
   background: var(--ann-highlight); color: inherit;
-  border-bottom: 2px solid var(--ann-highlight-solid);
   cursor: pointer; padding: 1px 0;
 }
-mark[data-ann].type-note      { background: var(--ann-note);      border-bottom-color: var(--ann-note-solid); }
-mark[data-ann].type-bookmark  { background: var(--ann-bookmark);  border-bottom-color: var(--ann-bookmark-solid); }
-mark[data-ann].type-question  { background: var(--ann-question);  border-bottom-color: var(--ann-question-solid); }
-mark[data-ann].type-continuity { background: var(--ann-continuity); border-bottom-color: var(--ann-continuity-solid); }
-mark[data-ann].type-structural { background: var(--ann-structural); border-bottom-color: var(--ann-structural-solid); }
+mark[data-ann].type-note      { background: var(--ann-note); }
+mark[data-ann].type-bookmark  { background: var(--ann-bookmark); }
+mark[data-ann].type-question  { background: var(--ann-question); }
+mark[data-ann].type-continuity { background: var(--ann-continuity); }
+mark[data-ann].type-structural { background: var(--ann-structural); }
 mark[data-ann]:hover { filter: brightness(1.2); }
 
 #end-mark {

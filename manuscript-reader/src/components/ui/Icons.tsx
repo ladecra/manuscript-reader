@@ -141,3 +141,13 @@ export function DotsIcon({ size = 13 }: IconProps) {
     </svg>
   );
 }
+
+export function GearIcon({ size = 17 }: IconProps) {
+  return (
+    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.2"
+      strokeLinecap="round" strokeLinejoin="round" width={size} height={size}>
+      <circle cx="9" cy="9" r="2.4"/>
+      <path d="M9 1.6v2.1M9 14.3v2.1M16.4 9h-2.1M3.7 9H1.6M14.2 3.8l-1.5 1.5M5.3 12.7l-1.5 1.5M14.2 14.2l-1.5-1.5M5.3 5.3 3.8 3.8"/>
+    </svg>
+  );
+}

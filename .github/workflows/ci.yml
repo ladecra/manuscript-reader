@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    name: Lint, build, fixtures
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: manuscript-reader
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: manuscript-reader/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+      # Real .docx fixtures are gitignored, so this runs the synthetic .md
+      # fixtures only — a smoke test that the ingestion pipeline still imports
+      # and runs. It prints results; no assertions (golden-file by inspection).
+      - run: npm run check-fixtures
+
+  secret-scan:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history so gitleaks can scan past commits
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # gitleaks-action is free for public repos. For a PRIVATE repo in an
+          # org, add a GITLEAKS_LICENSE secret and uncomment the next line:
+          # GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
