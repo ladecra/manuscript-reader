@@ -12,6 +12,7 @@ interface UIStore {
   navOpen: boolean;
   annSidebarOpen: boolean;
   reportPanelOpen: boolean;
+  editMode: boolean;
 
   // Actions
   setScreen: (s: Screen) => void;
@@ -32,6 +33,9 @@ interface UIStore {
   closeReportPanel: () => void;
   toggleReportPanel: () => void;
 
+  toggleEditMode: () => void;
+  exitEditMode: () => void;
+
   closeAllPanels: () => void;
 }
 
@@ -45,9 +49,10 @@ export const useUIStore = create<UIStore>((set, get) => ({
   navOpen: false,
   annSidebarOpen: false,
   reportPanelOpen: false,
+  editMode: false,
 
   setScreen(s) {
-    set({ screen: s, navOpen: false, annSidebarOpen: false, reportPanelOpen: false });
+    set({ screen: s, navOpen: false, annSidebarOpen: false, reportPanelOpen: false, editMode: false });
     // Apply theme class whenever screen changes (safe to re-apply)
     document.documentElement.classList.toggle('light', get().theme === 'light');
   },
@@ -86,6 +91,10 @@ export const useUIStore = create<UIStore>((set, get) => ({
     if (get().reportPanelOpen) get().closeReportPanel();
     else get().openReportPanel();
   },
+
+  // Edit mode is exclusive with the side panels — editing is its own posture.
+  toggleEditMode() { set(s => ({ editMode: !s.editMode, navOpen: false, annSidebarOpen: false, reportPanelOpen: false })); },
+  exitEditMode()   { set({ editMode: false }); },
 
   closeAllPanels() { set({ navOpen: false, annSidebarOpen: false, reportPanelOpen: false }); },
 }));

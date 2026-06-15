@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
 import type { AnnotationType, TextAnchor } from '../engine/types';
 import { buildAnchor, locateAnchor, anchorFromQuote } from '../engine/annotations/anchor';
+import { applyBlockEdit, htmlToMarkdownInline, sameProse } from '../engine/manuscript/blockEdit';
 import { useReaderStore } from '../state/readerStore';
 import { useUIStore } from '../state/uiStore';
 import { useLibraryStore } from '../state/libraryStore';
@@ -85,6 +86,21 @@ function offsetInContainer(container: HTMLElement, range: Range): number {
   return pre.toString().length;
 }
 
+// Per-paragraph snapshot of innerHTML at focus time, so a commit can tell a
+// real edit from a focus-through and skip needless re-renders.
+const editOriginalHtml = new WeakMap<HTMLElement, string>();
+
+// Toggle the light-touch edit affordance: prose paragraphs (the only blocks
+// that carry a source span) become contentEditable; everything else stays
+// read-only. The reading layout is unchanged — only the cursor/affordance.
+function setupEditable(container: HTMLElement, on: boolean) {
+  container.classList.toggle('edit-mode', on);
+  container.querySelectorAll('p[data-md-start]').forEach(p => {
+    if (on) p.setAttribute('contenteditable', 'true');
+    else p.removeAttribute('contenteditable');
+  });
+}
+
 interface ReaderScreenProps {
   onChapterLabelChange: (label: string) => void;
 }
@@ -95,8 +111,8 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   const entranceObs = useRef<IntersectionObserver | null>(null);
 
   const { manuscript, chapters, annotations, addAnnotation, updateAnnotation, deleteAnnotation, importAnnotations, openManuscript } = useReaderStore();
-  const { navOpen, annSidebarOpen, reportPanelOpen, closeNav, closeAnnSidebar, closeReportPanel, toggleAnnSidebar, closeAllPanels } = useUIStore();
-  const { library, updateProgress, getReadingPosition, appendChapters } = useLibraryStore();
+  const { navOpen, annSidebarOpen, reportPanelOpen, editMode, closeNav, closeAnnSidebar, closeReportPanel, toggleAnnSidebar, closeAllPanels } = useUIStore();
+  const { library, updateProgress, getReadingPosition, appendChapters, replaceMarkdown } = useLibraryStore();
 
   const [activeChapterIdx, setActiveChapterIdx] = useState(0);
   const [scrollPct, setScrollPct] = useState(0);
@@ -109,6 +125,11 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   const totalWords = useRef(0);
   const lastScrollY = useRef(0);
   const topbarVisible = useRef(true);
+  const editModeRef = useRef(false);
+  const pendingEditScroll = useRef<number | null>(null); // set before an edit re-render to restore exact scroll (no resume/flash)
+  const cancelEditRef = useRef(false);
+  const commitRef = useRef<(p: HTMLElement) => void>(() => {});
+  useEffect(() => { editModeRef.current = editMode; }, [editMode]);
 
   // Clock
   useEffect(() => {
@@ -119,15 +140,29 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   // Render content + entrance observer + restore position
   useEffect(() => {
     if (!manuscript?.metadata.combinedMarkdown || !contentRef.current) return;
+    const c = contentRef.current;
     const { html } = parseMarkdown(manuscript.metadata.combinedMarkdown);
-    contentRef.current.innerHTML = html;
+    c.innerHTML = html;
     totalWords.current = manuscript.metadata.combinedMarkdown.trim().split(/\s+/).filter(Boolean).length;
+
+    // An edit re-render: keep the reading posture — no fade-in, no resume toast,
+    // restore the exact scroll, re-apply edit affordance and re-anchor marks.
+    const editScroll = pendingEditScroll.current;
+    if (editScroll != null) {
+      pendingEditScroll.current = null;
+      c.querySelectorAll('p, blockquote, ul, ol').forEach(el => el.classList.add('visible'));
+      setupEditable(c, editModeRef.current);
+      reapplyHighlights();
+      window.scrollTo(0, editScroll);
+      return;
+    }
 
     if (entranceObs.current) entranceObs.current.disconnect();
     entranceObs.current = new IntersectionObserver(entries => {
       entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('visible'); entranceObs.current?.unobserve(e.target); } });
     }, { threshold: 0.08, rootMargin: '0px 0px -40px 0px' });
-    contentRef.current.querySelectorAll('p, blockquote, ul, ol').forEach(el => entranceObs.current?.observe(el));
+    c.querySelectorAll('p, blockquote, ul, ol').forEach(el => entranceObs.current?.observe(el));
+    if (editModeRef.current) setupEditable(c, true);
 
     window.scrollTo(0, 0);
     if (manuscript.id) {
@@ -155,12 +190,104 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     annotations.forEach(ann => {
       if (!ann.quote) return;
       const mark = markByAnchor(c, ann.anchor ?? anchorFromQuote(ann.quote), ann.id, ann.type);
-      if (mark) mark.addEventListener('click', e => { e.stopPropagation(); setEditingAnn({ id: ann.id, note: ann.note }); });
+      if (mark) mark.addEventListener('click', e => {
+        if (editModeRef.current) return; // in edit mode a click just places the caret
+        e.stopPropagation(); setEditingAnn({ id: ann.id, note: ann.note });
+      });
     });
   }, [annotations]);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps -- reapply marks only when annotations change
   useEffect(() => { reapplyHighlights(); }, [annotations]);
+
+  // ── Edit mode ──────────────────────────────────────────────────────────────
+  // Re-render the current source in place (no persist): used to discard stray
+  // contentEditable markup and re-anchor marks while holding scroll & posture.
+  const rerenderInPlace = useCallback(() => {
+    const c = contentRef.current; const md = manuscript?.metadata.combinedMarkdown;
+    if (!c || !md) return;
+    const sy = window.scrollY;
+    c.innerHTML = parseMarkdown(md).html;
+    c.querySelectorAll('p, blockquote, ul, ol').forEach(el => el.classList.add('visible'));
+    setupEditable(c, editModeRef.current);
+    reapplyHighlights();
+    window.scrollTo(0, sy);
+  }, [manuscript, reapplyHighlights]);
+
+  // Commit one paragraph: serialize its edited HTML back to markdown, splice it
+  // into the source at the block's recorded span, persist, and re-render. A
+  // paragraph that was only focused-through (innerHTML unchanged) is left alone.
+  const commitBlockEdit = useCallback((p: HTMLElement) => {
+    const origHtml = editOriginalHtml.get(p);
+    editOriginalHtml.delete(p);
+    const cancelled = cancelEditRef.current; cancelEditRef.current = false;
+    const startAttr = p.dataset.mdStart, endAttr = p.dataset.mdEnd;
+    const md = manuscript?.metadata.combinedMarkdown;
+    if (startAttr == null || endAttr == null || !md || !manuscript) return;
+    if (!cancelled && origHtml !== undefined && p.innerHTML === origHtml) return; // untouched
+
+    const norm = md.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    const start = +startAttr, end = +endAttr;
+    const original = norm.slice(start, end);
+    const newSource = htmlToMarkdownInline(p.innerHTML);
+
+    if (cancelled || !newSource || sameProse(newSource, original)) {
+      rerenderInPlace(); // nothing to save — restore clean rendered HTML
+      return;
+    }
+    const res = applyBlockEdit(norm, start, end, newSource);
+    if (!res) { rerenderInPlace(); return; }
+    const updated = replaceMarkdown(manuscript.id, res.markdown);
+    if (updated) {
+      pendingEditScroll.current = window.scrollY;
+      const { chapters: newChapters } = parseMarkdown(updated.metadata.combinedMarkdown!);
+      openManuscript(updated, newChapters); // → render effect restores scroll, re-anchors
+      showToast('Edit saved.');
+    } else {
+      rerenderInPlace();
+      showToast('Could not save — manuscript not cached.');
+    }
+  }, [manuscript, replaceMarkdown, openManuscript, rerenderInPlace]);
+  useEffect(() => { commitRef.current = commitBlockEdit; }, [commitBlockEdit]);
+
+  // Apply/remove the editable affordance when the toggle flips. Leaving edit
+  // mode commits any block still focused.
+  useEffect(() => {
+    const c = contentRef.current; if (!c) return;
+    if (!editMode) {
+      const active = document.activeElement as HTMLElement | null;
+      if (active && c.contains(active)) active.blur(); // fires focusout → commit
+    }
+    setupEditable(c, editMode);
+  }, [editMode]);
+
+  // Delegated commit-on-blur + Enter/Escape, attached once.
+  useEffect(() => {
+    const c = contentRef.current; if (!c) return;
+    const onFocusIn = (e: FocusEvent) => {
+      const p = (e.target as HTMLElement)?.closest?.('p[data-md-start]') as HTMLElement | null;
+      if (p && editModeRef.current) editOriginalHtml.set(p, p.innerHTML);
+    };
+    const onFocusOut = (e: FocusEvent) => {
+      const p = (e.target as HTMLElement)?.closest?.('p[data-md-start]') as HTMLElement | null;
+      if (p && editModeRef.current) commitRef.current(p);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!editModeRef.current) return;
+      const p = (e.target as HTMLElement)?.closest?.('p[data-md-start]') as HTMLElement | null;
+      if (!p) return;
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); p.blur(); }
+      else if (e.key === 'Escape') { e.preventDefault(); cancelEditRef.current = true; p.blur(); }
+    };
+    c.addEventListener('focusin', onFocusIn as EventListener);
+    c.addEventListener('focusout', onFocusOut as EventListener);
+    c.addEventListener('keydown', onKeyDown as EventListener);
+    return () => {
+      c.removeEventListener('focusin', onFocusIn as EventListener);
+      c.removeEventListener('focusout', onFocusOut as EventListener);
+      c.removeEventListener('keydown', onKeyDown as EventListener);
+    };
+  }, []);
 
   // Scroll
   useEffect(() => {
@@ -218,6 +345,7 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   useEffect(() => {
     function onSelectionEnd(e: MouseEvent | TouchEvent) {
       if (!contentRef.current) return;
+      if (editModeRef.current) return; // no annotate popup while editing prose
       const popup = document.getElementById('selection-popup');
       if (popup?.contains(e.target as Node)) return;
       setTimeout(() => {
