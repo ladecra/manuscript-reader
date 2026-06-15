@@ -6,6 +6,18 @@ function emptyCounts(): Record<AnnotationType, number> {
   return Object.fromEntries(ANNOTATION_TYPES.map(t => [t, 0])) as Record<AnnotationType, number>;
 }
 
+/** Stable beta-reader identity for agreement analysis. Prefers the durable
+ *  `readerId` (Phase 5); falls back to the display name for legacy imports that
+ *  predate it. Returns null for the author's own annotations (no reader
+ *  attribution) so they never inflate reader counts. Keying on this — not the
+ *  free-text name — is what stops two distinct anonymous readers collapsing into
+ *  one bucket, or one reader splitting across name variants. */
+function readerIdentity(a: Annotation): string | null {
+  if (a.readerId) return 'id:' + a.readerId;
+  if (a.readerName) return 'name:' + a.readerName;
+  return null;
+}
+
 // ── Editorial signal definitions ──────────────────────────────────────────────
 // Each signal maps one or more annotation types to an interpretation. A cluster
 // is a run of consecutive chapters that together carry enough of those types to
@@ -99,7 +111,8 @@ export function computeReport(annotations: Annotation[], chapters: Chapter[], co
 
   // Build per-chapter stats keyed by chapter index.
   const chapterMap = new Map<number, ChapterStat>();
-  const chapterReaders = new Map<number, Set<string>>(); // index → distinct named readers
+  const chapterReaders = new Map<number, Set<string>>(); // index → distinct reader identities
+  const identityName = new Map<string, string>();        // identity → display name (for the readers list)
   for (const ch of chapters) {
     chapterMap.set(ch.index, {
       title: ch.title, index: ch.index, count: 0, counts: emptyCounts(),
@@ -117,10 +130,17 @@ export function computeReport(annotations: Annotation[], chapters: Chapter[], co
     const stat = chapterMap.get(key)!;
     stat.count++;
     if (stat.counts[ann.type] !== undefined) (stat.counts[ann.type] as number)++;
-    if (ann.readerName) {
+    const identity = readerIdentity(ann);
+    if (identity) {
       const set = chapterReaders.get(key) ?? new Set<string>();
-      set.add(ann.readerName);
+      set.add(identity);
       chapterReaders.set(key, set);
+      // Remember a display name for this identity (prefer a real name over a
+      // blank/placeholder, so the readers list reads well even for late-named readers).
+      const existing = identityName.get(identity);
+      if (!existing || (existing === 'Reader' && ann.readerName)) {
+        identityName.set(identity, ann.readerName || 'Reader');
+      }
     }
   }
 
@@ -153,7 +173,9 @@ export function computeReport(annotations: Annotation[], chapters: Chapter[], co
   const questionClusters = allStats.filter(c => (c.counts.question ?? 0) >= 2).sort((a, b) => (b.counts.question ?? 0) - (a.counts.question ?? 0));
   const continuityFlags = allStats.filter(c => (c.counts.continuity ?? 0) >= 1).sort((a, b) => (b.counts.continuity ?? 0) - (a.counts.continuity ?? 0));
 
-  const readers = [...new Set(annotations.map(a => a.readerName).filter(Boolean))] as string[];
+  // One entry per distinct reader identity (not per name string), so the count
+  // is correct even when readers share a name or leave it blank.
+  const readers = [...identityName.values()];
 
   // Editorial signal clusters (confusion / continuity / structural / engagement runs).
   const clusters = detectClusters(annotations, allStats);

@@ -124,7 +124,7 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   const scrollSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const entranceObs = useRef<IntersectionObserver | null>(null);
 
-  const { manuscript, chapters, annotations, edits, addAnnotation, updateAnnotation, deleteAnnotation, importAnnotations, openManuscript, recordEdit } = useReaderStore();
+  const { manuscript, chapters, annotations, edits, addAnnotation, updateAnnotation, deleteAnnotation, importSession, openManuscript, recordEdit } = useReaderStore();
   const { navOpen, annSidebarOpen, reportPanelOpen, editMode, closeNav, closeAnnSidebar, closeReportPanel, toggleAnnSidebar, closeAllPanels } = useUIStore();
   const { library, updateProgress, getReadingPosition, appendChapters, replaceMarkdown } = useLibraryStore();
 
@@ -549,7 +549,12 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
         onDelete={id => { deleteAnnotation(id); removeMark(id); showToast('Annotation removed.'); }}
         onJumpTo={jumpToAnnotation}
         onExport={() => exportRevisionPacket(manuscript.metadata.title, manuscript.id, annotations, chapters)}
-        onImport={(anns, reader) => { const n = importAnnotations(anns, reader); showToast(`${n} annotation${n !== 1 ? 's' : ''} imported.`); }}
+        onImport={(payload) => {
+          const { imported, session } = importSession(payload);
+          const who = session?.readerName ? ` from ${session.readerName}` : '';
+          const far = session ? (session.completedAt ? ' · finished' : ` · read ${Math.round(session.progress * 100)}%`) : '';
+          showToast(`${imported} annotation${imported !== 1 ? 's' : ''} imported${who}${far}.`);
+        }}
       />
       <ReportPanel
         open={reportPanelOpen} report={report} onClose={closeReportPanel}

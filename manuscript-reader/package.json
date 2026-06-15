@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "check-fixtures": "node fixtures/check-fixtures.mjs"
+    "check-fixtures": "node fixtures/check-fixtures.mjs",
+    "check-sessions": "tsx fixtures/check-sessions.mjs"
   },
   "dependencies": {
     "docx": "^9.7.1",
@@ -29,6 +30,7 @@
     "eslint-plugin-react-refresh": "^0.5.2",
     "fake-indexeddb": "^6.2.5",
     "globals": "^17.6.0",
+    "tsx": "^4.22.4",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.59.2",
     "vite": "^8.0.12"

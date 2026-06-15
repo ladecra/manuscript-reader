@@ -107,7 +107,7 @@ function ManuscriptRow({ ms, expanded, onToggleExpand, onOpen, onDelete, onUpdat
   const pct = Math.round(progress * 100);
   const annList = loadAnnotations(ms.id);
   const annCount = annList.length;
-  const readerCount = new Set(annList.map(a => a.readerName).filter(Boolean)).size;
+  const readerCount = new Set(annList.map(a => a.readerId ?? a.readerName).filter(Boolean)).size;
 
   const handleSave = () => {
     onUpdate({ title: titleInput, author: authorInput.trim(), status: selectedStatus });

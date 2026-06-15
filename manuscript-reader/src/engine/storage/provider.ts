@@ -8,9 +8,15 @@
 // without a schema migration:
 //
 //   manuscript:{id}    annotations:{id}    position:{id}
-//   edits:{id}         session:{id}:{readerId}    snapshot:{id}:{snapId}   (future)
+//   edits:{id}         sessions:{id}             snapshot:{id}:{snapId}   (future)
+//
+// Like annotations/edits, reader sessions are stored as one blob per manuscript
+// (`sessions:{id}`) — it fits the hydrate-once cache (Map<msId, T[]>) and the
+// "single key-value store, no schema migration" design. (The earlier note here
+// floated a per-reader `session:{id}:{readerId}` key; a per-manuscript list is
+// simpler and consistent with how every other child entity is stored.)
 
-import type { Annotation, Edit } from '../types';
+import type { Annotation, Edit, ReaderSession } from '../types';
 
 /** The flat record persisted per manuscript (matches the v0.9 localStorage schema
  *  for backward compatibility). `combinedMarkdown` is the source of truth. */
@@ -42,6 +48,9 @@ export interface StorageProvider {
   loadEdits(id: string): Promise<Edit[]>;
   saveEdits(id: string, edits: Edit[]): Promise<void>;
 
+  loadSessions(id: string): Promise<ReaderSession[]>;
+  saveSessions(id: string, sessions: ReaderSession[]): Promise<void>;
+
   loadPosition(id: string): Promise<number>;
   savePosition(id: string, frac: number): Promise<void>;
 }
@@ -52,5 +61,6 @@ export const key = {
   manuscript: (id: string) => `${MANUSCRIPT_PREFIX}${id}`,
   annotations: (id: string) => `annotations:${id}`,
   edits: (id: string) => `edits:${id}`,
+  sessions: (id: string) => `sessions:${id}`,
   position: (id: string) => `position:${id}`,
 };
