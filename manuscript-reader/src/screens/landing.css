@@ -247,7 +247,7 @@
   color: var(--fg-soft); max-width: 33em; margin-bottom: 38px;
 }
 .lp-hero-cta { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 26px; }
-.lp-hero-note { font-size: 11px; letter-spacing: 0.04em; color: var(--fg-faint); }
+.lp-hero-note { font-size: 12px; font-weight: 500; letter-spacing: 0.04em; color: var(--fg); }
 
 /* Floating manuscript page */
 .lp-hero-visual { position: relative; }
@@ -600,16 +600,18 @@
   .lp-hero-inner { grid-template-columns: 1fr; }
   .lp-hero-visual { order: 2; max-width: 480px; margin: 12px auto 0; }
   .lp-problem-grid { grid-template-columns: 1fr; }
-  .lp-defam { height: auto; }
-  .lp-defam-pin { position: static; height: auto; padding-block: clamp(72px, 12vw, 120px); }
-  .lp-defam-inner { grid-template-columns: 1fr; gap: 48px; }
-  .lp-defam-stage { width: min(100%, 380px); }
-  /* Static fallback: show the fully-augmented page when not pinned */
-  .lp-defam-stage .lp-defam-draft { opacity: 0; }
-  .lp-defam-stage .lp-defam-clean { opacity: 1; }
-  .lp-defam-stage .dl-hl { background: linear-gradient(180deg, transparent 58%, rgba(231,168,90,0.34) 58%); }
-  .lp-defam-stage .lp-defam-note { opacity: 1; transform: none; }
-  .lp-defam-track { display: none; }
+  /* Defamiliarization stays a pinned scroll sequence on mobile — taller than
+     desktop (relative to viewport) so momentum scrolling doesn't rush it.
+     Stacked single-column, stage above the copy. */
+  .lp-defam { height: 300vh; }
+  .lp-defam-inner { grid-template-columns: 1fr; gap: 28px; justify-items: center; }
+  .lp-defam-copy { text-align: center; order: 2; }
+  .lp-defam-stage { order: 1; width: min(70vw, 300px); }
+  .lp-defam-caption { min-height: 0; margin-inline: auto; }
+  .lp-defam-track { justify-content: center; }
+  /* Keep floating notes inside the page edge on narrow screens */
+  .lp-defam-note.dn0 { right: 6px; top: 12%; }
+  .lp-defam-note.dn1 { left: 6px; bottom: 14%; }
   .lp-work-visual .lp-obs-card { margin-left: 0 !important; }
 }
 @media (max-width: 600px) {

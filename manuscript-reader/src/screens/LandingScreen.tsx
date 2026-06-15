@@ -215,7 +215,6 @@ export function LandingScreen({ onOpenApp }: LandingScreenProps) {
       <header className="lp-hero">
         <div className="lp-container lp-hero-inner">
           <div className="lp-hero-copy">
-            <span className="lp-eyebrow lp-rise">Manuscript intelligence</span>
             <h1 className="lp-h1 lp-rise d1">
               Read your manuscript<br />like a <em>reader.</em>
             </h1>
