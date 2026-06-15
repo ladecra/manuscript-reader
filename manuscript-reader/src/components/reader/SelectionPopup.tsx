@@ -62,7 +62,7 @@ export function SelectionPopup({ visible, position, onSave, onClose }: Selection
     >
       <div className="popup-row">
         {row1.map(t => (
-          <button key={t} className="ann-type-btn" data-type={t} onClick={() => handleType(t)}>
+          <button key={t} className={`ann-type-btn${pendingType === t ? ' active-type' : ''}`} data-type={t} onClick={() => handleType(t)}>
             <span className="type-dot" style={{ background: ANNOTATION_COLORS[t] }} />
             {ANNOTATION_LABELS[t]}
           </button>
@@ -70,7 +70,7 @@ export function SelectionPopup({ visible, position, onSave, onClose }: Selection
       </div>
       <div className="popup-row">
         {row2.map(t => (
-          <button key={t} className="ann-type-btn" data-type={t} onClick={() => handleType(t)}>
+          <button key={t} className={`ann-type-btn${pendingType === t ? ' active-type' : ''}`} data-type={t} onClick={() => handleType(t)}>
             <span className="type-dot" style={{ background: ANNOTATION_COLORS[t] }} />
             {ANNOTATION_LABELS[t]}
           </button>

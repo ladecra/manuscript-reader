@@ -115,8 +115,20 @@
   color: var(--ink-soft); background: none; border: none;
   cursor: pointer; text-decoration: none;
   transition: color 0.18s ease; padding: 0;
+  position: relative;
+}
+.lp-nav-link::after {
+  content: '';
+  position: absolute;
+  bottom: -3px; left: 0; right: 0;
+  height: 1.5px;
+  background: var(--gold);
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 0.22s var(--lp-ease);
 }
 .lp-nav-link:hover { color: var(--ink); }
+.lp-nav-link:hover::after { transform: scaleX(1); }
 .lp-nav-cta { margin-left: 6px; }
 @media (max-width: 860px) { .lp-nav-links .lp-nav-link { display: none; } }
 
@@ -223,6 +235,8 @@
 
 /* ── Generic section scaffold ────────────────────────────────────────────── */
 .lp-section { padding-block: clamp(88px, 12vw, 160px); }
+/* Bridge: reduced padding for sections that share a background with the section above */
+.lp-section-bridge { padding-block: clamp(48px, 6vw, 80px); }
 .lp-alt { background: var(--cream-2); border-block: 1px solid var(--line); }
 .lp-section-head { max-width: 38rem; margin-bottom: clamp(48px, 7vw, 80px); }
 .lp-section-head.center { margin-inline: auto; text-align: center; }
@@ -254,9 +268,9 @@
 }
 .lp-dark-body {
   font-size: clamp(1.06rem, 1.55vw, 1.22rem); line-height: 1.72;
-  color: rgba(230, 230, 240, 0.65);
+  color: rgba(230, 230, 240, 0.82);
 }
-.lp-dark-body em { color: rgba(230, 230, 240, 0.95); font-style: italic; }
+.lp-dark-body em { color: rgba(230, 230, 240, 0.98); font-style: italic; }
 
 /* ── Wedge band ──────────────────────────────────────────────────────────── */
 .lp-wedge { padding-block: clamp(88px, 11vw, 148px); }
@@ -494,41 +508,13 @@
 /* ── Intelligence section ─────────────────────────────────────────────────── */
 .lp-intel-head {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 0.9fr 1.1fr;
   gap: clamp(48px, 7vw, 96px);
-  align-items: start;
-  margin-bottom: clamp(56px, 8vw, 96px);
+  align-items: center;
 }
 .lp-intel-copy .lp-h2 { margin-bottom: 24px; }
 .lp-intel-lead { margin-top: 0; max-width: 36em; }
-
-.lp-pillars {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  border: 1px solid rgba(230, 230, 240, 0.12);
-  border-radius: 6px;
-  overflow: hidden;
-}
-.lp-pillar {
-  padding: clamp(22px, 3vw, 32px) clamp(24px, 3.5vw, 36px);
-  border-bottom: 1px solid rgba(230, 230, 240, 0.1);
-}
-.lp-pillar:last-child { border-bottom: none; }
-.lp-pillar-n {
-  font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase;
-  color: rgba(230,230,240,0.3); display: block; margin-bottom: 10px;
-}
-.lp-pillar-h {
-  font-size: clamp(1.3rem, 1.9vw, 1.65rem); font-weight: 500;
-  color: #f0f0f8; margin-bottom: 8px; letter-spacing: -0.01em;
-}
-.lp-pillar-p {
-  font-size: 1rem; line-height: 1.66;
-  color: rgba(230, 230, 240, 0.55);
-}
-
-.lp-intel-frame { max-width: 860px; }
+.lp-intel-visual { position: relative; }
 
 /* ── Workflow cards ──────────────────────────────────────────────────────── */
 .lp-cards {
@@ -550,19 +536,21 @@
 .lp-card-p { font-size: 0.97rem; line-height: 1.62; color: var(--ink-soft); }
 
 /* ── CTA band ────────────────────────────────────────────────────────────── */
-.lp-cta-band { padding-block: clamp(48px, 6vw, 80px); }
+.lp-cta-band {
+  padding-block: clamp(64px, 9vw, 112px);
+  border-top: 1px solid var(--line);
+}
 .lp-cta-inner {
-  max-width: 480px;
-  display: flex; flex-direction: column; align-items: flex-start;
+  display: flex; justify-content: center; align-items: center;
 }
-.lp-cta-h {
-  margin-top: 12px; margin-bottom: 16px;
-  font-size: clamp(1.7rem, 2.8vw, 2.4rem) !important;
-  line-height: 1.1 !important;
+.lp-btn-arrow {
+  display: inline-flex; align-items: center; gap: 10px;
 }
-.lp-cta-sub {
-  margin-top: 0; margin-bottom: 32px;
-  font-size: clamp(0.98rem, 1.3vw, 1.08rem); line-height: 1.65;
+.lp-arrow-ico {
+  transition: transform 0.22s var(--lp-ease);
+}
+.lp-btn-arrow:hover .lp-arrow-ico {
+  transform: translateX(5px);
 }
 
 /* ── Footer ──────────────────────────────────────────────────────────────── */

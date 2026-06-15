@@ -48,7 +48,7 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
 
   const { manuscript, chapters, annotations, addAnnotation, updateAnnotation, deleteAnnotation, importAnnotations, openManuscript } = useReaderStore();
   const { navOpen, annSidebarOpen, reportPanelOpen, closeNav, closeAnnSidebar, closeReportPanel, toggleAnnSidebar, closeAllPanels } = useUIStore();
-  const { updateProgress, getReadingPosition, appendChapters } = useLibraryStore();
+  const { library, updateProgress, getReadingPosition, appendChapters } = useLibraryStore();
 
   const [activeChapterIdx, setActiveChapterIdx] = useState(0);
   const [scrollPct, setScrollPct] = useState(0);
@@ -283,6 +283,17 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     }
   }, [manuscript, annotations, chapters]);
 
+  const handleExportHtml = useCallback(() => {
+    if (!manuscript) return;
+    if (!annotations.length) { showToast('No annotations yet.'); return; }
+    const title = library.find(m => m.id === manuscript.id)?.metadata.title ?? manuscript.metadata.title;
+    const rep = computeReport(annotations, chapters, manuscript.metadata.combinedMarkdown);
+    import('../engine/exports/reportHtml').then(({ exportReportHtml }) => {
+      exportReportHtml(title, manuscript.id, annotations, chapters, rep);
+      showToast('Intelligence report exported.');
+    }).catch(e => { console.error('HTML export error:', e); showToast('Export failed — see console.'); });
+  }, [manuscript, library, annotations, chapters]);
+
   const handleAppendChapters = useCallback((chunk: string) => {
     if (!manuscript) return;
     const updated = appendChapters(manuscript.id, chunk);
@@ -312,6 +323,7 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
         open={reportPanelOpen} report={report} onClose={closeReportPanel}
         onExport={() => exportReportJson(manuscript.metadata.title, manuscript.id, report!)}
         onExportDocx={handleExportDocx}
+        onExportHtml={handleExportHtml}
         onJumpToChapter={idx => { const ch = chapters.find(c => c.index === idx); if (ch) jumpToChapter(ch.id); }}
       />
       <SelectionPopup visible={selection.visible} position={selection.position} onSave={handleSaveAnnotation} onClose={() => setSelection(s => ({ ...s, visible: false, range: null }))} />

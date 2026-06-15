@@ -9,10 +9,11 @@ interface ReportPanelProps {
   onClose: () => void;
   onExport: () => void;
   onExportDocx: () => void;
+  onExportHtml: () => void;
   onJumpToChapter: (index: number) => void;
 }
 
-export function ReportPanel({ open, report, onClose, onExport, onExportDocx, onJumpToChapter }: ReportPanelProps) {
+export function ReportPanel({ open, report, onClose, onExport, onExportDocx, onExportHtml, onJumpToChapter }: ReportPanelProps) {
   return (
     <div id="report-panel" className={open ? 'open' : ''}>
       <div className="rp-header">
@@ -42,7 +43,10 @@ export function ReportPanel({ open, report, onClose, onExport, onExportDocx, onJ
       </div>
 
       <div className="rp-footer">
-        <button id="export-docx-btn" className="rp-export-btn" onClick={onExportDocx} style={{ marginBottom: '8px' }}>
+        <button id="export-html-btn" className="rp-export-btn" onClick={onExportHtml} style={{ marginBottom: '8px' }}>
+          Export intelligence report (.html)
+        </button>
+        <button id="export-docx-btn" className="rp-export-btn ann-export-secondary" onClick={onExportDocx} style={{ marginBottom: '8px' }}>
           Export intelligence report (.docx)
         </button>
         <button id="report-export-btn" className="rp-export-btn ann-export-secondary" onClick={onExport}>
