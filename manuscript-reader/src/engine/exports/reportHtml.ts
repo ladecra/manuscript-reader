@@ -4,7 +4,7 @@
 // then annotation heatmap, hotspots/silent chapters, type breakdown, report
 // details (p.2). All charts are inline SVG. No external dependencies.
 
-import type { Annotation, AnnotationType, Chapter, ChapterStat, Report } from '../types';
+import type { Annotation, AnnotationCluster, AnnotationType, Chapter, ChapterStat, Report } from '../types';
 import { ANNOTATION_TYPES } from '../types';
 
 // ── Palette (matches app light mode: index.css :root.light) ───────────────────
@@ -27,8 +27,70 @@ const LABEL: Record<AnnotationType, string> = {
 const INK = '#1B1A17', HEAD = '#2C2A26', META = '#6B6760',
       LBL = '#A09B90', RULE = '#E8E4DB', PAPER = '#FAF9F6';
 
+// ── Editorial signal presentation ─────────────────────────────────────────────
+// The engine decides which clusters exist (report.ts); this maps each signal to
+// how it reads on the page.
+const SIGNAL_META: Record<AnnotationCluster['signal'], { label: string; color: string; unit: string; lead: (c: AnnotationCluster) => string }> = {
+  'confusion': {
+    label: 'Possible Confusion', color: COLOR.question, unit: 'questions',
+    lead: c => `Readers raised ${c.count} question${c.count !== 1 ? 's' : ''} ${rangeLabel(c).toLowerCase()} — a likely setup, motivation, or clarity gap.`,
+  },
+  'continuity-break': {
+    label: 'Continuity to Reconcile', color: COLOR.continuity, unit: 'flags',
+    lead: c => `${c.count} continuity flag${c.count !== 1 ? 's' : ''} ${rangeLabel(c).toLowerCase()}. Worth a focused consistency pass.`,
+  },
+  'structural-issue': {
+    label: 'Structural Note', color: COLOR.structural, unit: 'notes',
+    lead: c => `${c.count} structural note${c.count !== 1 ? 's' : ''} ${rangeLabel(c).toLowerCase()} — pacing, scene order, or chapter shape.`,
+  },
+  'engagement': {
+    label: 'Strong Engagement', color: COLOR.highlight, unit: 'marks',
+    lead: c => `A concentration of ${c.count} highlights and bookmarks ${rangeLabel(c).toLowerCase()} — this is landing.`,
+  },
+};
+
+function rangeLabel(c: AnnotationCluster): string {
+  const [lo, hi] = c.chapterRange;
+  return lo === hi ? `in Chapter ${lo}` : `across Chapters ${lo}–${hi}`;
+}
+
 function esc(s: string | number): string {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// ── Verbatim feedback selection ───────────────────────────────────────────────
+// For most signals the reader's note IS the feedback (a question, a continuity
+// concern). For highlights/bookmarks the marked passage (quote) is the point.
+function snippetText(a: Annotation): string {
+  const noteFirst = a.type !== 'highlight' && a.type !== 'bookmark';
+  const raw = noteFirst
+    ? (a.note.trim() || a.quote.trim())
+    : (a.quote.trim() || a.note.trim());
+  return raw.length > 190 ? raw.slice(0, 187).trimEnd() + '…' : raw;
+}
+
+function snippetHtml(a: Annotation): string {
+  const text = snippetText(a);
+  if (!text) return '';
+  const who = a.readerName ? esc(a.readerName) : 'You';
+  return `<div class="quote">
+    <span class="quote-mark" style="background:${COLOR[a.type] ?? LBL}"></span>
+    <div class="quote-body">
+      <div class="quote-text">${esc(text)}</div>
+      <div class="quote-attr">${who}&nbsp;&nbsp;·&nbsp;&nbsp;Ch.&nbsp;${a.chapterIndex}</div>
+    </div>
+  </div>`;
+}
+
+// Best single annotation to show for a chapter: lead with editorial signal types.
+function representativeForChapter(annotations: Annotation[], index: number): Annotation | undefined {
+  const inCh = annotations.filter(a => a.chapterIndex === index && snippetText(a));
+  const order: AnnotationType[] = ['question', 'continuity', 'structural', 'note', 'bookmark', 'highlight'];
+  for (const t of order) {
+    const hit = inCh.find(a => a.type === t);
+    if (hit) return hit;
+  }
+  return inCh[0];
 }
 
 // ── Heatmap data: distribute annotations deterministically within chapters ─────
@@ -266,26 +328,19 @@ function statIcon(type: string): string {
   return `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="${LBL}" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">${paths[type] ?? ''}</svg>`;
 }
 
-// ── Key takeaways ─────────────────────────────────────────────────────────────
-function buildTakeaways(rep: Report): { color: string; title: string; desc: string }[] {
-  const out: { color: string; title: string; desc: string }[] = [];
-  if (rep.questionClusters.length) {
-    const top = rep.questionClusters[0];
-    const q = top.counts.question ?? 0;
-    out.push({ color: COLOR.question, title: `High Question Density in Chapter ${top.index}`,
-      desc: `Readers raised ${q} question${q !== 1 ? 's' : ''} in this chapter — among the highest in the manuscript.` });
-  }
-  if (rep.hotspots.length) {
-    out.push({ color: COLOR.highlight, title: 'Major Hotspot Detected',
-      desc: `A concentrated spike of annotations suggests a section that challenged or engaged readers.` });
-  }
-  if (rep.continuityFlags.length) {
-    const idxs = rep.continuityFlags.map(c => `${c.index}`).slice(0, 4).join(', ');
-    out.push({ color: COLOR.continuity, title: 'Continuity Concerns to Review',
-      desc: `Continuity was flagged in chapter${rep.continuityFlags.length !== 1 ? 's' : ''} ${idxs}. Consider a focused pass.` });
-  }
-  out.push({ color: COLOR.bookmark, title: `Reader Engagement: ${rep.label}`, desc: rep.blurb });
-  return out;
+// ── Editorial signals (clusters → cards, each with verbatim feedback) ─────────
+function signalCard(c: AnnotationCluster, annById: Map<string, Annotation>): string {
+  const meta = SIGNAL_META[c.signal];
+  const samples = c.annotations.map(id => annById.get(id)).filter((a): a is Annotation => !!a && !!snippetText(a)).slice(0, 2);
+  const quotes = samples.map(snippetHtml).join('');
+  return `<div class="signal-card" style="--sc:${meta.color}">
+    <div class="signal-head">
+      <span class="signal-label">${esc(meta.label)}</span>
+      <span class="signal-sev sev-${c.severity}">${c.severity}</span>
+    </div>
+    <div class="signal-lead">${esc(meta.lead(c))}</div>
+    ${quotes}
+  </div>`;
 }
 
 // ── CSS ───────────────────────────────────────────────────────────────────────
@@ -294,7 +349,6 @@ function css(): string {
 @import url('https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,600;1,400&display=swap');
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-/* ── Light mode (default) ── */
 body {
   --bg:     #E8E4DB;
   --page:   ${PAPER};
@@ -309,21 +363,6 @@ body {
   background: var(--bg);
   font-family: Georgia, 'EB Garamond', serif;
   -webkit-font-smoothing: antialiased;
-  transition: background 0.3s ease;
-}
-
-/* ── Dark mode ── */
-body[data-theme="dark"] {
-  --bg:     #16150F;
-  --page:   #1E1C16;
-  --card:   #2A2720;
-  --ink:    #F7F4EC;
-  --head:   #E6E1D4;
-  --meta:   #B6B1A3;
-  --lbl:    #8A857A;
-  --rule:   #3A362D;
-  --desc:   #C8C2B4;
-  --shadow: rgba(0,0,0,.4);
 }
 
 .page {
@@ -331,7 +370,6 @@ body[data-theme="dark"] {
   background: var(--page); color: var(--ink);
   margin: 36px auto; padding: 56px 60px;
   box-shadow: 0 4px 24px var(--shadow), 0 1px 4px var(--shadow);
-  transition: background 0.3s ease, color 0.3s ease, box-shadow 0.3s ease;
 }
 
 /* header */
@@ -358,7 +396,6 @@ body[data-theme="dark"] {
   border-bottom: 1px solid var(--rule);
   border-left: 1px solid var(--rule);
   border-right: 1px solid var(--rule);
-  transition: background 0.3s ease, border-color 0.3s ease;
 }
 .stat-icon { margin-bottom: 6px; }
 .stat-num  { font-family: Georgia, serif; font-size: 28px; color: var(--ink); display: block; line-height: 1; margin-bottom: 4px; }
@@ -370,12 +407,47 @@ body[data-theme="dark"] {
 .legend-item { display: flex; align-items: center; gap: 5px; font-family: Arial, sans-serif; font-size: 9px; color: var(--meta); }
 .legend-dot  { width: 8px; height: 8px; border-radius: 1px; flex-shrink: 0; }
 
-/* key takeaways */
-.takeaway { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 14px; }
-.takeaway-dot { width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 1px; }
-.takeaway-dot svg { width: 11px; height: 11px; }
-.takeaway-title { font-family: Arial, sans-serif; font-size: 11px; font-weight: 600; color: var(--tc); margin-bottom: 2px; }
-.takeaway-desc  { font-family: Georgia, serif; font-size: 12px; color: var(--desc); line-height: 1.55; }
+/* engagement lead line */
+.engagement-lead { font-family: Georgia, serif; font-size: 13px; color: var(--desc); line-height: 1.5; margin-bottom: 16px; }
+.engagement-lead strong { color: var(--ink); font-weight: 600; }
+
+/* editorial signal cards */
+.signal-card {
+  border-left: 2.5px solid var(--sc); background: var(--card);
+  padding: 11px 14px 12px; margin-bottom: 11px;
+  border-top: 1px solid var(--rule); border-right: 1px solid var(--rule); border-bottom: 1px solid var(--rule);
+}
+.signal-head { display: flex; align-items: center; gap: 9px; margin-bottom: 5px; }
+.signal-label { font-family: Arial, sans-serif; font-size: 11px; font-weight: 700; letter-spacing: .04em; color: var(--sc); }
+.signal-sev { font-family: Arial, sans-serif; font-size: 7.5px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; padding: 2px 6px; border-radius: 2px; }
+.sev-high   { color: #fff; background: var(--sc); }
+.sev-medium { color: var(--sc); background: var(--card); border: 1px solid var(--sc); }
+.sev-low    { color: var(--meta); background: var(--card); border: 1px solid var(--rule); }
+.signal-lead { font-family: Georgia, serif; font-size: 12px; color: var(--desc); line-height: 1.5; margin-bottom: 8px; }
+
+/* verbatim quote */
+.quote { display: flex; gap: 9px; margin-top: 7px; }
+.quote-mark { width: 3px; border-radius: 2px; flex-shrink: 0; align-self: stretch; }
+.quote-body { min-width: 0; }
+.quote-text { font-family: 'EB Garamond', Georgia, serif; font-size: 12px; font-style: italic; color: var(--head); line-height: 1.42; }
+.quote-attr { font-family: Arial, sans-serif; font-size: 8.5px; letter-spacing: .04em; color: var(--lbl); margin-top: 3px; text-transform: uppercase; }
+
+/* reader consensus */
+.consensus-row { display: flex; align-items: center; gap: 12px; margin-bottom: 9px; }
+.consensus-ch { font-family: Georgia, serif; font-size: 12px; color: var(--head); width: 180px; flex-shrink: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.consensus-track { flex: 1; height: 7px; background: var(--rule); border-radius: 4px; overflow: hidden; }
+.consensus-fill { height: 100%; background: ${COLOR.bookmark}; border-radius: 4px; }
+.consensus-val { font-family: Arial, sans-serif; font-size: 9.5px; color: var(--meta); white-space: nowrap; flex-shrink: 0; min-width: 56px; text-align: right; }
+
+/* reader feedback log */
+.feedback-group { margin-bottom: 18px; break-inside: avoid; }
+.feedback-ch { font-family: Georgia, serif; font-size: 14px; color: var(--ink); margin-bottom: 8px; padding-bottom: 5px; border-bottom: 1px solid var(--rule); }
+.feedback-item { display: flex; gap: 9px; margin-bottom: 10px; }
+.feedback-mark { width: 3px; border-radius: 2px; flex-shrink: 0; align-self: stretch; }
+.feedback-type { font-family: Arial, sans-serif; font-size: 7.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--meta); margin-bottom: 2px; }
+.feedback-text { font-family: Georgia, serif; font-size: 12.5px; color: var(--desc); line-height: 1.48; }
+.feedback-quote { font-family: 'EB Garamond', Georgia, serif; font-size: 11px; font-style: italic; color: var(--meta); line-height: 1.4; margin-top: 3px; padding-left: 9px; border-left: 1px solid var(--rule); }
+.feedback-attr { font-family: Arial, sans-serif; font-size: 8.5px; color: var(--lbl); margin-top: 3px; }
 
 /* two-column */
 .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
@@ -396,7 +468,7 @@ body[data-theme="dark"] {
 .breakdown-block { display: flex; align-items: center; gap: 12px; }
 
 /* report details box */
-.details-box { border: 1px solid var(--rule); padding: 14px 16px; transition: border-color 0.3s ease; }
+.details-box { border: 1px solid var(--rule); padding: 14px 16px; }
 .detail-row  { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 9px; }
 .detail-ico  { color: var(--meta); margin-top: 1px; }
 .detail-label { font-family: Arial, sans-serif; font-size: 8.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--lbl); margin-bottom: 1px; }
@@ -411,24 +483,10 @@ body[data-theme="dark"] {
 .mb20 { margin-bottom: 20px; }
 .mb28 { margin-bottom: 28px; }
 .mt24 { margin-top: 24px; }
-
-/* ── Theme toggle button ── */
-#theme-toggle {
-  position: fixed; top: 18px; right: 18px; z-index: 99;
-  display: flex; align-items: center; gap: 7px;
-  font-family: Arial, sans-serif; font-size: 10px; font-weight: 600;
-  letter-spacing: .1em; text-transform: uppercase;
-  background: var(--card); color: var(--meta);
-  border: 1px solid var(--rule); padding: 7px 13px;
-  cursor: pointer; border-radius: 2px;
-  transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
-}
-#theme-toggle:hover { color: var(--ink); }
-#theme-toggle svg { flex-shrink: 0; transition: opacity 0.2s; }
+.mt28 { margin-top: 28px; }
 
 @media print {
   body { background: white; }
-  #theme-toggle { display: none; }
   .page { margin: 0; box-shadow: none; page-break-after: always; width: 100%; }
   .page:last-child { page-break-after: auto; }
   @page { size: letter; margin: 0.75in; }
@@ -446,6 +504,8 @@ function buildHtml(opts: {
 }): string {
   const { title, annotations, chapters, report: rep, dateStr } = opts;
   const pct = (n: number) => rep.totalAnns > 0 ? Math.round((n / rep.totalAnns) * 100) : 0;
+  const annById = new Map(annotations.map(a => [a.id, a]));
+  const stripCh = (t: string) => t.replace(/^Chapter \d+\s*[—-]?\s*/i, '');
 
   const metaParts = [
     `${rep.totalWords.toLocaleString()} words`,
@@ -478,36 +538,78 @@ function buildHtml(opts: {
     `<div class="legend-item"><span class="legend-dot" style="background:${COLOR[t]}"></span>${LABEL[t]}</div>`
   ).join('')}</div>`;
 
-  // Key takeaways
-  const takeaways = buildTakeaways(rep);
-  const takeawaysHtml = takeaways.map(t => `
-    <div class="takeaway">
-      <div class="takeaway-dot" style="background:${t.color}22; --tc:${t.color}">
-        <svg viewBox="0 0 12 12" fill="none" stroke="${t.color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">
-          <circle cx="6" cy="6" r="4.5"/>
-        </svg>
-      </div>
-      <div>
-        <div class="takeaway-title" style="--tc:${t.color}">${esc(t.title)}</div>
-        <div class="takeaway-desc">${esc(t.desc)}</div>
-      </div>
-    </div>`).join('');
+  // Editorial signals (cluster cards with verbatim feedback) + engagement lead.
+  const engagementLead = rep.totalAnns > 0
+    ? `<div class="engagement-lead"><strong>Reader engagement: ${esc(rep.label)}.</strong> ${esc(rep.blurb)}</div>`
+    : '';
+  const signalsHtml = rep.clusters.length
+    ? rep.clusters.slice(0, 4).map(c => signalCard(c, annById)).join('')
+    : `<p style="color:${LBL};font-size:12px;font-style:italic">No concentrated signals yet — feedback is spread evenly across the manuscript.</p>`;
 
-  // Hotspots + silent chapter HTML
-  const hotspotsHtml = rep.hotspots.length ? rep.hotspots.slice(0, 3).map((h, i) => `
+  // Hotspots — each with one representative piece of verbatim feedback.
+  const hotspotsHtml = rep.hotspots.length ? rep.hotspots.slice(0, 3).map((h, i) => {
+    const rep1 = representativeForChapter(annotations, h.index);
+    return `
     <div class="hotspot-item">
       <div class="hotspot-num">${i + 1}</div>
-      <div>
-        <div class="hotspot-ch">Chapter ${h.index}${h.title ? ` — ${esc(h.title.replace(/^Chapter \d+\s*[—-]?\s*/i, ''))}` : ''}</div>
+      <div style="min-width:0">
+        <div class="hotspot-ch">Chapter ${h.index}${h.title ? ` — ${esc(stripCh(h.title))}` : ''}</div>
         <div class="hotspot-sub">${h.density.toFixed(1)} annotations&nbsp;/&nbsp;1,000 words</div>
+        ${rep1 ? snippetHtml(rep1) : ''}
       </div>
-    </div>`).join('') : `<p style="color:${LBL};font-size:11px;font-style:italic">No standout hotspots yet.</p>`;
+    </div>`;
+  }).join('') : `<p style="color:${LBL};font-size:11px;font-style:italic">No standout hotspots yet.</p>`;
 
   const silentHtml = rep.silent.length ? rep.silent.slice(0, 4).map(s => `
     <div class="silent-item">
-      <div class="silent-ch">Chapter ${s.index}${s.title ? ` — ${esc(s.title.replace(/^Chapter \d+\s*[—-]?\s*/i, ''))}` : ''}</div>
+      <div class="silent-ch">Chapter ${s.index}${s.title ? ` — ${esc(stripCh(s.title))}` : ''}</div>
       <div class="silent-sub">${s.count === 0 ? 'No annotations.' : `${s.density.toFixed(1)} ann. / 1,000 words · below average (${rep.avgDensity.toFixed(1)})`}</div>
     </div>`).join('') : `<p style="color:${LBL};font-size:11px;font-style:italic">Every chapter drew engagement.</p>`;
+
+  // Reader consensus — only when 2+ beta readers (engine returns [] otherwise).
+  const maxReaders = rep.readers.length;
+  const consensusHtml = rep.consensus.length ? rep.consensus.slice(0, 6).map(c => `
+    <div class="consensus-row">
+      <div class="consensus-ch">Ch. ${c.index}${c.title ? ` — ${esc(stripCh(c.title))}` : ''}</div>
+      <div class="consensus-track"><div class="consensus-fill" style="width:${Math.round((c.readerCount / maxReaders) * 100)}%"></div></div>
+      <div class="consensus-val">${c.readerCount} of ${maxReaders}</div>
+    </div>`).join('') : '';
+
+  // Reader feedback log (page 3) — verbatim questions, continuity & structural notes by chapter.
+  const logTypes: AnnotationType[] = ['question', 'continuity', 'structural'];
+  const logAnns = annotations
+    .filter(a => logTypes.includes(a.type) && snippetText(a))
+    .sort((a, b) => a.chapterIndex - b.chapterIndex || a.createdAt - b.createdAt);
+  const logByChapter = new Map<number, Annotation[]>();
+  for (const a of logAnns) {
+    const arr = logByChapter.get(a.chapterIndex) ?? [];
+    arr.push(a);
+    logByChapter.set(a.chapterIndex, arr);
+  }
+  const feedbackLogHtml = [...logByChapter.entries()].map(([idx, anns]) => {
+    const chTitle = rep.chapters.find(c => c.index === idx)?.title;
+    const items = anns.map(a => {
+      const isNote = a.type !== 'highlight' && a.type !== 'bookmark';
+      const primary = isNote ? (a.note.trim() || a.quote.trim()) : a.quote.trim();
+      const ptrunc = primary.length > 280 ? primary.slice(0, 277).trimEnd() + '…' : primary;
+      const ctx = isNote && a.note.trim() && a.quote.trim()
+        ? `<div class="feedback-quote">“${esc(a.quote.trim().length > 160 ? a.quote.trim().slice(0, 157).trimEnd() + '…' : a.quote.trim())}”</div>` : '';
+      return `
+      <div class="feedback-item">
+        <span class="feedback-mark" style="background:${COLOR[a.type] ?? LBL}"></span>
+        <div style="min-width:0">
+          <div class="feedback-type" style="color:${COLOR[a.type] ?? META}">${esc(LABEL[a.type] ?? a.type)}</div>
+          <div class="feedback-text">${esc(ptrunc)}</div>
+          ${ctx}
+          <div class="feedback-attr">${a.readerName ? esc(a.readerName) : 'You'}</div>
+        </div>
+      </div>`;
+    }).join('');
+    return `<div class="feedback-group">
+      <div class="feedback-ch">Chapter ${idx}${chTitle ? ` — ${esc(stripCh(chTitle))}` : ''}</div>
+      ${items}
+    </div>`;
+  }).join('');
 
   // Heatmap
   const heatPts = buildHeatmapPoints(annotations, rep.chapters);
@@ -548,24 +650,23 @@ function buildHtml(opts: {
       </div>
     </div>`;
 
-  const moonIcon = `<svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 12.5A7.5 7.5 0 0 1 7.5 2.5a7.5 7.5 0 1 0 10 10z"/></svg>`;
-  const sunIcon  = `<svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="3.5"/><path d="M10 2v2M10 16v2M2 10h2M16 10h2M4.2 4.2l1.4 1.4M14.4 14.4l1.4 1.4M4.2 15.8l1.4-1.4M14.4 5.6l1.4-1.4"/></svg>`;
+  const consensusSection = consensusHtml ? `
+  <div class="sec-head mt28 mb4">Reader Consensus</div>
+  <div class="sec-sub">Chapters multiple readers independently reacted to — your strongest revision signal</div>
+  ${consensusHtml}` : '';
 
-  // Escape SVG for use inside a JS single-quoted string inside a <script> block.
-  // We only need to escape backslashes and single quotes; angle brackets are fine in <script>.
-  const moonStr = moonIcon.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-  const sunStr  = sunIcon.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-  const toggleScript = `<script>
-(function(){
-  var moon='${moonStr}',sun='${sunStr}';
-  var btn=document.getElementById('theme-toggle');
-  btn.addEventListener('click',function(){
-    var b=document.body,d=b.getAttribute('data-theme')==='dark';
-    b.setAttribute('data-theme',d?'light':'dark');
-    btn.innerHTML=(d?moon+' Dark':sun+' Light');
-  });
-})();
-<\/script>`;
+  const page3 = feedbackLogHtml ? `
+<!-- ════════ PAGE 3 ════════ -->
+<div class="page">
+  <div class="page2-bar">
+    <span class="page2-bar-label">Reader Feedback — Verbatim</span>
+    <span class="page2-bar-title">${esc(title.toUpperCase())}</span>
+  </div>
+  <div class="sec-head mb4">Questions, Continuity &amp; Structural Notes</div>
+  <div class="sec-sub">Every flagged note in reading order — the raw editorial signal behind the charts</div>
+  <div class="mt24">${feedbackLogHtml}</div>
+  <div class="page-footer">${esc(title)}&nbsp;&nbsp;—&nbsp;&nbsp;Intelligence Report&nbsp;&nbsp;—&nbsp;&nbsp;p.3</div>
+</div>` : '';
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -576,9 +677,6 @@ function buildHtml(opts: {
 <style>${css()}</style>
 </head>
 <body>
-<button id="theme-toggle" aria-label="Toggle theme">
-  ${moonIcon} Dark
-</button>
 
 <!-- ════════ PAGE 1 ════════ -->
 <div class="page">
@@ -598,9 +696,10 @@ function buildHtml(opts: {
   ${legendHtml}
   ${barSvg}
 
-  <!-- Key Takeaways -->
-  <div class="sec-head mt24 mb12">Key Takeaways</div>
-  ${takeawaysHtml}
+  <!-- Editorial Signals -->
+  <div class="sec-head mt24 mb12">Editorial Signals</div>
+  ${engagementLead}
+  ${signalsHtml}
 
   <div class="page-footer">${esc(title)}&nbsp;&nbsp;—&nbsp;&nbsp;Intelligence Report&nbsp;&nbsp;—&nbsp;&nbsp;p.1</div>
 </div>
@@ -631,9 +730,10 @@ function buildHtml(opts: {
       ${silentHtml}
     </div>
   </div>
+  ${consensusSection}
 
   <!-- Breakdown + Details -->
-  <div class="two-col">
+  <div class="two-col mt28">
     <div>
       <div class="sec-head mb4">Annotation Type Breakdown</div>
       <div class="sec-sub">Distribution across the manuscript</div>
@@ -648,8 +748,7 @@ function buildHtml(opts: {
 
   <div class="page-footer">${esc(title)}&nbsp;&nbsp;—&nbsp;&nbsp;Intelligence Report&nbsp;&nbsp;—&nbsp;&nbsp;p.2</div>
 </div>
-
-${toggleScript}
+${page3}
 </body>
 </html>`;
 }

@@ -1,9 +1,83 @@
-import type { Annotation, AnnotationType, Chapter, ChapterStat, Report } from './types';
+import type { Annotation, AnnotationCluster, AnnotationType, Chapter, ChapterStat, Report } from './types';
 import { ANNOTATION_TYPES } from './types';
 import { computeChapterWords } from './ingestion/parseMarkdown';
 
 function emptyCounts(): Record<AnnotationType, number> {
   return Object.fromEntries(ANNOTATION_TYPES.map(t => [t, 0])) as Record<AnnotationType, number>;
+}
+
+// ── Editorial signal definitions ──────────────────────────────────────────────
+// Each signal maps one or more annotation types to an interpretation. A cluster
+// is a run of consecutive chapters that together carry enough of those types to
+// be worth a revision pass. Thresholds are deliberately conservative so the
+// report only ever surfaces real concentrations, not noise.
+interface SignalDef {
+  signal: AnnotationCluster['signal'];
+  types: AnnotationType[];
+  min: number;   // minimum annotations across the run to emit a cluster
+  med: number;   // count at/above which severity is 'medium'
+  high: number;  // count at/above which severity is 'high'
+}
+const SIGNAL_DEFS: SignalDef[] = [
+  { signal: 'confusion',        types: ['question'],              min: 2, med: 3, high: 5 },
+  { signal: 'continuity-break', types: ['continuity'],           min: 1, med: 2, high: 3 },
+  { signal: 'structural-issue', types: ['structural'],           min: 1, med: 2, high: 3 },
+  { signal: 'engagement',       types: ['highlight', 'bookmark'], min: 4, med: 6, high: 10 },
+];
+
+/**
+ * Detect editorial signal clusters: maximal runs of consecutive chapters that
+ * each carry the signal's annotation type(s), grouped into one finding per run.
+ * Pure — no browser, fully deterministic given the annotation list.
+ */
+function detectClusters(annotations: Annotation[], allStats: ChapterStat[]): AnnotationCluster[] {
+  const clusters: AnnotationCluster[] = [];
+  const ordered = [...allStats].sort((a, b) => a.index - b.index);
+
+  for (const def of SIGNAL_DEFS) {
+    const inSignal = (c: ChapterStat) => def.types.reduce((s, t) => s + (c.counts[t] ?? 0), 0);
+
+    let run: ChapterStat[] = [];
+    const flush = () => {
+      if (run.length === 0) return;
+      const total = run.reduce((s, c) => s + inSignal(c), 0);
+      if (total >= def.min) {
+        const lo = run[0].index, hi = run[run.length - 1].index;
+        const ids = annotations
+          .filter(a => def.types.includes(a.type) && a.chapterIndex >= lo && a.chapterIndex <= hi)
+          .sort((a, b) => a.chapterIndex - b.chapterIndex || a.createdAt - b.createdAt)
+          .map(a => a.id);
+        // Primary type = the most frequent of the signal's types across the run.
+        const primary = def.types
+          .map(t => ({ t, n: run.reduce((s, c) => s + (c.counts[t] ?? 0), 0) }))
+          .sort((a, b) => b.n - a.n)[0].t;
+        clusters.push({
+          id: `cluster-${def.signal}-${lo}-${hi}`,
+          type: primary,
+          chapterRange: [lo, hi],
+          annotations: ids,
+          signal: def.signal,
+          severity: total >= def.high ? 'high' : total >= def.med ? 'medium' : 'low',
+          count: total,
+        });
+      }
+      run = [];
+    };
+
+    let prevIndex: number | null = null;
+    for (const c of ordered) {
+      if (inSignal(c) > 0) {
+        if (prevIndex !== null && c.index !== prevIndex + 1) flush();
+        run.push(c);
+        prevIndex = c.index;
+      }
+    }
+    flush();
+  }
+
+  // Most actionable first: severity, then volume.
+  const sevRank = { high: 3, medium: 2, low: 1 } as const;
+  return clusters.sort((a, b) => sevRank[b.severity] - sevRank[a.severity] || b.count - a.count);
 }
 
 /**
@@ -25,10 +99,11 @@ export function computeReport(annotations: Annotation[], chapters: Chapter[], co
 
   // Build per-chapter stats keyed by chapter index.
   const chapterMap = new Map<number, ChapterStat>();
+  const chapterReaders = new Map<number, Set<string>>(); // index → distinct named readers
   for (const ch of chapters) {
     chapterMap.set(ch.index, {
       title: ch.title, index: ch.index, count: 0, counts: emptyCounts(),
-      words: chapterWords.get(ch.index) ?? 0, density: 0,
+      words: chapterWords.get(ch.index) ?? 0, density: 0, readerCount: 0,
     });
   }
   for (const ann of annotations) {
@@ -36,17 +111,23 @@ export function computeReport(annotations: Annotation[], chapters: Chapter[], co
     if (!chapterMap.has(key)) {
       chapterMap.set(key, {
         title: ann.chapterTitle, index: key, count: 0, counts: emptyCounts(),
-        words: chapterWords.get(key) ?? 0, density: 0,
+        words: chapterWords.get(key) ?? 0, density: 0, readerCount: 0,
       });
     }
     const stat = chapterMap.get(key)!;
     stat.count++;
     if (stat.counts[ann.type] !== undefined) (stat.counts[ann.type] as number)++;
+    if (ann.readerName) {
+      const set = chapterReaders.get(key) ?? new Set<string>();
+      set.add(ann.readerName);
+      chapterReaders.set(key, set);
+    }
   }
 
-  // Density = annotations per 1,000 words.
+  // Density = annotations per 1,000 words; readerCount = distinct named readers.
   for (const stat of chapterMap.values()) {
     stat.density = stat.words > 0 ? (stat.count / stat.words) * 1000 : 0;
+    stat.readerCount = chapterReaders.get(stat.index)?.size ?? 0;
   }
 
   const allStats = [...chapterMap.values()].sort((a, b) => a.index - b.index);
@@ -73,6 +154,15 @@ export function computeReport(annotations: Annotation[], chapters: Chapter[], co
   const continuityFlags = allStats.filter(c => (c.counts.continuity ?? 0) >= 1).sort((a, b) => (b.counts.continuity ?? 0) - (a.counts.continuity ?? 0));
 
   const readers = [...new Set(annotations.map(a => a.readerName).filter(Boolean))] as string[];
+
+  // Editorial signal clusters (confusion / continuity / structural / engagement runs).
+  const clusters = detectClusters(annotations, allStats);
+
+  // Reader consensus: only meaningful with 2+ beta readers. Surface the chapters
+  // the most readers independently reacted to — the strongest revision signal.
+  const consensus = readers.length >= 2
+    ? allStats.filter(c => c.readerCount >= 2).sort((a, b) => b.readerCount - a.readerCount || b.count - a.count)
+    : [];
 
   // Engagement score (0–100): coverage 45 · volume 35 · balance 20.
   const volumeTarget = (allStats.length || 1) * 4;
@@ -105,5 +195,8 @@ export function computeReport(annotations: Annotation[], chapters: Chapter[], co
     score,
     label,
     blurb,
+    clusters,
+    consensus,
+    annotationClusters: clusters,
   };
 }

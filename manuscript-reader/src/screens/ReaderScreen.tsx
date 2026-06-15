@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
-import type { AnnotationType } from '../engine/types';
+import type { AnnotationType, TextAnchor } from '../engine/types';
+import { buildAnchor, locateAnchor, anchorFromQuote } from '../engine/annotations/anchor';
 import { useReaderStore } from '../state/readerStore';
 import { useUIStore } from '../state/uiStore';
 import { useLibraryStore } from '../state/libraryStore';
@@ -35,6 +36,53 @@ function wrapTextInMark(container: HTMLElement, text: string, id: string, type: 
     }
   }
   return null;
+}
+
+// Map a [start, end) offset within a container's rendered text to a DOM Range,
+// walking text nodes and accumulating lengths. Returns null if out of range.
+function textOffsetToRange(container: HTMLElement, start: number, end: number): Range | null {
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+  const range = document.createRange();
+  let pos = 0;
+  let startSet = false;
+  let node: Text | null;
+  while ((node = walker.nextNode() as Text | null)) {
+    const len = node.nodeValue!.length;
+    if (!startSet && start < pos + len) { range.setStart(node, start - pos); startSet = true; }
+    if (startSet && end <= pos + len) { range.setEnd(node, end - pos); return range; }
+    pos += len;
+  }
+  return null;
+}
+
+// Re-locate an annotation by its durable anchor against the container's current
+// rendered text, then wrap the resolved span in a <mark>. Falls back to the
+// legacy text-node search when the resolved range crosses element boundaries
+// (surroundContents throws). Returns the mark, or null if orphaned.
+function markByAnchor(container: HTMLElement, anchor: TextAnchor, id: string, type: AnnotationType): HTMLElement | null {
+  const full = container.textContent ?? '';
+  const loc = locateAnchor(full, anchor);
+  if (loc && loc.end > loc.start) {
+    const range = textOffsetToRange(container, loc.start, loc.end);
+    if (range) {
+      try {
+        const mark = document.createElement('mark');
+        mark.dataset.ann = id; mark.className = 'type-' + type;
+        if (loc.confidence !== 'exact') mark.dataset.anchorConf = loc.confidence;
+        range.surroundContents(mark);
+        return mark;
+      } catch { /* range spans elements — fall through to legacy wrap */ }
+    }
+  }
+  return wrapTextInMark(container, anchor.quote, id, type);
+}
+
+// Character offset of a Range's start within a container's rendered text.
+function offsetInContainer(container: HTMLElement, range: Range): number {
+  const pre = document.createRange();
+  pre.selectNodeContents(container);
+  pre.setEnd(range.startContainer, range.startOffset);
+  return pre.toString().length;
 }
 
 interface ReaderScreenProps {
@@ -106,7 +154,7 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     });
     annotations.forEach(ann => {
       if (!ann.quote) return;
-      const mark = wrapTextInMark(c, ann.quote, ann.id, ann.type);
+      const mark = markByAnchor(c, ann.anchor ?? anchorFromQuote(ann.quote), ann.id, ann.type);
       if (mark) mark.addEventListener('click', e => { e.stopPropagation(); setEditingAnn({ id: ann.id, note: ann.note }); });
     });
   }, [annotations]);
@@ -230,7 +278,15 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
       );
       if (owner) { chapterTitle = owner.title; chapterIndex = owner.index; }
     }
-    const ann = addAnnotation({ type, quote: text.slice(0, 400), note, chapterTitle, chapterIndex });
+    // Build a durable anchor from the current rendered text before inserting the
+    // mark (so existing marks/this selection don't perturb the offset math).
+    const quote = text.slice(0, 400);
+    let anchor: TextAnchor | undefined;
+    if (range && quote && contentRef.current) {
+      const start = offsetInContainer(contentRef.current, range);
+      anchor = buildAnchor(contentRef.current.textContent ?? '', start, quote);
+    }
+    const ann = addAnnotation({ type, quote, note, chapterTitle, chapterIndex, anchor });
     if (range && text && contentRef.current) {
       try {
         const mark = document.createElement('mark');

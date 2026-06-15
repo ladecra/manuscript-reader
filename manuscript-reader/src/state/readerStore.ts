@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Manuscript, Chapter, Annotation, AnnotationType } from '../engine/types';
+import type { Manuscript, Chapter, Annotation, AnnotationType, TextAnchor } from '../engine/types';
 import { loadAnnotations, saveAnnotations } from '../engine/storage';
 
 function annId(): string {
@@ -24,6 +24,7 @@ interface ReaderStore {
     note: string;
     chapterTitle: string;
     chapterIndex: number;
+    anchor?: TextAnchor;
   }) => Annotation;
   updateAnnotation: (id: string, note: string) => void;
   deleteAnnotation: (id: string) => void;

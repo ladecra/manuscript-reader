@@ -47,6 +47,15 @@ export function parseMarkdown(md: string): ParsedManuscript {
   md = md.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   const lines = md.split('\n');
 
+  // Character offset of each line's start within the normalized markdown, so
+  // every block can record the exact source span it was rendered from. Edit
+  // mode (Phase 4/7) rewrites a block by splicing this span; offsets are into
+  // the *normalized* markdown, so callers must normalize before splicing.
+  const lineStart: number[] = new Array(lines.length);
+  { let acc = 0; for (let k = 0; k < lines.length; k++) { lineStart[k] = acc; acc += lines[k].length + 1; } }
+  const lineEnd = (k: number) => lineStart[k] + lines[k].length;
+  const src = (start: number, end: number) => ` data-md-start="${start}" data-md-end="${end}"`;
+
   let html = '';
   let i = 0;
   let chIdx = 0;
@@ -69,7 +78,7 @@ export function parseMarkdown(md: string): ParsedManuscript {
       html +=
         `<span class="chapter-marker" id="${id}">` +
         `Chapter ${String(chIdx).padStart(2, '0')}</span>` +
-        `<h1>${inline(title)}</h1>` +
+        `<h1${src(lineStart[i], lineEnd(i))}>${inline(title)}</h1>` +
         `<div class="chapter-block">`;
       inBlock = true;
       i++;
@@ -78,12 +87,12 @@ export function parseMarkdown(md: string): ParsedManuscript {
 
     // ── Section headings ──
     if (/^## /.test(line)) {
-      html += `<h2>${inline(line.replace(/^## /, '').trim())}</h2>`;
+      html += `<h2${src(lineStart[i], lineEnd(i))}>${inline(line.replace(/^## /, '').trim())}</h2>`;
       i++;
       continue;
     }
     if (/^### /.test(line)) {
-      html += `<h3>${inline(line.replace(/^### /, '').trim())}</h3>`;
+      html += `<h3${src(lineStart[i], lineEnd(i))}>${inline(line.replace(/^### /, '').trim())}</h3>`;
       i++;
       continue;
     }
@@ -97,12 +106,13 @@ export function parseMarkdown(md: string): ParsedManuscript {
 
     // ── Block quote ──
     if (/^> /.test(line)) {
+      const bqStart = i;
       let bq = '';
       while (i < lines.length && /^> /.test(lines[i])) {
         bq += inline(lines[i].replace(/^> /, '')) + ' ';
         i++;
       }
-      html += `<blockquote>${bq.trim()}</blockquote>`;
+      html += `<blockquote${src(lineStart[bqStart], lineEnd(i - 1))}>${bq.trim()}</blockquote>`;
       continue;
     }
 
@@ -154,7 +164,7 @@ export function parseMarkdown(md: string): ParsedManuscript {
       html +=
         `<span class="chapter-marker" id="${id}">` +
         `Chapter ${String(chIdx).padStart(2, '0')}</span>` +
-        `<h1>${inline(title)}</h1>` +
+        `<h1${src(lineStart[i], lineEnd(i + 1))}>${inline(title)}</h1>` +
         `<div class="chapter-block">`;
       inBlock = true;
       i += 2;
@@ -165,6 +175,7 @@ export function parseMarkdown(md: string): ParsedManuscript {
     if (/^\s*\d{1,3}\s*$/.test(line)) { i++; continue; }
 
     // ── Paragraph (catch-all) ──
+    const paraStart = i;
     let para = '';
     while (
       i < lines.length &&
@@ -180,7 +191,7 @@ export function parseMarkdown(md: string): ParsedManuscript {
       para += lines[i] + ' ';
       i++;
     }
-    if (para.trim()) html += `<p>${inline(para.trim())}</p>`;
+    if (para.trim()) html += `<p${src(lineStart[paraStart], lineEnd(i - 1))}>${inline(para.trim())}</p>`;
   }
 
   if (inBlock) html += '</div>';

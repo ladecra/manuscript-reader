@@ -99,6 +99,21 @@ export interface Annotation {
   readerName: string | null; // null = author's own; named for beta reader imports
   imported?: boolean;
   status?: AnnotationStatus; // reserved for revision workflow; absent = 'open'
+  anchor?: TextAnchor;       // durable re-location anchor (Phase 4); absent = legacy, re-anchor by quote alone
+}
+
+/**
+ * A durable text anchor (Phase 4). Locates a quoted span by its surrounding
+ * context rather than a bare first-match search, so an annotation survives
+ * chapter reordering and text edits that don't touch the quote, and degrades
+ * gracefully (to the right region, or to "orphaned") when the quote itself is
+ * edited. Operates in the rendered-text domain the reader selects in.
+ */
+export interface TextAnchor {
+  quote: string;   // the anchored text (mirrors Annotation.quote; kept here so the anchor is self-contained)
+  prefix: string;  // rendered text immediately before the quote (context)
+  suffix: string;  // rendered text immediately after the quote (context)
+  offset: number;  // index of the quote in its chapter's rendered text at creation time (a hint, not a guarantee)
 }
 
 // ─── Report ──────────────────────────────────────────────────────────────────
@@ -108,8 +123,9 @@ export interface ChapterStat {
   index: number;
   count: number;
   counts: Partial<Record<AnnotationType, number>>;
-  words: number;     // chapter word count (0 if unknown)
-  density: number;   // annotations per 1,000 words
+  words: number;       // chapter word count (0 if unknown)
+  density: number;     // annotations per 1,000 words
+  readerCount: number; // distinct named (beta) readers who annotated this chapter
 }
 
 export interface Report {
@@ -129,6 +145,8 @@ export interface Report {
   score: number;                // engagement score 0–100
   label: string;                // engagement label
   blurb: string;                // engagement blurb
+  clusters: AnnotationCluster[];// detected editorial signals (confusion / continuity / structural / engagement)
+  consensus: ChapterStat[];     // chapters multiple beta readers reacted to, sorted by reader agreement (empty for <2 readers)
   // Placeholders for Phase 2 report engine:
   engagementScore?: number;
   annotationClusters?: AnnotationCluster[];
@@ -162,9 +180,10 @@ export interface AnnotationCluster {
   id: string;
   type: AnnotationType;
   chapterRange: [number, number];
-  annotations: string[]; // annotation IDs
+  annotations: string[]; // annotation IDs, ordered for display
   signal: 'confusion' | 'engagement' | 'continuity-break' | 'structural-issue';
   severity: 'low' | 'medium' | 'high';
+  count: number;         // annotations of this signal within the range
 }
 
 /** A beta reader's reading session — who read what and when. */
