@@ -7,6 +7,7 @@ interface ToastState {
 
 let showToastExternal: ((msg: string, duration?: number) => void) | null = null;
 
+// eslint-disable-next-line react-refresh/only-export-components -- toast singleton lives with its component
 export function useToast() {
   const [state, setState] = useState<ToastState>({ message: '', visible: false });
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -26,6 +27,7 @@ export function useToast() {
 }
 
 /** Call from anywhere (outside React tree) — e.g. in engine utilities. */
+// eslint-disable-next-line react-refresh/only-export-components -- imperative toast trigger
 export function showToast(msg: string, duration?: number): void {
   showToastExternal?.(msg, duration);
 }
@@ -46,7 +48,7 @@ export function Toast({ message, visible }: ToastProps) {
         background: 'var(--surface-high)',
         border: '1px solid var(--border)',
         color: 'var(--on-surface)',
-        fontFamily: "'Geist', sans-serif",
+        fontFamily: "'Schibsted Grotesk', system-ui, sans-serif",
         fontSize: '12px',
         letterSpacing: '0.04em',
         padding: '9px 18px',

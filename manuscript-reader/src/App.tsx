@@ -2,29 +2,33 @@ import React, { useEffect } from 'react';
 import { useUIStore } from './state/uiStore';
 import { useLibraryStore } from './state/libraryStore';
 import { useReaderStore } from './state/readerStore';
+import { LandingScreen } from './screens/LandingScreen';
 import { LibraryScreen } from './screens/LibraryScreen';
 import { LoadScreen } from './screens/LoadScreen';
 import { ReaderScreen } from './screens/ReaderScreen';
 import { Toast, useToast } from './components/ui/Toast';
-import { QuillIcon, MenuIcon, MoonIcon, SunIcon, AnnotateIcon, ReportIcon, LibraryIcon } from './components/ui/Icons';
+import { SettingsMenu } from './components/ui/SettingsMenu';
+import { QuillIcon, MenuIcon, AnnotateIcon, ReportIcon, LibraryIcon } from './components/ui/Icons';
 import { parseMarkdown } from './engine/ingestion/parseMarkdown';
 import type { Manuscript } from './engine/types';
 
-function IconBtn({ onClick, active, title, children }: {
+function IconBtn({ onClick, active, title, label, children }: {
   onClick?: () => void;
   active?: boolean;
   title?: string;
+  label?: string;
   children: React.ReactNode;
 }) {
   return (
     <button className={`icon-btn${active ? ' active-btn' : ''}`} onClick={onClick} title={title} aria-label={title}>
       {children}
+      {label && <span className="icon-btn-label">{label}</span>}
     </button>
   );
 }
 
 export function App() {
-  const { screen, theme, fontSize, annSidebarOpen, reportPanelOpen, setScreen, toggleTheme, increaseFontSize, decreaseFontSize, toggleNav, toggleAnnSidebar, toggleReportPanel } = useUIStore();
+  const { screen, theme, fontSize, annSidebarOpen, reportPanelOpen, setScreen, toggleNav, toggleAnnSidebar, toggleReportPanel } = useUIStore();
   const { library, upsertManuscript, updateManuscript, cycleStatus, deleteManuscript, replaceMarkdown, getReadingPosition } = useLibraryStore();
   const { manuscript, annotations, openManuscript, closeManuscript } = useReaderStore();
   const { toastState, showToast } = useToast();
@@ -35,6 +39,7 @@ export function App() {
   useEffect(() => {
     document.documentElement.classList.toggle('light', theme === 'light');
     document.documentElement.style.setProperty('--body-size', `${fontSize}px`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- apply persisted theme/font once on mount; later changes go through uiStore
   }, []);
 
   useEffect(() => {
@@ -71,8 +76,20 @@ export function App() {
     window.scrollTo(0, 0);
   }
 
+  // The wordmark is the "home" affordance — back out to the marketing landing.
+  function handleHomeNav() {
+    setScreen('landing');
+    closeManuscript();
+    window.scrollTo(0, 0);
+  }
+
   const title = manuscript?.metadata.title ?? '';
   const hasAnnotations = annotations.length > 0;
+
+  // The marketing front door owns the full viewport — no app topbar.
+  if (screen === 'landing') {
+    return <LandingScreen onOpenApp={handleLibraryNav} />;
+  }
 
   return (
     <>
@@ -84,9 +101,12 @@ export function App() {
               <span id="topbar-title">{title}</span>
             </>
           ) : (
-            <button id="brand" className="show" onClick={handleLibraryNav}>
+            <button id="brand" className="show" onClick={handleHomeNav} title="Home">
               <QuillIcon size={18} />
-              <span className="brand-word">VELLIBRIS</span>
+              <span className="brand-name">
+                <span className="brand-word">Vellibris</span>
+                <span className="brand-sub">Manuscript Reader</span>
+              </span>
             </button>
           )}
         </div>
@@ -95,21 +115,20 @@ export function App() {
           {screen === 'reader' && (
             <>
               <span id="topbar-chapter">{chapterLabel}</span>
-              <button className="text-btn" onClick={decreaseFontSize} title="Decrease font">A−</button>
-              <span className="text-btn" style={{ cursor:'default', color:'var(--border)', padding:'6px 2px' }}>{fontSize}</span>
-              <button className="text-btn" onClick={increaseFontSize} title="Increase font">A+</button>
               <div style={{ position:'relative', display:'inline-flex' }}>
-                <IconBtn onClick={toggleAnnSidebar} active={annSidebarOpen} title="Annotations (⌘E)"><AnnotateIcon /></IconBtn>
+                <IconBtn onClick={toggleAnnSidebar} active={annSidebarOpen} title="Annotations (⌘E)" label="Annotations"><AnnotateIcon /></IconBtn>
                 {hasAnnotations && <span id="revision-mode-badge" className="visible" />}
               </div>
-              <IconBtn onClick={toggleReportPanel} active={reportPanelOpen} title="Report"><ReportIcon /></IconBtn>
-              <IconBtn onClick={handleLibraryNav} title="Library"><LibraryIcon /></IconBtn>
+              <IconBtn onClick={toggleReportPanel} active={reportPanelOpen} title="Report" label="Report"><ReportIcon /></IconBtn>
+              {/* Divider fences the per-manuscript panel toggles off from the
+                  leave-the-reader / settings controls, so Library isn't a stray click away. */}
+              <span aria-hidden="true" style={{ width: '1px', height: '18px', background: 'var(--border)', margin: '0 6px', alignSelf: 'center' }} />
             </>
           )}
-          {screen === 'load' && <IconBtn onClick={handleLibraryNav} title="Library"><LibraryIcon /></IconBtn>}
-          <IconBtn onClick={toggleTheme} title="Toggle theme">
-            {theme === 'dark' ? <MoonIcon /> : <SunIcon />}
-          </IconBtn>
+          {(screen === 'reader' || screen === 'load') && (
+            <IconBtn onClick={handleLibraryNav} title="Library" label="Library"><LibraryIcon /></IconBtn>
+          )}
+          <SettingsMenu />
         </div>
       </header>
 

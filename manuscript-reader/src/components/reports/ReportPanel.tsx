@@ -8,10 +8,11 @@ interface ReportPanelProps {
   report: Report | null;
   onClose: () => void;
   onExport: () => void;
+  onExportDocx: () => void;
   onJumpToChapter: (index: number) => void;
 }
 
-export function ReportPanel({ open, report, onClose, onExport, onJumpToChapter }: ReportPanelProps) {
+export function ReportPanel({ open, report, onClose, onExport, onExportDocx, onJumpToChapter }: ReportPanelProps) {
   return (
     <div id="report-panel" className={open ? 'open' : ''}>
       <div className="rp-header">
@@ -41,8 +42,11 @@ export function ReportPanel({ open, report, onClose, onExport, onJumpToChapter }
       </div>
 
       <div className="rp-footer">
-        <button id="report-export-btn" className="rp-export-btn" onClick={onExport}>
-          Export report JSON
+        <button id="export-docx-btn" className="rp-export-btn" onClick={onExportDocx} style={{ marginBottom: '8px' }}>
+          Export intelligence report (.docx)
+        </button>
+        <button id="report-export-btn" className="rp-export-btn ann-export-secondary" onClick={onExport}>
+          Export report data (.json)
         </button>
       </div>
     </div>
@@ -191,7 +195,7 @@ function Finding({
           ))}
         </div>
       ) : (
-        <div style={{ color: 'var(--dim)', fontFamily: "'Geist', sans-serif", fontSize: '12px', fontStyle: 'italic', padding: '6px 0' }}>
+        <div style={{ color: 'var(--dim)', fontFamily: "'Schibsted Grotesk', system-ui, sans-serif", fontSize: '12px', fontStyle: 'italic', padding: '6px 0' }}>
           None yet.
         </div>
       )}

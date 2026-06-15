@@ -14,26 +14,36 @@ interface ChapterTreeProps {
   onChange: (edits: ChapterEdit[]) => void;
 }
 
+function rowsFromMarkdown(md: string | undefined): ChapterTreeRow[] {
+  if (!md) return [];
+  return parseMarkdown(md).chapters.map(c => ({ index: c.index, title: c.title, deleted: false }));
+}
+
 export function ChapterTree({ combinedMarkdown, onChange }: ChapterTreeProps) {
-  const [rows, setRows] = useState<ChapterTreeRow[]>([]);
+  const [rows, setRows] = useState<ChapterTreeRow[]>(() => rowsFromMarkdown(combinedMarkdown));
+  const [syncedMd, setSyncedMd] = useState(combinedMarkdown);
   const dragIndex = useRef<number | null>(null);
+  const [draggingPos, setDraggingPos] = useState<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
   const [dropSide, setDropSide] = useState<'above' | 'below'>('above');
 
-  useEffect(() => {
-    if (!combinedMarkdown) { setRows([]); return; }
-    const { chapters } = parseMarkdown(combinedMarkdown);
-    setRows(chapters.map(c => ({ index: c.index, title: c.title, deleted: false })));
-  }, [combinedMarkdown]);
+  // Reset rows when the source markdown changes — adjusted during render rather
+  // than in an effect (React's recommended "derive state from props" pattern).
+  if (combinedMarkdown !== syncedMd) {
+    setSyncedMd(combinedMarkdown);
+    setRows(rowsFromMarkdown(combinedMarkdown));
+  }
 
-  // Propagate edits upward whenever rows change.
+  // Propagate edits upward whenever rows change. onChange's identity is
+  // parent-controlled, so we intentionally fire only on rows change.
   useEffect(() => {
     onChange(rows.map(r => ({ index: r.index, newTitle: r.title, deleted: r.deleted })));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows]);
 
   if (!combinedMarkdown) {
     return (
-      <div style={{ fontFamily: "'Geist', sans-serif", fontSize: '11px', color: 'var(--border)', padding: '8px 0' }}>
+      <div style={{ fontFamily: "'Schibsted Grotesk', system-ui, sans-serif", fontSize: '11px', color: 'var(--border)', padding: '8px 0' }}>
         Reload manuscript to manage chapters.
       </div>
     );
@@ -45,7 +55,7 @@ export function ChapterTree({ combinedMarkdown, onChange }: ChapterTreeProps) {
     setRows(prev => {
       const next = [...prev];
       const [moved] = next.splice(src, 1);
-      let insertAt = targetPos;
+      let insertAt: number;
       if (src < targetPos) insertAt = dropSide === 'above' ? targetPos - 1 : targetPos;
       else insertAt = dropSide === 'above' ? targetPos : targetPos + 1;
       insertAt = Math.max(0, Math.min(next.length, insertAt));
@@ -53,6 +63,7 @@ export function ChapterTree({ combinedMarkdown, onChange }: ChapterTreeProps) {
       return next;
     });
     dragIndex.current = null;
+    setDraggingPos(null);
     setDragOverIdx(null);
   };
 
@@ -61,11 +72,11 @@ export function ChapterTree({ combinedMarkdown, onChange }: ChapterTreeProps) {
       {rows.map((row, pos) => (
         <div
           key={row.index}
-          className={`ch-tree-row${dragIndex.current === pos ? ' dragging' : ''}` +
+          className={`ch-tree-row${draggingPos === pos ? ' dragging' : ''}` +
             (dragOverIdx === pos ? (dropSide === 'above' ? ' drag-over-above' : ' drag-over-below') : '')}
           draggable
-          onDragStart={(e) => { dragIndex.current = pos; e.dataTransfer.effectAllowed = 'move'; }}
-          onDragEnd={() => { dragIndex.current = null; setDragOverIdx(null); }}
+          onDragStart={(e) => { dragIndex.current = pos; setDraggingPos(pos); e.dataTransfer.effectAllowed = 'move'; }}
+          onDragEnd={() => { dragIndex.current = null; setDraggingPos(null); setDragOverIdx(null); }}
           onDragOver={(e) => {
             e.preventDefault();
             if (dragIndex.current === null || dragIndex.current === pos) return;

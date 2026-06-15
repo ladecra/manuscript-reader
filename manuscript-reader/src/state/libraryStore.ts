@@ -9,6 +9,7 @@ function toManuscript(s: StoredManuscript): Manuscript {
     id: s.id,
     metadata: {
       title: s.title,
+      author: s.author,
       wordCount: s.wordCount,
       chapterCount: s.chapterCount,
       lastOpened: s.lastOpened,
@@ -28,7 +29,7 @@ interface LibraryStore {
   library: Manuscript[];
   refresh: () => void;
   upsertManuscript: (md: string) => Manuscript;
-  updateManuscript: (id: string, patch: { title?: string; status?: ManuscriptStatus; chapterCount?: number }) => void;
+  updateManuscript: (id: string, patch: { title?: string; author?: string; status?: ManuscriptStatus; chapterCount?: number }) => void;
   cycleStatus: (id: string) => void;
   deleteManuscript: (id: string) => void;
   touchManuscript: (id: string) => void;
@@ -57,12 +58,12 @@ export const useLibraryStore = create<LibraryStore>((_set, _get) => {
       const flat: StoredManuscript = {
         id, title, wordCount, chapterCount: chapters.length, lastOpened: Date.now(),
         status: existing >= 0 ? stored[existing].status : 'Draft',
+        author: existing >= 0 ? stored[existing].author : undefined,
         combinedMarkdown: md,
       };
       if (existing >= 0) stored[existing] = flat; else stored.unshift(flat);
-      const trimmed = stored.slice(0, 20);
-      saveLibrary(trimmed);
-      const converted = trimmed.map(toManuscript);
+      saveLibrary(stored);
+      const converted = stored.map(toManuscript);
       set({ library: converted });
       return converted.find(m => m.id === id)!;
     },
@@ -72,6 +73,7 @@ export const useLibraryStore = create<LibraryStore>((_set, _get) => {
       const idx = stored.findIndex(m => m.id === id);
       if (idx < 0) return;
       if (patch.title) stored[idx].title = patch.title;
+      if (patch.author !== undefined) stored[idx].author = patch.author;
       if (patch.status) stored[idx].status = patch.status;
       if (patch.chapterCount !== undefined) stored[idx].chapterCount = patch.chapterCount;
       saveLibrary(stored);

@@ -28,9 +28,15 @@ async function readDocx(file: File): Promise<string> {
   if (!fn) throw new Error('mammoth.convertToMarkdown not found');
   const result = await fn({ arrayBuffer: ab }, { styleMap: MAMMOTH_STYLE_MAP });
   let text = preprocessMarkdown(result.value.trim());
+  const title = file.name.replace(/\.docx$/i, '').replace(/[-_]/g, ' ').trim();
   if (!hasHeading(text)) {
-    const title = file.name.replace(/\.docx$/i, '').replace(/[-_]/g, ' ');
+    // No structure at all — wrap the whole thing under a filename heading.
     text = `# ${title}\n\n${text}`;
+  } else if (!/<!--\s*title:/i.test(text)) {
+    // Chapters were found but the document had no title page (common for DOCX
+    // exports). Use the filename as the book title so the library/topbar don't
+    // show the first chapter's name as the manuscript title.
+    text = `<!-- title: ${title} -->\n\n${text}`;
   }
   return text;
 }

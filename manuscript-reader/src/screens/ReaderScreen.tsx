@@ -5,16 +5,15 @@ import { useUIStore } from '../state/uiStore';
 import { useLibraryStore } from '../state/libraryStore';
 import { computeReport } from '../engine/report';
 import { parseMarkdown } from '../engine/ingestion/parseMarkdown';
+import { chapterForOffset } from '../engine/manuscript/chapterForOffset';
 import { ChapterNav } from '../components/reader/ChapterNav';
 import { AnnotationSidebar } from '../components/reader/AnnotationSidebar';
 import { SelectionPopup } from '../components/reader/SelectionPopup';
 import { ReportPanel } from '../components/reports/ReportPanel';
-import { ShareModal } from '../components/reader/ShareModal';
 import { AddChaptersModal } from '../components/reader/AddChaptersModal';
 import { showToast } from '../components/ui/Toast';
 import { exportRevisionPacket } from '../engine/exports/revisionPacket';
 import { exportReportJson } from '../engine/exports/reportJson';
-import { exportShareableReader, ShareReaderBuildError } from '../engine/exports/shareableReader';
 
 function wrapTextInMark(container: HTMLElement, text: string, id: string, type: AnnotationType) {
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
@@ -58,7 +57,6 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   const [selection, setSelection] = useState<{ visible: boolean; position: { left: number; top: number }; range: Range | null; text: string }>({ visible: false, position: { left: 0, top: 0 }, range: null, text: '' });
   const [editingAnn, setEditingAnn] = useState<{ id: string; note: string } | null>(null);
   const [topbarHidden, setTopbarHidden] = useState(false);
-  const [shareOpen, setShareOpen] = useState(false);
   const [addChaptersOpen, setAddChaptersOpen] = useState(false);
   const totalWords = useRef(0);
   const lastScrollY = useRef(0);
@@ -95,6 +93,7 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
       }
     }
     return () => entranceObs.current?.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-render content only when the manuscript changes
   }, [manuscript?.id, manuscript?.metadata.combinedMarkdown]);
 
   // Re-apply highlights
@@ -112,6 +111,7 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     });
   }, [annotations]);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- reapply marks only when annotations change
   useEffect(() => { reapplyHighlights(); }, [annotations]);
 
   // Scroll
@@ -133,11 +133,13 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
       setScrollPct(Math.round(pct * 100));
       setMinsLeft(Math.ceil((1 - pct) * totalWords.current / 238));
 
-      let activeChapter = null;
-      for (const ch of chapters) {
-        const el = document.getElementById(ch.id);
-        if (el && el.getBoundingClientRect().top <= 80) activeChapter = ch;
-      }
+      const activeChapter = chapterForOffset(
+        chapters.map(ch => ({
+          chapter: ch,
+          offset: document.getElementById(ch.id)?.getBoundingClientRect().top ?? Infinity,
+        })),
+        80,
+      );
       if (activeChapter && activeChapter.index !== activeChapterIdx) {
         setActiveChapterIdx(activeChapter.index);
         const label = `Ch. ${String(activeChapter.index).padStart(2, '0')}`;
@@ -153,6 +155,7 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     }
     window.addEventListener('scroll', onScroll, { passive: true });
     return () => window.removeEventListener('scroll', onScroll);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- updateProgress is a stable store action
   }, [chapters, activeChapterIdx, manuscript?.id, onChapterLabelChange]);
 
   // Apply topbar hidden to real DOM element
@@ -218,10 +221,14 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     if (range) {
       const rect = range.getBoundingClientRect();
       const y = rect.top + window.scrollY;
-      for (const ch of chapters) {
-        const el = document.getElementById(ch.id);
-        if (el && el.offsetTop <= y + 100) { chapterTitle = ch.title; chapterIndex = ch.index; }
-      }
+      const owner = chapterForOffset(
+        chapters.map(ch => ({
+          chapter: ch,
+          offset: document.getElementById(ch.id)?.offsetTop ?? Infinity,
+        })),
+        y + 100,
+      );
+      if (owner) { chapterTitle = owner.title; chapterIndex = owner.index; }
     }
     const ann = addAnnotation({ type, quote: text.slice(0, 400), note, chapterTitle, chapterIndex });
     if (range && text && contentRef.current) {
@@ -254,9 +261,10 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     if (mark) { const p = mark.parentNode!; while (mark.firstChild) p.insertBefore(mark.firstChild, mark); p.removeChild(mark); (p as Element).normalize?.(); }
   }, []);
 
+  const reportMarkdown = manuscript?.metadata.combinedMarkdown;
   const report = React.useMemo(
-    () => annotations.length > 0 ? computeReport(annotations, chapters, manuscript?.metadata.combinedMarkdown) : null,
-    [annotations, chapters, manuscript?.metadata.combinedMarkdown],
+    () => annotations.length > 0 ? computeReport(annotations, chapters, reportMarkdown) : null,
+    [annotations, chapters, reportMarkdown],
   );
 
   // ── Export handlers ──
@@ -274,18 +282,6 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
       showToast('DOCX export failed — see console.');
     }
   }, [manuscript, annotations, chapters]);
-
-  const handleShareDownload = useCallback((withAnnotations: boolean) => {
-    if (!manuscript?.metadata.combinedMarkdown) { showToast('Manuscript not available.'); return; }
-    try {
-      exportShareableReader(manuscript.metadata.title, manuscript.metadata.combinedMarkdown, withAnnotations);
-      setShareOpen(false);
-      showToast('Reader file downloaded.');
-    } catch (e) {
-      console.error('Share reader build failed:', e);
-      showToast(e instanceof ShareReaderBuildError ? e.message : 'Could not generate file.');
-    }
-  }, [manuscript]);
 
   const handleAppendChapters = useCallback((chunk: string) => {
     if (!manuscript) return;
@@ -310,24 +306,15 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
         onDelete={id => { deleteAnnotation(id); removeMark(id); showToast('Annotation removed.'); }}
         onJumpTo={jumpToAnnotation}
         onExport={() => exportRevisionPacket(manuscript.metadata.title, manuscript.id, annotations, chapters)}
-        onExportDocx={handleExportDocx}
-        onShare={() => setShareOpen(true)}
         onImport={(anns, reader) => { const n = importAnnotations(anns, reader); showToast(`${n} annotation${n !== 1 ? 's' : ''} imported.`); }}
       />
       <ReportPanel
         open={reportPanelOpen} report={report} onClose={closeReportPanel}
         onExport={() => exportReportJson(manuscript.metadata.title, manuscript.id, report!)}
+        onExportDocx={handleExportDocx}
         onJumpToChapter={idx => { const ch = chapters.find(c => c.index === idx); if (ch) jumpToChapter(ch.id); }}
       />
       <SelectionPopup visible={selection.visible} position={selection.position} onSave={handleSaveAnnotation} onClose={() => setSelection(s => ({ ...s, visible: false, range: null }))} />
-      <ShareModal
-        open={shareOpen}
-        title={manuscript.metadata.title}
-        wordCount={manuscript.metadata.wordCount}
-        chapterCount={chapters.length}
-        onClose={() => setShareOpen(false)}
-        onDownload={handleShareDownload}
-      />
       <AddChaptersModal
         open={addChaptersOpen}
         manuscriptTitle={manuscript.metadata.title}
@@ -364,6 +351,7 @@ function AnnotationEditPopup({ annId, note, onSave, onDelete, onClose }: { annId
     const mark = document.querySelector(`mark[data-ann="${annId}"]`);
     if (mark) {
       const r = mark.getBoundingClientRect();
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- position popup after measuring the mark
       setPos({ left: Math.max(8, Math.min(r.left, window.innerWidth - 340)), top: r.bottom + 8 > window.innerHeight - 160 ? Math.max(8, r.top - 160) : r.bottom + 8 });
     }
   }, [annId]);
@@ -372,14 +360,14 @@ function AnnotationEditPopup({ annId, note, onSave, onDelete, onClose }: { annId
     <>
       <div style={{ position: 'fixed', inset: 0, zIndex: 199 }} onMouseDown={onClose} />
       <div id="ann-edit-popup" className="visible" style={{ left: pos.left, top: pos.top }} onMouseDown={e => e.stopPropagation()}>
-        <div style={{ fontFamily: "'Geist', sans-serif", fontSize: '9px', letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--dim)', marginBottom: '8px' }}>Edit note</div>
+        <div style={{ fontFamily: "'Schibsted Grotesk', system-ui, sans-serif", fontSize: '9px', letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--dim)', marginBottom: '8px' }}>Edit note</div>
         <textarea ref={ref} value={text} onChange={e => setText(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); onSave(text.trim()); } if (e.key === 'Escape') onClose(); }}
           style={{ width: '100%', minHeight: '64px', background: 'none', border: 'none', borderBottom: '1px solid var(--border)', color: 'var(--primary)', fontFamily: "'EB Garamond', Georgia, serif", fontSize: '15px', lineHeight: '1.5', outline: 'none', resize: 'none', padding: '0 0 8px' }}
         />
         <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '10px' }}>
-          <button style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: "'Geist', sans-serif", fontSize: '10px', letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--border)' }} onClick={onDelete}>Delete</button>
-          <button style={{ background: 'none', border: '1px solid var(--primary)', fontFamily: "'Geist', sans-serif", fontSize: '10px', fontWeight: 500, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--primary)', padding: '5px 14px', cursor: 'pointer' }} onClick={() => onSave(text.trim())}>Save</button>
+          <button style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: "'Schibsted Grotesk', system-ui, sans-serif", fontSize: '10px', letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--border)' }} onClick={onDelete}>Delete</button>
+          <button style={{ background: 'none', border: '1px solid var(--primary)', fontFamily: "'Schibsted Grotesk', system-ui, sans-serif", fontSize: '10px', fontWeight: 500, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--primary)', padding: '5px 14px', cursor: 'pointer' }} onClick={() => onSave(text.trim())}>Save</button>
         </div>
       </div>
     </>

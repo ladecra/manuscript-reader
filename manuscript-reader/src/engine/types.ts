@@ -17,6 +17,7 @@ export interface Manuscript {
 
 export interface ManuscriptMetadata {
   title: string;
+  author?: string;
   wordCount: number;
   chapterCount: number;
   lastOpened: number;
@@ -82,6 +83,11 @@ export const ANNOTATION_COLORS: Record<AnnotationType, string> = {
   structural: '#fb923c',
 };
 
+/** Revision lifecycle of an annotation. Reserved now (no UI yet) so the data
+ *  model is ready when beta-reader feedback and open/resolved workflows land
+ *  (dev-plan Phase 4/5). Absent = treat as 'open'. */
+export type AnnotationStatus = 'open' | 'resolved';
+
 export interface Annotation {
   id: string;
   type: AnnotationType;
@@ -92,6 +98,7 @@ export interface Annotation {
   createdAt: number;         // Unix ms
   readerName: string | null; // null = author's own; named for beta reader imports
   imported?: boolean;
+  status?: AnnotationStatus; // reserved for revision workflow; absent = 'open'
 }
 
 // ─── Report ──────────────────────────────────────────────────────────────────

@@ -10,8 +10,6 @@ interface AnnotationSidebarProps {
   onDelete: (id: string) => void;
   onJumpTo: (id: string) => void;
   onExport: () => void;
-  onExportDocx: () => void;
-  onShare: () => void;
   onImport: (anns: Annotation[], readerName: string | null) => void;
 }
 
@@ -22,8 +20,6 @@ export function AnnotationSidebar({
   onDelete,
   onJumpTo,
   onExport,
-  onExportDocx,
-  onShare,
   onImport,
 }: AnnotationSidebarProps) {
   const [activeFilter, setActiveFilter] = React.useState<AnnotationType | 'all'>('all');
@@ -98,7 +94,7 @@ export function AnnotationSidebar({
       </div>
 
       <div className="ann-sidebar-footer">
-        <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
+        <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', marginBottom: '10px' }}>
           <button
             className="text-btn"
             style={{ fontSize: '10px', padding: '6px 0' }}
@@ -115,14 +111,8 @@ export function AnnotationSidebar({
             id="ann-import-input"
           />
         </div>
-        <button id="export-btn" onClick={onExport} style={{ marginBottom: '8px' }}>
+        <button id="export-btn" onClick={onExport}>
           Export revision packet (.md)
-        </button>
-        <button id="export-docx-btn" className="ann-export-secondary" onClick={onExportDocx} style={{ marginBottom: '8px' }}>
-          Export intelligence report (.docx)
-        </button>
-        <button id="share-btn" className="ann-export-secondary" onClick={onShare}>
-          Share reader file (.html)
         </button>
       </div>
     </div>
