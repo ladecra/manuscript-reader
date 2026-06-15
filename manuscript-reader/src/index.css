@@ -128,7 +128,7 @@ body {
   transition: top 0.4s var(--ease-expo);
 }
 #progress-track.topbar-hidden { top: 0; }
-#progress-fill { height: 100%; background: var(--primary); width: 0%; transition: width 0.15s linear; }
+#progress-fill { height: 100%; background: var(--brand); width: 0%; transition: width 0.15s linear; }
 
 /* ── Buttons ── */
 .icon-btn {
@@ -220,7 +220,7 @@ body {
   transition: color 0.15s, background 0.15s; -webkit-tap-highlight-color: transparent;
 }
 .chapter-link:hover, .chapter-link:active { color: var(--primary); background: var(--surface); }
-.chapter-link.active { color: var(--primary); }
+.chapter-link.active { color: var(--brand); }
 .ch-num { display: block; font-size: 10px; color: var(--border); margin-bottom: 2px; letter-spacing: 0.1em; }
 #nav-overlay {
   display: none; position: fixed; inset: 0; z-index: 85;
@@ -434,6 +434,23 @@ body {
 }
 
 /* ── Library screen ── */
+/* Library glow — a single soft, static field behind the entrance only.
+   Never the reader: the reading view stays clean and undecorated. */
+#screen-library { position: relative; }
+#screen-library.active::before {
+  content: ''; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background:
+    radial-gradient(60% 48% at 50% -8%, rgba(216, 169, 63, 0.08), transparent 68%),
+    radial-gradient(54% 44% at 102% 104%, rgba(96, 74, 150, 0.20), transparent 70%);
+}
+/* Light mode: swap the cool violet for a warm taupe that sits with the parchment. */
+:root.light #screen-library.active::before {
+  background:
+    radial-gradient(60% 48% at 50% -8%, rgba(216, 169, 63, 0.08), transparent 68%),
+    radial-gradient(54% 44% at 102% 104%, rgba(140, 118, 86, 0.16), transparent 70%);
+}
+#screen-library .screen-inner { position: relative; z-index: 1; }
+
 .library-title {
   font-family: 'EB Garamond', Georgia, serif;
   font-size: clamp(30px, 5.5vw, 44px); font-weight: 400; line-height: 1.05;
@@ -486,7 +503,7 @@ body {
 .ms-status.status--final-polish { color: #5b5ee0; border-color: rgba(99,102,241,0.4); background: rgba(99,102,241,0.09); }
 .ms-status.status--complete { color: #2c9072; border-color: rgba(47,158,125,0.42); background: rgba(47,158,125,0.1); }
 .ms-progress-bar { width: 100%; height: 1px; background: var(--border); opacity: 0.3; margin-top: 14px; }
-.ms-progress-fill { height: 100%; background: var(--dim); transition: width 0.6s var(--ease-expo); }
+.ms-progress-fill { height: 100%; background: var(--brand); opacity: 0.7; transition: width 0.6s var(--ease-expo); }
 .ms-divider { height: 1px; background: var(--border); opacity: 0.2; margin-top: 36px; }
 .ms-edit-form {
   margin-top: 20px; padding: 24px; background: var(--surface);
