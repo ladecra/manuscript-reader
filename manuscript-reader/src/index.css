@@ -585,6 +585,25 @@ body {
 }
 #content em { font-style: italic; }
 #content strong { font-weight: 500; color: var(--primary); }
+
+/* ── Edit mode: light-touch prose editing ── */
+#content.edit-mode p[contenteditable] {
+  cursor: text;
+  border-radius: 3px;
+  margin-left: -10px; padding-left: 10px;
+  border-left: 2px solid transparent;
+  transition: border-color 0.2s var(--ease-std), background 0.2s var(--ease-std);
+}
+#content.edit-mode p[contenteditable]:hover { border-left-color: var(--border); }
+#content.edit-mode p[contenteditable]:focus {
+  outline: none;
+  border-left-color: var(--brand);
+  background: var(--surface);
+}
+/* Drop cap fights caret placement while editing — suppress it in edit mode. */
+#content.edit-mode .chapter-block > p:first-of-type::first-letter {
+  font-size: inherit; line-height: inherit; float: none; margin: 0; font-weight: inherit;
+}
 #content blockquote {
   border-left: 1px solid var(--border); margin: 36px 0; padding: 0 0 0 24px;
   font-style: italic; color: var(--muted);

@@ -10,7 +10,7 @@
 //   manuscript:{id}    annotations:{id}    position:{id}
 //   edits:{id}         session:{id}:{readerId}    snapshot:{id}:{snapId}   (future)
 
-import type { Annotation } from '../types';
+import type { Annotation, Edit } from '../types';
 
 /** The flat record persisted per manuscript (matches the v0.9 localStorage schema
  *  for backward compatibility). `combinedMarkdown` is the source of truth. */
@@ -33,11 +33,14 @@ export interface StorageProvider {
 
   listManuscripts(): Promise<StoredManuscript[]>;
   saveManuscript(ms: StoredManuscript): Promise<void>;
-  /** Removes the manuscript and everything attached to it (annotations, position). */
+  /** Removes the manuscript and everything attached to it (annotations, edits, position). */
   deleteManuscript(id: string): Promise<void>;
 
   loadAnnotations(id: string): Promise<Annotation[]>;
   saveAnnotations(id: string, annotations: Annotation[]): Promise<void>;
+
+  loadEdits(id: string): Promise<Edit[]>;
+  saveEdits(id: string, edits: Edit[]): Promise<void>;
 
   loadPosition(id: string): Promise<number>;
   savePosition(id: string, frac: number): Promise<void>;
@@ -48,5 +51,6 @@ export const MANUSCRIPT_PREFIX = 'manuscript:';
 export const key = {
   manuscript: (id: string) => `${MANUSCRIPT_PREFIX}${id}`,
   annotations: (id: string) => `annotations:${id}`,
+  edits: (id: string) => `edits:${id}`,
   position: (id: string) => `position:${id}`,
 };

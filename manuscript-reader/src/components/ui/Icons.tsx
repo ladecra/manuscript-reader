@@ -18,6 +18,16 @@ export function QuillIcon({ size = 18, ...props }: IconProps) {
   );
 }
 
+export function PencilIcon({ size = 17 }: IconProps) {
+  return (
+    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.2"
+      strokeLinecap="round" strokeLinejoin="round" width={size} height={size}>
+      <path d="M11.5 3.2l3.3 3.3"/>
+      <path d="M12.6 2.1a1.6 1.6 0 0 1 2.3 0l-.0 0a1.6 1.6 0 0 1 0 2.3L5.4 13.9l-3.4.9.9-3.4z"/>
+    </svg>
+  );
+}
+
 export function MenuIcon({ size = 17 }: IconProps) {
   return (
     <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.2"

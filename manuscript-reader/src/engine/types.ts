@@ -11,6 +11,7 @@ export interface Manuscript {
   metadata: ManuscriptMetadata;
   chapters: Chapter[];
   annotations: Annotation[];
+  edits: Edit[];            // author edit decisions (distinct from reader annotations)
   reports: Report[];        // computed on demand, cached here
   exports: ExportRecord[];  // log of generated exports
 }
@@ -99,6 +100,55 @@ export interface Annotation {
   readerName: string | null; // null = author's own; named for beta reader imports
   imported?: boolean;
   status?: AnnotationStatus; // reserved for revision workflow; absent = 'open'
+  anchor?: TextAnchor;       // durable re-location anchor (Phase 4); absent = legacy, re-anchor by quote alone
+}
+
+/**
+ * A durable text anchor (Phase 4). Locates a quoted span by its surrounding
+ * context rather than a bare first-match search, so an annotation survives
+ * chapter reordering and text edits that don't touch the quote, and degrades
+ * gracefully (to the right region, or to "orphaned") when the quote itself is
+ * edited. Operates in the rendered-text domain the reader selects in.
+ */
+export interface TextAnchor {
+  quote: string;   // the anchored text (mirrors Annotation.quote; kept here so the anchor is self-contained)
+  prefix: string;  // rendered text immediately before the quote (context)
+  suffix: string;  // rendered text immediately after the quote (context)
+  offset: number;  // index of the quote within the anchor's text domain at creation time (a hint, not a guarantee)
+  /** Durable chapter identity (Chapter.id, e.g. "ch-3"). When present, the anchor
+   *  was captured in that chapter's rendered-text domain and re-location is scoped
+   *  to it — so the anchor survives chapter reordering, and a sentence duplicated
+   *  across chapters resolves to the right one. Absent = legacy whole-manuscript
+   *  anchor (resolves against the full rendered text, as before). */
+  chapterId?: string;
+}
+
+// ─── Edit ────────────────────────────────────────────────────────────────────
+//
+// An author's edit decision, modelled as a first-class object distinct from an
+// Annotation. The distinction is deliberate: an annotation is an *observation*
+// (a reader reacting to a passage); an edit is a *decision* (the author changing
+// it). Conflating them — "an edit is just a special annotation" — was tempting,
+// but they have different lifecycles and different consumers. Keeping them apart
+// gives us a revision log for free now, and a clean signal for version snapshots
+// (Phase 8) and the AI interpretation layer (Phase 9) later.
+//
+// Edit mode rewrites the manuscript's source markdown in place; this record is
+// the durable trail of *what changed*, captured at commit time.
+
+export interface Edit {
+  id: string;
+  manuscriptId: string;
+  chapterId: string;        // durable chapter identity (Chapter.id, e.g. "ch-1") — survives reordering
+  chapterIndex: number;     // presentation only (parallels Annotation); for grouping/labels
+  chapterTitle: string;     // presentation only
+  /** Anchor in the *source-markdown* domain (not rendered text): locates the
+   *  edited span by surrounding source context so the edit can be re-found in a
+   *  later draft. quote === originalText. */
+  anchor: TextAnchor;
+  originalText: string;     // the source-markdown span before the edit
+  replacementText: string;  // the source-markdown span after the edit
+  createdAt: number;        // Unix ms
 }
 
 // ─── Report ──────────────────────────────────────────────────────────────────
@@ -108,8 +158,9 @@ export interface ChapterStat {
   index: number;
   count: number;
   counts: Partial<Record<AnnotationType, number>>;
-  words: number;     // chapter word count (0 if unknown)
-  density: number;   // annotations per 1,000 words
+  words: number;       // chapter word count (0 if unknown)
+  density: number;     // annotations per 1,000 words
+  readerCount: number; // distinct named (beta) readers who annotated this chapter
 }
 
 export interface Report {
@@ -129,6 +180,8 @@ export interface Report {
   score: number;                // engagement score 0–100
   label: string;                // engagement label
   blurb: string;                // engagement blurb
+  clusters: AnnotationCluster[];// detected editorial signals (confusion / continuity / structural / engagement)
+  consensus: ChapterStat[];     // chapters multiple beta readers reacted to, sorted by reader agreement (empty for <2 readers)
   // Placeholders for Phase 2 report engine:
   engagementScore?: number;
   annotationClusters?: AnnotationCluster[];
@@ -162,9 +215,10 @@ export interface AnnotationCluster {
   id: string;
   type: AnnotationType;
   chapterRange: [number, number];
-  annotations: string[]; // annotation IDs
+  annotations: string[]; // annotation IDs, ordered for display
   signal: 'confusion' | 'engagement' | 'continuity-break' | 'structural-issue';
   severity: 'low' | 'medium' | 'high';
+  count: number;         // annotations of this signal within the range
 }
 
 /** A beta reader's reading session — who read what and when. */

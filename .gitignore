@@ -1,6 +1,10 @@
 # Vite / npm
 manuscript-reader/node_modules/
 manuscript-reader/dist/
+# Stale build output from the pre-React migration once lived at the repo root.
+# The live build is manuscript-reader/dist (Netlify base dir); never track dist.
+/dist/
+/package-lock.json
 
 # Environment files
 .env

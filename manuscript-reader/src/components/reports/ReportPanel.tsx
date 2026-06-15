@@ -10,10 +10,12 @@ interface ReportPanelProps {
   onExport: () => void;
   onExportDocx: () => void;
   onExportHtml: () => void;
+  onExportRevisionLog: () => void;
+  editCount: number;
   onJumpToChapter: (index: number) => void;
 }
 
-export function ReportPanel({ open, report, onClose, onExport, onExportDocx, onExportHtml, onJumpToChapter }: ReportPanelProps) {
+export function ReportPanel({ open, report, onClose, onExport, onExportDocx, onExportHtml, onExportRevisionLog, editCount, onJumpToChapter }: ReportPanelProps) {
   return (
     <div id="report-panel" className={open ? 'open' : ''}>
       <div className="rp-header">
@@ -52,6 +54,11 @@ export function ReportPanel({ open, report, onClose, onExport, onExportDocx, onE
         <button id="report-export-btn" className="rp-export-btn ann-export-secondary" onClick={onExport}>
           Export report data (.json)
         </button>
+        {editCount > 0 && (
+          <button id="revision-log-btn" className="rp-export-btn ann-export-secondary" onClick={onExportRevisionLog} style={{ marginTop: '8px' }}>
+            Export revision log ({editCount} edit{editCount !== 1 ? 's' : ''})
+          </button>
+        )}
       </div>
     </div>
   );

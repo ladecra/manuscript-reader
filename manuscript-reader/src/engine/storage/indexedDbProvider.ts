@@ -7,7 +7,7 @@
 // added later WITHOUT an IndexedDB version bump / upgrade migration.
 
 import { openDB, type IDBPDatabase } from 'idb';
-import type { Annotation } from '../types';
+import type { Annotation, Edit } from '../types';
 import type { StorageProvider, StoredManuscript } from './provider';
 import { key, MANUSCRIPT_PREFIX } from './provider';
 
@@ -52,6 +52,7 @@ export class IndexedDbProvider implements StorageProvider {
     await Promise.all([
       tx.store.delete(key.manuscript(id)),
       tx.store.delete(key.annotations(id)),
+      tx.store.delete(key.edits(id)),
       tx.store.delete(key.position(id)),
       tx.done,
     ]);
@@ -65,6 +66,16 @@ export class IndexedDbProvider implements StorageProvider {
   async saveAnnotations(id: string, annotations: Annotation[]): Promise<void> {
     const db = await this.db();
     await db.put(STORE, annotations, key.annotations(id));
+  }
+
+  async loadEdits(id: string): Promise<Edit[]> {
+    const db = await this.db();
+    return ((await db.get(STORE, key.edits(id))) as Edit[]) ?? [];
+  }
+
+  async saveEdits(id: string, edits: Edit[]): Promise<void> {
+    const db = await this.db();
+    await db.put(STORE, edits, key.edits(id));
   }
 
   async loadPosition(id: string): Promise<number> {

@@ -20,6 +20,7 @@ function toManuscript(s: StoredManuscript): Manuscript {
     },
     chapters: [],
     annotations: [],
+    edits: [],
     reports: [],
     exports: [],
   };

@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
-import type { AnnotationType } from '../engine/types';
+import type { AnnotationType, TextAnchor, Chapter } from '../engine/types';
+import { buildAnchor, locateAnchor, anchorFromQuote } from '../engine/annotations/anchor';
+import { applyBlockEdit, htmlToMarkdownInline, sameProse } from '../engine/manuscript/blockEdit';
 import { useReaderStore } from '../state/readerStore';
 import { useUIStore } from '../state/uiStore';
 import { useLibraryStore } from '../state/libraryStore';
@@ -37,6 +39,82 @@ function wrapTextInMark(container: HTMLElement, text: string, id: string, type: 
   return null;
 }
 
+// Map a [start, end) offset within a container's rendered text to a DOM Range,
+// walking text nodes and accumulating lengths. Returns null if out of range.
+function textOffsetToRange(container: HTMLElement, start: number, end: number): Range | null {
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+  const range = document.createRange();
+  let pos = 0;
+  let startSet = false;
+  let node: Text | null;
+  while ((node = walker.nextNode() as Text | null)) {
+    const len = node.nodeValue!.length;
+    if (!startSet && start < pos + len) { range.setStart(node, start - pos); startSet = true; }
+    if (startSet && end <= pos + len) { range.setEnd(node, end - pos); return range; }
+    pos += len;
+  }
+  return null;
+}
+
+// Re-locate an annotation by its durable anchor against the container's current
+// rendered text, then wrap the resolved span in a <mark>. Falls back to the
+// legacy text-node search when the resolved range crosses element boundaries
+// (surroundContents throws). Returns the mark, or null if orphaned.
+// The `.chapter-block` element holding a chapter's body, by its durable id (the
+// parser emits `<span id="ch-N">`, then the heading, then `<div class="chapter-block">`).
+// Returns null for forematter or a chapter that no longer exists.
+function chapterBlockFor(container: HTMLElement, chapterId: string): HTMLElement | null {
+  const marker = container.querySelector(`#${CSS.escape(chapterId)}`);
+  let el = marker?.nextElementSibling ?? null;
+  while (el && !el.classList.contains('chapter-block')) el = el.nextElementSibling;
+  return (el as HTMLElement) ?? null;
+}
+
+function markByAnchor(container: HTMLElement, anchor: TextAnchor, id: string, type: AnnotationType): HTMLElement | null {
+  // Scope resolution to the anchored chapter when the anchor carries one (and it
+  // still exists); otherwise resolve against the whole manuscript (legacy anchors).
+  const scope = anchor.chapterId ? chapterBlockFor(container, anchor.chapterId) : null;
+  const root = scope ?? container;
+  const full = root.textContent ?? '';
+  const loc = locateAnchor(full, anchor);
+  if (loc && loc.end > loc.start) {
+    const range = textOffsetToRange(root, loc.start, loc.end);
+    if (range) {
+      try {
+        const mark = document.createElement('mark');
+        mark.dataset.ann = id; mark.className = 'type-' + type;
+        if (loc.confidence !== 'exact') mark.dataset.anchorConf = loc.confidence;
+        range.surroundContents(mark);
+        return mark;
+      } catch { /* range spans elements — fall through to legacy wrap */ }
+    }
+  }
+  return wrapTextInMark(root, anchor.quote, id, type);
+}
+
+// Character offset of a Range's start within a container's rendered text.
+function offsetInContainer(container: HTMLElement, range: Range): number {
+  const pre = document.createRange();
+  pre.selectNodeContents(container);
+  pre.setEnd(range.startContainer, range.startOffset);
+  return pre.toString().length;
+}
+
+// Per-paragraph snapshot of innerHTML at focus time, so a commit can tell a
+// real edit from a focus-through and skip needless re-renders.
+const editOriginalHtml = new WeakMap<HTMLElement, string>();
+
+// Toggle the light-touch edit affordance: prose paragraphs (the only blocks
+// that carry a source span) become contentEditable; everything else stays
+// read-only. The reading layout is unchanged — only the cursor/affordance.
+function setupEditable(container: HTMLElement, on: boolean) {
+  container.classList.toggle('edit-mode', on);
+  container.querySelectorAll('p[data-md-start]').forEach(p => {
+    if (on) p.setAttribute('contenteditable', 'true');
+    else p.removeAttribute('contenteditable');
+  });
+}
+
 interface ReaderScreenProps {
   onChapterLabelChange: (label: string) => void;
 }
@@ -46,9 +124,9 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   const scrollSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const entranceObs = useRef<IntersectionObserver | null>(null);
 
-  const { manuscript, chapters, annotations, addAnnotation, updateAnnotation, deleteAnnotation, importAnnotations, openManuscript } = useReaderStore();
-  const { navOpen, annSidebarOpen, reportPanelOpen, closeNav, closeAnnSidebar, closeReportPanel, toggleAnnSidebar, closeAllPanels } = useUIStore();
-  const { library, updateProgress, getReadingPosition, appendChapters } = useLibraryStore();
+  const { manuscript, chapters, annotations, edits, addAnnotation, updateAnnotation, deleteAnnotation, importAnnotations, openManuscript, recordEdit } = useReaderStore();
+  const { navOpen, annSidebarOpen, reportPanelOpen, editMode, closeNav, closeAnnSidebar, closeReportPanel, toggleAnnSidebar, closeAllPanels } = useUIStore();
+  const { library, updateProgress, getReadingPosition, appendChapters, replaceMarkdown } = useLibraryStore();
 
   const [activeChapterIdx, setActiveChapterIdx] = useState(0);
   const [scrollPct, setScrollPct] = useState(0);
@@ -61,6 +139,11 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   const totalWords = useRef(0);
   const lastScrollY = useRef(0);
   const topbarVisible = useRef(true);
+  const editModeRef = useRef(false);
+  const pendingEditScroll = useRef<number | null>(null); // set before an edit re-render to restore exact scroll (no resume/flash)
+  const cancelEditRef = useRef(false);
+  const commitRef = useRef<(p: HTMLElement) => void>(() => {});
+  useEffect(() => { editModeRef.current = editMode; }, [editMode]);
 
   // Clock
   useEffect(() => {
@@ -68,18 +151,51 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     tick(); const id = setInterval(tick, 30000); return () => clearInterval(id);
   }, []);
 
+  // Re-apply highlights (declared before the effects that call it, to avoid a
+  // use-before-declaration in the render/edit re-render paths).
+  const reapplyHighlights = useCallback(() => {
+    const c = contentRef.current; if (!c) return;
+    c.querySelectorAll('mark[data-ann]').forEach(mark => {
+      const parent = mark.parentNode!;
+      while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
+      parent.removeChild(mark); (parent as Element).normalize?.();
+    });
+    annotations.forEach(ann => {
+      if (!ann.quote) return;
+      const mark = markByAnchor(c, ann.anchor ?? anchorFromQuote(ann.quote), ann.id, ann.type);
+      if (mark) mark.addEventListener('click', e => {
+        if (editModeRef.current) return; // in edit mode a click just places the caret
+        e.stopPropagation(); setEditingAnn({ id: ann.id, note: ann.note });
+      });
+    });
+  }, [annotations]);
+
   // Render content + entrance observer + restore position
   useEffect(() => {
     if (!manuscript?.metadata.combinedMarkdown || !contentRef.current) return;
+    const c = contentRef.current;
     const { html } = parseMarkdown(manuscript.metadata.combinedMarkdown);
-    contentRef.current.innerHTML = html;
+    c.innerHTML = html;
     totalWords.current = manuscript.metadata.combinedMarkdown.trim().split(/\s+/).filter(Boolean).length;
+
+    // An edit re-render: keep the reading posture — no fade-in, no resume toast,
+    // restore the exact scroll, re-apply edit affordance and re-anchor marks.
+    const editScroll = pendingEditScroll.current;
+    if (editScroll != null) {
+      pendingEditScroll.current = null;
+      c.querySelectorAll('p, blockquote, ul, ol').forEach(el => el.classList.add('visible'));
+      setupEditable(c, editModeRef.current);
+      reapplyHighlights();
+      window.scrollTo(0, editScroll);
+      return;
+    }
 
     if (entranceObs.current) entranceObs.current.disconnect();
     entranceObs.current = new IntersectionObserver(entries => {
       entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('visible'); entranceObs.current?.unobserve(e.target); } });
     }, { threshold: 0.08, rootMargin: '0px 0px -40px 0px' });
-    contentRef.current.querySelectorAll('p, blockquote, ul, ol').forEach(el => entranceObs.current?.observe(el));
+    c.querySelectorAll('p, blockquote, ul, ol').forEach(el => entranceObs.current?.observe(el));
+    if (editModeRef.current) setupEditable(c, true);
 
     window.scrollTo(0, 0);
     if (manuscript.id) {
@@ -96,23 +212,113 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-render content only when the manuscript changes
   }, [manuscript?.id, manuscript?.metadata.combinedMarkdown]);
 
-  // Re-apply highlights
-  const reapplyHighlights = useCallback(() => {
-    const c = contentRef.current; if (!c) return;
-    c.querySelectorAll('mark[data-ann]').forEach(mark => {
-      const parent = mark.parentNode!;
-      while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
-      parent.removeChild(mark); (parent as Element).normalize?.();
-    });
-    annotations.forEach(ann => {
-      if (!ann.quote) return;
-      const mark = wrapTextInMark(c, ann.quote, ann.id, ann.type);
-      if (mark) mark.addEventListener('click', e => { e.stopPropagation(); setEditingAnn({ id: ann.id, note: ann.note }); });
-    });
-  }, [annotations]);
-
   // eslint-disable-next-line react-hooks/exhaustive-deps -- reapply marks only when annotations change
   useEffect(() => { reapplyHighlights(); }, [annotations]);
+
+  // ── Edit mode ──────────────────────────────────────────────────────────────
+  // Re-render the current source in place (no persist): used to discard stray
+  // contentEditable markup and re-anchor marks while holding scroll & posture.
+  const rerenderInPlace = useCallback(() => {
+    const c = contentRef.current; const md = manuscript?.metadata.combinedMarkdown;
+    if (!c || !md) return;
+    const sy = window.scrollY;
+    c.innerHTML = parseMarkdown(md).html;
+    c.querySelectorAll('p, blockquote, ul, ol').forEach(el => el.classList.add('visible'));
+    setupEditable(c, editModeRef.current);
+    reapplyHighlights();
+    window.scrollTo(0, sy);
+  }, [manuscript, reapplyHighlights]);
+
+  // Commit one paragraph: serialize its edited HTML back to markdown, splice it
+  // into the source at the block's recorded span, persist, and re-render. A
+  // paragraph that was only focused-through (innerHTML unchanged) is left alone.
+  const commitBlockEdit = useCallback((p: HTMLElement) => {
+    const origHtml = editOriginalHtml.get(p);
+    editOriginalHtml.delete(p);
+    const cancelled = cancelEditRef.current; cancelEditRef.current = false;
+    const startAttr = p.dataset.mdStart, endAttr = p.dataset.mdEnd;
+    const md = manuscript?.metadata.combinedMarkdown;
+    if (startAttr == null || endAttr == null || !md || !manuscript) return;
+    if (!cancelled && origHtml !== undefined && p.innerHTML === origHtml) return; // untouched
+
+    const norm = md.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    const start = +startAttr, end = +endAttr;
+    const original = norm.slice(start, end);
+    const newSource = htmlToMarkdownInline(p.innerHTML);
+
+    if (cancelled || !newSource || sameProse(newSource, original)) {
+      rerenderInPlace(); // nothing to save — restore clean rendered HTML
+      return;
+    }
+    const res = applyBlockEdit(norm, start, end, newSource);
+    if (!res) { rerenderInPlace(); return; }
+    const updated = replaceMarkdown(manuscript.id, res.markdown);
+    if (updated) {
+      // Record the author's decision as a durable Edit (distinct from a reader
+      // annotation) before re-rendering — recordEdit persists synchronously, so
+      // the openManuscript reload below picks it up. Attribute the chapter from
+      // the edited paragraph's position; anchor in the source-markdown domain.
+      const owner = chapterForOffset(
+        chapters.map(ch => ({ chapter: ch, offset: document.getElementById(ch.id)?.offsetTop ?? Infinity })),
+        (p.getBoundingClientRect().top + window.scrollY) + 100,
+      );
+      recordEdit({
+        chapterId: owner?.id ?? '',
+        chapterIndex: owner?.index ?? 0,
+        chapterTitle: owner?.title ?? '',
+        anchor: buildAnchor(norm, start, original),
+        originalText: original,
+        replacementText: newSource,
+      });
+      pendingEditScroll.current = window.scrollY;
+      const { chapters: newChapters } = parseMarkdown(updated.metadata.combinedMarkdown!);
+      openManuscript(updated, newChapters); // → render effect restores scroll, re-anchors
+      showToast('Edit saved.');
+    } else {
+      rerenderInPlace();
+      showToast('Could not save — manuscript not cached.');
+    }
+  }, [manuscript, chapters, replaceMarkdown, openManuscript, rerenderInPlace, recordEdit]);
+  useEffect(() => { commitRef.current = commitBlockEdit; }, [commitBlockEdit]);
+
+  // Apply/remove the editable affordance when the toggle flips. Leaving edit
+  // mode commits any block still focused.
+  useEffect(() => {
+    const c = contentRef.current; if (!c) return;
+    if (!editMode) {
+      const active = document.activeElement as HTMLElement | null;
+      if (active && c.contains(active)) active.blur(); // fires focusout → commit
+    }
+    setupEditable(c, editMode);
+  }, [editMode]);
+
+  // Delegated commit-on-blur + Enter/Escape, attached once.
+  useEffect(() => {
+    const c = contentRef.current; if (!c) return;
+    const onFocusIn = (e: FocusEvent) => {
+      const p = (e.target as HTMLElement)?.closest?.('p[data-md-start]') as HTMLElement | null;
+      if (p && editModeRef.current) editOriginalHtml.set(p, p.innerHTML);
+    };
+    const onFocusOut = (e: FocusEvent) => {
+      const p = (e.target as HTMLElement)?.closest?.('p[data-md-start]') as HTMLElement | null;
+      if (p && editModeRef.current) commitRef.current(p);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!editModeRef.current) return;
+      const p = (e.target as HTMLElement)?.closest?.('p[data-md-start]') as HTMLElement | null;
+      if (!p) return;
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); p.blur(); }
+      else if (e.key === 'Escape') { e.preventDefault(); cancelEditRef.current = true; p.blur(); }
+    };
+    c.addEventListener('focusin', onFocusIn as EventListener);
+    c.addEventListener('focusout', onFocusOut as EventListener);
+    c.addEventListener('keydown', onKeyDown as EventListener);
+    return () => {
+      c.removeEventListener('focusin', onFocusIn as EventListener);
+      c.removeEventListener('focusout', onFocusOut as EventListener);
+      c.removeEventListener('keydown', onKeyDown as EventListener);
+    };
+  }, []);
 
   // Scroll
   useEffect(() => {
@@ -170,6 +376,7 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   useEffect(() => {
     function onSelectionEnd(e: MouseEvent | TouchEvent) {
       if (!contentRef.current) return;
+      if (editModeRef.current) return; // no annotate popup while editing prose
       const popup = document.getElementById('selection-popup');
       if (popup?.contains(e.target as Node)) return;
       setTimeout(() => {
@@ -218,10 +425,11 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   const handleSaveAnnotation = useCallback((type: AnnotationType, note: string) => {
     const { range, text } = selection;
     let chapterTitle = '', chapterIndex = 0;
+    let owner: Chapter | null = null;
     if (range) {
       const rect = range.getBoundingClientRect();
       const y = rect.top + window.scrollY;
-      const owner = chapterForOffset(
+      owner = chapterForOffset(
         chapters.map(ch => ({
           chapter: ch,
           offset: document.getElementById(ch.id)?.offsetTop ?? Infinity,
@@ -230,7 +438,21 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
       );
       if (owner) { chapterTitle = owner.title; chapterIndex = owner.index; }
     }
-    const ann = addAnnotation({ type, quote: text.slice(0, 400), note, chapterTitle, chapterIndex });
+    // Build a durable anchor from the current rendered text before inserting the
+    // mark (so existing marks/this selection don't perturb the offset math).
+    // Capture in the owning chapter's text domain when known, and stamp the
+    // durable chapterId — so re-location is scoped to that chapter (reorder-proof,
+    // duplicate-proof). Falls back to whole-manuscript when the chapter is unknown.
+    const quote = text.slice(0, 400);
+    let anchor: TextAnchor | undefined;
+    if (range && quote && contentRef.current) {
+      const scope = owner ? chapterBlockFor(contentRef.current, owner.id) : null;
+      const root = scope ?? contentRef.current;
+      const start = offsetInContainer(root, range);
+      anchor = buildAnchor(root.textContent ?? '', start, quote);
+      if (scope && owner) anchor.chapterId = owner.id;
+    }
+    const ann = addAnnotation({ type, quote, note, chapterTitle, chapterIndex, anchor });
     if (range && text && contentRef.current) {
       try {
         const mark = document.createElement('mark');
@@ -294,6 +516,16 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     }).catch(e => { console.error('HTML export error:', e); showToast('Export failed — see console.'); });
   }, [manuscript, library, annotations, chapters]);
 
+  const handleExportRevisionLog = useCallback(() => {
+    if (!manuscript) return;
+    if (!edits.length) { showToast('No edits yet.'); return; }
+    const title = library.find(m => m.id === manuscript.id)?.metadata.title ?? manuscript.metadata.title;
+    import('../engine/exports/revisionLog').then(({ exportRevisionLog }) => {
+      exportRevisionLog(title, manuscript.id, edits);
+      showToast('Revision log exported.');
+    }).catch(e => { console.error('Revision log export error:', e); showToast('Export failed — see console.'); });
+  }, [manuscript, library, edits]);
+
   const handleAppendChapters = useCallback((chunk: string) => {
     if (!manuscript) return;
     const updated = appendChapters(manuscript.id, chunk);
@@ -324,6 +556,8 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
         onExport={() => exportReportJson(manuscript.metadata.title, manuscript.id, report!)}
         onExportDocx={handleExportDocx}
         onExportHtml={handleExportHtml}
+        onExportRevisionLog={handleExportRevisionLog}
+        editCount={edits.length}
         onJumpToChapter={idx => { const ch = chapters.find(c => c.index === idx); if (ch) jumpToChapter(ch.id); }}
       />
       <SelectionPopup visible={selection.visible} position={selection.position} onSave={handleSaveAnnotation} onClose={() => setSelection(s => ({ ...s, visible: false, range: null }))} />

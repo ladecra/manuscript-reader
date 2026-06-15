@@ -8,7 +8,7 @@ import { LoadScreen } from './screens/LoadScreen';
 import { ReaderScreen } from './screens/ReaderScreen';
 import { Toast, useToast } from './components/ui/Toast';
 import { SettingsMenu } from './components/ui/SettingsMenu';
-import { QuillIcon, MenuIcon, AnnotateIcon, ReportIcon, LibraryIcon } from './components/ui/Icons';
+import { QuillIcon, MenuIcon, AnnotateIcon, ReportIcon, LibraryIcon, PencilIcon } from './components/ui/Icons';
 import { parseMarkdown } from './engine/ingestion/parseMarkdown';
 import type { Manuscript } from './engine/types';
 
@@ -28,7 +28,7 @@ function IconBtn({ onClick, active, title, label, children }: {
 }
 
 export function App() {
-  const { screen, theme, fontSize, annSidebarOpen, reportPanelOpen, setScreen, toggleNav, toggleAnnSidebar, toggleReportPanel } = useUIStore();
+  const { screen, theme, fontSize, annSidebarOpen, reportPanelOpen, editMode, setScreen, toggleNav, toggleAnnSidebar, toggleReportPanel, toggleEditMode } = useUIStore();
   const { library, upsertManuscript, updateManuscript, cycleStatus, deleteManuscript, replaceMarkdown, getReadingPosition } = useLibraryStore();
   const { manuscript, annotations, openManuscript, closeManuscript } = useReaderStore();
   const { toastState, showToast } = useToast();
@@ -120,6 +120,7 @@ export function App() {
                 {hasAnnotations && <span id="revision-mode-badge" className="visible" />}
               </div>
               <IconBtn onClick={toggleReportPanel} active={reportPanelOpen} title="Report" label="Report"><ReportIcon /></IconBtn>
+              <IconBtn onClick={toggleEditMode} active={editMode} title="Edit prose" label="Edit"><PencilIcon /></IconBtn>
               {/* Divider fences the per-manuscript panel toggles off from the
                   leave-the-reader / settings controls, so Library isn't a stray click away. */}
               <span aria-hidden="true" style={{ width: '1px', height: '18px', background: 'var(--border)', margin: '0 6px', alignSelf: 'center' }} />
