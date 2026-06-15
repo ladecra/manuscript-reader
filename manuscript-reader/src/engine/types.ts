@@ -114,7 +114,13 @@ export interface TextAnchor {
   quote: string;   // the anchored text (mirrors Annotation.quote; kept here so the anchor is self-contained)
   prefix: string;  // rendered text immediately before the quote (context)
   suffix: string;  // rendered text immediately after the quote (context)
-  offset: number;  // index of the quote in its chapter's rendered text at creation time (a hint, not a guarantee)
+  offset: number;  // index of the quote within the anchor's text domain at creation time (a hint, not a guarantee)
+  /** Durable chapter identity (Chapter.id, e.g. "ch-3"). When present, the anchor
+   *  was captured in that chapter's rendered-text domain and re-location is scoped
+   *  to it — so the anchor survives chapter reordering, and a sentence duplicated
+   *  across chapters resolves to the right one. Absent = legacy whole-manuscript
+   *  anchor (resolves against the full rendered text, as before). */
+  chapterId?: string;
 }
 
 // ─── Edit ────────────────────────────────────────────────────────────────────

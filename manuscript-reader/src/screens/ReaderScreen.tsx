@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
-import type { AnnotationType, TextAnchor } from '../engine/types';
+import type { AnnotationType, TextAnchor, Chapter } from '../engine/types';
 import { buildAnchor, locateAnchor, anchorFromQuote } from '../engine/annotations/anchor';
 import { applyBlockEdit, htmlToMarkdownInline, sameProse } from '../engine/manuscript/blockEdit';
 import { useReaderStore } from '../state/readerStore';
@@ -60,11 +60,25 @@ function textOffsetToRange(container: HTMLElement, start: number, end: number): 
 // rendered text, then wrap the resolved span in a <mark>. Falls back to the
 // legacy text-node search when the resolved range crosses element boundaries
 // (surroundContents throws). Returns the mark, or null if orphaned.
+// The `.chapter-block` element holding a chapter's body, by its durable id (the
+// parser emits `<span id="ch-N">`, then the heading, then `<div class="chapter-block">`).
+// Returns null for forematter or a chapter that no longer exists.
+function chapterBlockFor(container: HTMLElement, chapterId: string): HTMLElement | null {
+  const marker = container.querySelector(`#${CSS.escape(chapterId)}`);
+  let el = marker?.nextElementSibling ?? null;
+  while (el && !el.classList.contains('chapter-block')) el = el.nextElementSibling;
+  return (el as HTMLElement) ?? null;
+}
+
 function markByAnchor(container: HTMLElement, anchor: TextAnchor, id: string, type: AnnotationType): HTMLElement | null {
-  const full = container.textContent ?? '';
+  // Scope resolution to the anchored chapter when the anchor carries one (and it
+  // still exists); otherwise resolve against the whole manuscript (legacy anchors).
+  const scope = anchor.chapterId ? chapterBlockFor(container, anchor.chapterId) : null;
+  const root = scope ?? container;
+  const full = root.textContent ?? '';
   const loc = locateAnchor(full, anchor);
   if (loc && loc.end > loc.start) {
-    const range = textOffsetToRange(container, loc.start, loc.end);
+    const range = textOffsetToRange(root, loc.start, loc.end);
     if (range) {
       try {
         const mark = document.createElement('mark');
@@ -75,7 +89,7 @@ function markByAnchor(container: HTMLElement, anchor: TextAnchor, id: string, ty
       } catch { /* range spans elements — fall through to legacy wrap */ }
     }
   }
-  return wrapTextInMark(container, anchor.quote, id, type);
+  return wrapTextInMark(root, anchor.quote, id, type);
 }
 
 // Character offset of a Range's start within a container's rendered text.
@@ -137,6 +151,25 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     tick(); const id = setInterval(tick, 30000); return () => clearInterval(id);
   }, []);
 
+  // Re-apply highlights (declared before the effects that call it, to avoid a
+  // use-before-declaration in the render/edit re-render paths).
+  const reapplyHighlights = useCallback(() => {
+    const c = contentRef.current; if (!c) return;
+    c.querySelectorAll('mark[data-ann]').forEach(mark => {
+      const parent = mark.parentNode!;
+      while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
+      parent.removeChild(mark); (parent as Element).normalize?.();
+    });
+    annotations.forEach(ann => {
+      if (!ann.quote) return;
+      const mark = markByAnchor(c, ann.anchor ?? anchorFromQuote(ann.quote), ann.id, ann.type);
+      if (mark) mark.addEventListener('click', e => {
+        if (editModeRef.current) return; // in edit mode a click just places the caret
+        e.stopPropagation(); setEditingAnn({ id: ann.id, note: ann.note });
+      });
+    });
+  }, [annotations]);
+
   // Render content + entrance observer + restore position
   useEffect(() => {
     if (!manuscript?.metadata.combinedMarkdown || !contentRef.current) return;
@@ -178,24 +211,6 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     return () => entranceObs.current?.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-render content only when the manuscript changes
   }, [manuscript?.id, manuscript?.metadata.combinedMarkdown]);
-
-  // Re-apply highlights
-  const reapplyHighlights = useCallback(() => {
-    const c = contentRef.current; if (!c) return;
-    c.querySelectorAll('mark[data-ann]').forEach(mark => {
-      const parent = mark.parentNode!;
-      while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
-      parent.removeChild(mark); (parent as Element).normalize?.();
-    });
-    annotations.forEach(ann => {
-      if (!ann.quote) return;
-      const mark = markByAnchor(c, ann.anchor ?? anchorFromQuote(ann.quote), ann.id, ann.type);
-      if (mark) mark.addEventListener('click', e => {
-        if (editModeRef.current) return; // in edit mode a click just places the caret
-        e.stopPropagation(); setEditingAnn({ id: ann.id, note: ann.note });
-      });
-    });
-  }, [annotations]);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps -- reapply marks only when annotations change
   useEffect(() => { reapplyHighlights(); }, [annotations]);
@@ -410,10 +425,11 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   const handleSaveAnnotation = useCallback((type: AnnotationType, note: string) => {
     const { range, text } = selection;
     let chapterTitle = '', chapterIndex = 0;
+    let owner: Chapter | null = null;
     if (range) {
       const rect = range.getBoundingClientRect();
       const y = rect.top + window.scrollY;
-      const owner = chapterForOffset(
+      owner = chapterForOffset(
         chapters.map(ch => ({
           chapter: ch,
           offset: document.getElementById(ch.id)?.offsetTop ?? Infinity,
@@ -424,11 +440,17 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     }
     // Build a durable anchor from the current rendered text before inserting the
     // mark (so existing marks/this selection don't perturb the offset math).
+    // Capture in the owning chapter's text domain when known, and stamp the
+    // durable chapterId — so re-location is scoped to that chapter (reorder-proof,
+    // duplicate-proof). Falls back to whole-manuscript when the chapter is unknown.
     const quote = text.slice(0, 400);
     let anchor: TextAnchor | undefined;
     if (range && quote && contentRef.current) {
-      const start = offsetInContainer(contentRef.current, range);
-      anchor = buildAnchor(contentRef.current.textContent ?? '', start, quote);
+      const scope = owner ? chapterBlockFor(contentRef.current, owner.id) : null;
+      const root = scope ?? contentRef.current;
+      const start = offsetInContainer(root, range);
+      anchor = buildAnchor(root.textContent ?? '', start, quote);
+      if (scope && owner) anchor.chapterId = owner.id;
     }
     const ann = addAnnotation({ type, quote, note, chapterTitle, chapterIndex, anchor });
     if (range && text && contentRef.current) {
