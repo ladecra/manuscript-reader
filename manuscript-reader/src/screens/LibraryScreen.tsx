@@ -89,7 +89,6 @@ export function LibraryScreen({ library, onOpen, onNew, onDelete, onUpdate, onCy
           </div>
         </>
       )}
-      <div className="library-footer">VELLIBRIS</div>
     </>
   );
 }

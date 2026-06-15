@@ -103,7 +103,10 @@ export function App() {
           ) : (
             <button id="brand" className="show" onClick={handleHomeNav} title="Home">
               <QuillIcon size={18} />
-              <span className="brand-word">VELLIBRIS</span>
+              <span className="brand-name">
+                <span className="brand-word">Vellibris</span>
+                <span className="brand-sub">Manuscript Reader</span>
+              </span>
             </button>
           )}
         </div>
