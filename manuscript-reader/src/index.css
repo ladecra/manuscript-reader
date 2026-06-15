@@ -3,18 +3,19 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg:           #141414;
-  --surface:      #1c1c1c;
-  --surface-high: #272727;
-  --paper:        #141414;
-  --primary:      #f5f2ec;
-  --on-surface:   #e0ddd6;
-  --muted:        #aeaaa4;
-  --dim:          #858280;
-  --border:       #2e2e2e;
-  --brand:        #c9a14a;
-  --drop-cap:     #f5f2ec;
-  --topbar-bg:    #0f0f0f;
+  /* Reading-tuned indigo — landing's midnight tones, lifted for long-form comfort. */
+  --bg:           #0c0e1a;
+  --surface:      #14172b;
+  --surface-high: #1e2238;
+  --paper:        #0c0e1a;
+  --primary:      #f1eef9;
+  --on-surface:   #dcd9ec;
+  --muted:        #a6a3c0;
+  --dim:          #7b7a98;
+  --border:       #272c45;
+  --brand:        #d8a93f;
+  --drop-cap:     #d8a93f;
+  --topbar-bg:    #080a14;
   --body-size:    19px;
   --max-w:        680px;
   --margin:       clamp(22px, 5vw, 64px);
@@ -37,19 +38,20 @@
 }
 
 :root.light {
-  --bg:           #faf9f6;
-  --surface:      #ffffff;
-  --surface-high: #f1eee8;
-  --paper:        #fbfaf7;
-  --primary:      #1b1a17;
-  --on-surface:   #2c2a26;
-  --muted:        #6b6760;
-  --dim:          #a09b90;
-  --border:       #e8e4db;
-  --topbar-bg:    #ffffff;
-  --topbar-border: rgba(28, 27, 22, 0.15);
-  --brand:        #1b1a17;
-  --drop-cap:     #1b1a17;
+  /* Warm parchment — landing's parchment field, lightened for long-form reading. */
+  --bg:           #f6f0e1;
+  --surface:      #fdfaf2;
+  --surface-high: #efe7d4;
+  --paper:        #f8f2e4;
+  --primary:      #211d15;
+  --on-surface:   #322d22;
+  --muted:        #6f6957;
+  --dim:          #a89e86;
+  --border:       #e2d8c2;
+  --topbar-bg:    #f8f2e4;
+  --topbar-border: rgba(33, 29, 21, 0.14);
+  --brand:        #9a6f1e;
+  --drop-cap:     #9a6f1e;
   --ann-highlight: rgba(217, 172, 60, 0.22);
   --ann-note:      rgba(120, 116, 108, 0.14);
   --ann-bookmark:  rgba(99, 102, 241, 0.14);
@@ -553,17 +555,25 @@ body {
 }
 #content { max-width: var(--max-w); margin: 0 auto; }
 .chapter-marker {
-  display: block; font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 10px;
-  letter-spacing: 0.18em; text-transform: uppercase; color: var(--dim);
-  margin-top: 88px; margin-bottom: 14px;
+  display: block; text-align: center;
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 10px;
+  letter-spacing: 0.26em; text-transform: uppercase; color: var(--dim);
+  margin-top: 104px; margin-bottom: 20px;
   scroll-margin-top: calc(var(--topbar-h) + 24px);
 }
 .chapter-marker:first-child { margin-top: 0; }
 #content h1 {
-  font-family: 'EB Garamond', Georgia, serif;
-  font-size: clamp(26px, 5vw, 42px); font-weight: 400; line-height: 1.18;
-  letter-spacing: -0.01em; color: var(--primary); margin-bottom: 36px;
+  font-family: 'Cormorant Garamond', Georgia, serif;
+  font-size: clamp(30px, 5.4vw, 46px); font-weight: 600; line-height: 1.12;
+  letter-spacing: 0; color: var(--primary);
+  text-align: center; margin-bottom: 30px;
   scroll-margin-top: calc(var(--topbar-h) + 8px);
+}
+/* Short centered rule beneath the chapter title — the landing's title-page cadence. */
+#content h1::after {
+  content: ''; display: block;
+  width: 48px; height: 1px; margin: 22px auto 0;
+  background: var(--brand); opacity: 0.55;
 }
 #content h2 { font-family: 'EB Garamond', Georgia, serif; font-size: clamp(19px, 3.5vw, 26px); font-weight: 400; line-height: 1.3; color: var(--primary); margin-top: 52px; margin-bottom: 8px; }
 #content h3 { font-family: 'EB Garamond', Georgia, serif; font-size: 19px; font-weight: 500; color: var(--muted); margin-top: 36px; margin-bottom: 6px; }
