@@ -11,6 +11,7 @@ export interface Manuscript {
   metadata: ManuscriptMetadata;
   chapters: Chapter[];
   annotations: Annotation[];
+  edits: Edit[];            // author edit decisions (distinct from reader annotations)
   reports: Report[];        // computed on demand, cached here
   exports: ExportRecord[];  // log of generated exports
 }
@@ -114,6 +115,34 @@ export interface TextAnchor {
   prefix: string;  // rendered text immediately before the quote (context)
   suffix: string;  // rendered text immediately after the quote (context)
   offset: number;  // index of the quote in its chapter's rendered text at creation time (a hint, not a guarantee)
+}
+
+// ─── Edit ────────────────────────────────────────────────────────────────────
+//
+// An author's edit decision, modelled as a first-class object distinct from an
+// Annotation. The distinction is deliberate: an annotation is an *observation*
+// (a reader reacting to a passage); an edit is a *decision* (the author changing
+// it). Conflating them — "an edit is just a special annotation" — was tempting,
+// but they have different lifecycles and different consumers. Keeping them apart
+// gives us a revision log for free now, and a clean signal for version snapshots
+// (Phase 8) and the AI interpretation layer (Phase 9) later.
+//
+// Edit mode rewrites the manuscript's source markdown in place; this record is
+// the durable trail of *what changed*, captured at commit time.
+
+export interface Edit {
+  id: string;
+  manuscriptId: string;
+  chapterId: string;        // durable chapter identity (Chapter.id, e.g. "ch-1") — survives reordering
+  chapterIndex: number;     // presentation only (parallels Annotation); for grouping/labels
+  chapterTitle: string;     // presentation only
+  /** Anchor in the *source-markdown* domain (not rendered text): locates the
+   *  edited span by surrounding source context so the edit can be re-found in a
+   *  later draft. quote === originalText. */
+  anchor: TextAnchor;
+  originalText: string;     // the source-markdown span before the edit
+  replacementText: string;  // the source-markdown span after the edit
+  createdAt: number;        // Unix ms
 }
 
 // ─── Report ──────────────────────────────────────────────────────────────────

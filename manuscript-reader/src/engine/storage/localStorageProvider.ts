@@ -5,12 +5,13 @@
 // Because it keeps the exact legacy keys, an existing user's data is readable
 // here without any conversion.
 
-import type { Annotation } from '../types';
+import type { Annotation, Edit } from '../types';
 import type { StorageProvider, StoredManuscript } from './provider';
 
 const LIBRARY_KEY = 'ms_library_v2';
 const POSITION_KEY = 'ms_pos_';
 const ANN_KEY = 'ms_ann_';
+const EDIT_KEY = 'ms_edits_';
 
 export class LocalStorageProvider implements StorageProvider {
   readonly name = 'localStorage';
@@ -31,6 +32,7 @@ export class LocalStorageProvider implements StorageProvider {
     const list = (await this.listManuscripts()).filter(m => m.id !== id);
     localStorage.setItem(LIBRARY_KEY, JSON.stringify(list));
     localStorage.removeItem(ANN_KEY + id);
+    localStorage.removeItem(EDIT_KEY + id);
     localStorage.removeItem(POSITION_KEY + id);
   }
 
@@ -41,6 +43,15 @@ export class LocalStorageProvider implements StorageProvider {
 
   async saveAnnotations(id: string, annotations: Annotation[]): Promise<void> {
     localStorage.setItem(ANN_KEY + id, JSON.stringify(annotations));
+  }
+
+  async loadEdits(id: string): Promise<Edit[]> {
+    try { return JSON.parse(localStorage.getItem(EDIT_KEY + id) ?? '[]'); }
+    catch { return []; }
+  }
+
+  async saveEdits(id: string, edits: Edit[]): Promise<void> {
+    localStorage.setItem(EDIT_KEY + id, JSON.stringify(edits));
   }
 
   async loadPosition(id: string): Promise<number> {

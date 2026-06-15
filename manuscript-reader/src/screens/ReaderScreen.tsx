@@ -110,7 +110,7 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   const scrollSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const entranceObs = useRef<IntersectionObserver | null>(null);
 
-  const { manuscript, chapters, annotations, addAnnotation, updateAnnotation, deleteAnnotation, importAnnotations, openManuscript } = useReaderStore();
+  const { manuscript, chapters, annotations, edits, addAnnotation, updateAnnotation, deleteAnnotation, importAnnotations, openManuscript, recordEdit } = useReaderStore();
   const { navOpen, annSidebarOpen, reportPanelOpen, editMode, closeNav, closeAnnSidebar, closeReportPanel, toggleAnnSidebar, closeAllPanels } = useUIStore();
   const { library, updateProgress, getReadingPosition, appendChapters, replaceMarkdown } = useLibraryStore();
 
@@ -239,6 +239,22 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     if (!res) { rerenderInPlace(); return; }
     const updated = replaceMarkdown(manuscript.id, res.markdown);
     if (updated) {
+      // Record the author's decision as a durable Edit (distinct from a reader
+      // annotation) before re-rendering — recordEdit persists synchronously, so
+      // the openManuscript reload below picks it up. Attribute the chapter from
+      // the edited paragraph's position; anchor in the source-markdown domain.
+      const owner = chapterForOffset(
+        chapters.map(ch => ({ chapter: ch, offset: document.getElementById(ch.id)?.offsetTop ?? Infinity })),
+        (p.getBoundingClientRect().top + window.scrollY) + 100,
+      );
+      recordEdit({
+        chapterId: owner?.id ?? '',
+        chapterIndex: owner?.index ?? 0,
+        chapterTitle: owner?.title ?? '',
+        anchor: buildAnchor(norm, start, original),
+        originalText: original,
+        replacementText: newSource,
+      });
       pendingEditScroll.current = window.scrollY;
       const { chapters: newChapters } = parseMarkdown(updated.metadata.combinedMarkdown!);
       openManuscript(updated, newChapters); // → render effect restores scroll, re-anchors
@@ -247,7 +263,7 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
       rerenderInPlace();
       showToast('Could not save — manuscript not cached.');
     }
-  }, [manuscript, replaceMarkdown, openManuscript, rerenderInPlace]);
+  }, [manuscript, chapters, replaceMarkdown, openManuscript, rerenderInPlace, recordEdit]);
   useEffect(() => { commitRef.current = commitBlockEdit; }, [commitBlockEdit]);
 
   // Apply/remove the editable affordance when the toggle flips. Leaving edit
@@ -478,6 +494,16 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     }).catch(e => { console.error('HTML export error:', e); showToast('Export failed — see console.'); });
   }, [manuscript, library, annotations, chapters]);
 
+  const handleExportRevisionLog = useCallback(() => {
+    if (!manuscript) return;
+    if (!edits.length) { showToast('No edits yet.'); return; }
+    const title = library.find(m => m.id === manuscript.id)?.metadata.title ?? manuscript.metadata.title;
+    import('../engine/exports/revisionLog').then(({ exportRevisionLog }) => {
+      exportRevisionLog(title, manuscript.id, edits);
+      showToast('Revision log exported.');
+    }).catch(e => { console.error('Revision log export error:', e); showToast('Export failed — see console.'); });
+  }, [manuscript, library, edits]);
+
   const handleAppendChapters = useCallback((chunk: string) => {
     if (!manuscript) return;
     const updated = appendChapters(manuscript.id, chunk);
@@ -508,6 +534,8 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
         onExport={() => exportReportJson(manuscript.metadata.title, manuscript.id, report!)}
         onExportDocx={handleExportDocx}
         onExportHtml={handleExportHtml}
+        onExportRevisionLog={handleExportRevisionLog}
+        editCount={edits.length}
         onJumpToChapter={idx => { const ch = chapters.find(c => c.index === idx); if (ch) jumpToChapter(ch.id); }}
       />
       <SelectionPopup visible={selection.visible} position={selection.position} onSave={handleSaveAnnotation} onClose={() => setSelection(s => ({ ...s, visible: false, range: null }))} />

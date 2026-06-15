@@ -1,9 +1,13 @@
 import { create } from 'zustand';
-import type { Manuscript, Chapter, Annotation, AnnotationType, TextAnchor } from '../engine/types';
-import { loadAnnotations, saveAnnotations } from '../engine/storage';
+import type { Manuscript, Chapter, Annotation, AnnotationType, TextAnchor, Edit } from '../engine/types';
+import { loadAnnotations, saveAnnotations, loadEdits, saveEdits } from '../engine/storage';
 
 function annId(): string {
   return 'a' + Date.now() + Math.random().toString(36).slice(2, 6);
+}
+
+function editId(): string {
+  return 'e' + Date.now() + Math.random().toString(36).slice(2, 6);
 }
 
 interface ReaderStore {
@@ -11,6 +15,7 @@ interface ReaderStore {
   manuscript: Manuscript | null;
   chapters: Chapter[];
   annotations: Annotation[];
+  edits: Edit[];
   totalWords: number;
 
   // Actions
@@ -30,24 +35,36 @@ interface ReaderStore {
   deleteAnnotation: (id: string) => void;
   importAnnotations: (incoming: Annotation[], defaultReader: string | null) => number;
   reloadAnnotations: () => void;
+
+  // Edit actions
+  recordEdit: (params: {
+    chapterId: string;
+    chapterIndex: number;
+    chapterTitle: string;
+    anchor: TextAnchor;
+    originalText: string;
+    replacementText: string;
+  }) => Edit | null;
 }
 
 export const useReaderStore = create<ReaderStore>((set, get) => ({
   manuscript: null,
   chapters: [],
   annotations: [],
+  edits: [],
   totalWords: 0,
 
   openManuscript(ms, chapters) {
     const anns = ms.id ? loadAnnotations(ms.id) : [];
+    const edits = ms.id ? loadEdits(ms.id) : [];
     const words = ms.metadata.combinedMarkdown
       ? ms.metadata.combinedMarkdown.trim().split(/\s+/).filter(Boolean).length
       : 0;
-    set({ manuscript: ms, chapters, annotations: anns, totalWords: words });
+    set({ manuscript: ms, chapters, annotations: anns, edits, totalWords: words });
   },
 
   closeManuscript() {
-    set({ manuscript: null, chapters: [], annotations: [], totalWords: 0 });
+    set({ manuscript: null, chapters: [], annotations: [], edits: [], totalWords: 0 });
   },
 
   addAnnotation(params) {
@@ -104,5 +121,22 @@ export const useReaderStore = create<ReaderStore>((set, get) => ({
     const { manuscript } = get();
     if (!manuscript) return;
     set({ annotations: loadAnnotations(manuscript.id) });
+  },
+
+  recordEdit(params) {
+    const { manuscript } = get();
+    if (!manuscript) return null;
+    const edit: Edit = {
+      id: editId(),
+      manuscriptId: manuscript.id,
+      ...params,
+      createdAt: Date.now(),
+    };
+    set(state => {
+      const next = [...state.edits, edit];
+      saveEdits(manuscript.id, next);
+      return { edits: next };
+    });
+    return edit;
   },
 }));

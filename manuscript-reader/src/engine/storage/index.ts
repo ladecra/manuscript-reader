@@ -9,7 +9,7 @@
 // This is what lets us swap localStorage → IndexedDB (→ future SQLite/cloud)
 // without changing a single caller.
 
-import type { Annotation } from '../types';
+import type { Annotation, Edit } from '../types';
 import type { StorageProvider, StoredManuscript } from './provider';
 import { LocalStorageProvider } from './localStorageProvider';
 import { IndexedDbProvider, indexedDbAvailable } from './indexedDbProvider';
@@ -22,6 +22,7 @@ let hydrated = false;
 const cache = {
   library: [] as StoredManuscript[],
   annotations: new Map<string, Annotation[]>(),
+  edits: new Map<string, Edit[]>(),
   positions: new Map<string, number>(),
 };
 
@@ -49,6 +50,7 @@ function persist(op: () => Promise<void>): void {
 // string shared by reference — so we never re-copy multi-MB source text.
 const copyMs = (m: StoredManuscript): StoredManuscript => ({ ...m });
 const copyAnn = (a: Annotation): Annotation => ({ ...a });
+const copyEdit = (e: Edit): Edit => ({ ...e });
 
 // ── Startup ──────────────────────────────────────────────────────────────────
 
@@ -61,6 +63,7 @@ export async function hydrateStorage(): Promise<void> {
   const list = await provider.listManuscripts();
   for (const m of list) {
     cache.annotations.set(m.id, await provider.loadAnnotations(m.id));
+    cache.edits.set(m.id, await provider.loadEdits(m.id));
     const pos = await provider.loadPosition(m.id);
     cache.positions.set(m.id, pos);
     m.progress = pos; // position is the source of truth for reading progress
@@ -89,6 +92,7 @@ async function migrateFromLocalStorage(target: StorageProvider): Promise<void> {
   for (const m of list) {
     await target.saveManuscript(m);
     await target.saveAnnotations(m.id, await legacy.loadAnnotations(m.id));
+    await target.saveEdits(m.id, await legacy.loadEdits(m.id));
     await target.savePosition(m.id, await legacy.loadPosition(m.id));
   }
   console.info(`[storage] migrated ${list.length} manuscript(s) to IndexedDB`);
@@ -152,6 +156,17 @@ export function getAnnotationStats(library: StoredManuscript[]): { total: number
     anns.forEach(a => { if (a.readerName) readers.add(`${ms.id}::${a.readerName}`); });
   }
   return { total, readers };
+}
+
+// ── Edits ────────────────────────────────────────────────────────────────────────
+
+export function loadEdits(id: string): Edit[] {
+  return (cache.edits.get(id) ?? []).map(copyEdit);
+}
+
+export function saveEdits(id: string, edits: Edit[]): void {
+  cache.edits.set(id, edits.map(copyEdit));
+  persist(() => provider.saveEdits(id, edits));
 }
 
 // ── Reading position ────────────────────────────────────────────────────────────
