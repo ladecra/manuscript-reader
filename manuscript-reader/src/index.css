@@ -141,6 +141,8 @@ body {
 }
 .icon-btn:hover, .icon-btn:active { color: var(--primary); }
 .icon-btn.active-btn { color: var(--primary); }
+.icon-btn:disabled { color: var(--border); cursor: default; }
+.icon-btn:disabled:hover { color: var(--border); }
 .icon-btn svg { width: 17px; height: 17px; display: block; }
 .icon-btn-label {
   font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 11px;
@@ -613,19 +615,12 @@ body {
 #content em { font-style: italic; }
 #content strong { font-weight: 500; color: var(--primary); }
 
-/* ── Edit mode: light-touch prose editing ── */
-#content.edit-mode p[contenteditable] {
+/* ── Edit mode: in-chapter prose editing ── */
+/* The whole chapter body is the editable region (so Enter splits, Backspace
+   merges, blocks can be added/deleted). No extra affordance — just a text caret. */
+#content.edit-mode .chapter-block[contenteditable] {
   cursor: text;
-  border-radius: 3px;
-  margin-left: -10px; padding-left: 10px;
-  border-left: 2px solid transparent;
-  transition: border-color 0.2s var(--ease-std), background 0.2s var(--ease-std);
-}
-#content.edit-mode p[contenteditable]:hover { border-left-color: var(--border); }
-#content.edit-mode p[contenteditable]:focus {
   outline: none;
-  border-left-color: var(--brand);
-  background: var(--surface);
 }
 /* Drop cap fights caret placement while editing — suppress it in edit mode. */
 #content.edit-mode .chapter-block > p:first-of-type::first-letter {

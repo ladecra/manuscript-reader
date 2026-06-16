@@ -28,6 +28,26 @@ export function PencilIcon({ size = 17 }: IconProps) {
   );
 }
 
+export function UndoIcon({ size = 17 }: IconProps) {
+  return (
+    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.2"
+      strokeLinecap="round" strokeLinejoin="round" width={size} height={size}>
+      <path d="M5 8H11.5a3.5 3.5 0 0 1 0 7H7"/>
+      <path d="M7.5 5L4.5 8l3 3"/>
+    </svg>
+  );
+}
+
+export function RedoIcon({ size = 17 }: IconProps) {
+  return (
+    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.2"
+      strokeLinecap="round" strokeLinejoin="round" width={size} height={size}>
+      <path d="M13 8H6.5a3.5 3.5 0 0 0 0 7H11"/>
+      <path d="M10.5 5l3 3-3 3"/>
+    </svg>
+  );
+}
+
 export function MenuIcon({ size = 17 }: IconProps) {
   return (
     <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.2"

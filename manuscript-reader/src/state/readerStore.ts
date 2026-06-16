@@ -11,6 +11,16 @@ function editId(): string {
   return 'e' + Date.now() + Math.random().toString(36).slice(2, 6);
 }
 
+/** One reversible edit: the full manuscript markdown before/after, plus the Edit
+ *  record it produced. Undo restores `before` and drops the record; redo restores
+ *  `after` and re-adds it — so the revision log stays in lockstep with the source.
+ *  Transient (in-memory only): editing history doesn't survive a reload. */
+interface EditTransition {
+  before: string;
+  after: string;
+  edit: Edit;
+}
+
 interface ReaderStore {
   // Active manuscript
   manuscript: Manuscript | null;
@@ -19,6 +29,13 @@ interface ReaderStore {
   edits: Edit[];
   sessions: ReaderSession[];
   totalWords: number;
+
+  // Edit history (transient; cleared when a different manuscript opens)
+  undoStack: EditTransition[];
+  redoStack: EditTransition[];
+  /** Scroll Y to restore on the next edit re-render, so undo/redo/commit hold
+   *  the reading position instead of resuming/jumping. Set just before reopen. */
+  editReturnScroll: number | null;
 
   // Actions
   openManuscript: (ms: Manuscript, chapters: Chapter[]) => void;
@@ -50,6 +67,14 @@ interface ReaderStore {
     originalText: string;
     replacementText: string;
   }) => Edit | null;
+  /** Push a committed edit onto the undo history (clears the redo branch). */
+  pushEditTransition: (before: string, after: string, edit: Edit) => void;
+  /** Undo the most recent edit: drop its record, return the markdown to restore
+   *  (caller re-stores + reopens), or null if there's nothing to undo. */
+  undoEdit: () => string | null;
+  /** Redo the most recently undone edit, returning the markdown to restore. */
+  redoEdit: () => string | null;
+  setEditReturnScroll: (y: number | null) => void;
 }
 
 export const useReaderStore = create<ReaderStore>((set, get) => ({
@@ -59,6 +84,9 @@ export const useReaderStore = create<ReaderStore>((set, get) => ({
   edits: [],
   sessions: [],
   totalWords: 0,
+  undoStack: [],
+  redoStack: [],
+  editReturnScroll: null,
 
   openManuscript(ms, chapters) {
     const anns = ms.id ? loadAnnotations(ms.id) : [];
@@ -67,11 +95,17 @@ export const useReaderStore = create<ReaderStore>((set, get) => ({
     const words = ms.metadata.combinedMarkdown
       ? ms.metadata.combinedMarkdown.trim().split(/\s+/).filter(Boolean).length
       : 0;
-    set({ manuscript: ms, chapters, annotations: anns, edits, sessions, totalWords: words });
+    // A commit/undo/redo reopens the *same* manuscript to re-render — preserve its
+    // edit history then. Only opening a different manuscript resets the history.
+    const sameMs = get().manuscript?.id === ms.id;
+    set({
+      manuscript: ms, chapters, annotations: anns, edits, sessions, totalWords: words,
+      ...(sameMs ? {} : { undoStack: [], redoStack: [], editReturnScroll: null }),
+    });
   },
 
   closeManuscript() {
-    set({ manuscript: null, chapters: [], annotations: [], edits: [], sessions: [], totalWords: 0 });
+    set({ manuscript: null, chapters: [], annotations: [], edits: [], sessions: [], totalWords: 0, undoStack: [], redoStack: [], editReturnScroll: null });
   },
 
   addAnnotation(params) {
@@ -161,4 +195,41 @@ export const useReaderStore = create<ReaderStore>((set, get) => ({
     });
     return edit;
   },
+
+  pushEditTransition(before, after, edit) {
+    set(state => ({
+      undoStack: [...state.undoStack, { before, after, edit }],
+      redoStack: [], // a fresh edit forks the timeline — discard the redo branch
+    }));
+  },
+
+  undoEdit() {
+    const { manuscript, undoStack, redoStack, edits } = get();
+    if (!manuscript || undoStack.length === 0) return null;
+    const t = undoStack[undoStack.length - 1];
+    const nextEdits = edits.filter(e => e.id !== t.edit.id);
+    saveEdits(manuscript.id, nextEdits); // openManuscript reload will match this
+    set({
+      edits: nextEdits,
+      undoStack: undoStack.slice(0, -1),
+      redoStack: [...redoStack, t],
+    });
+    return t.before;
+  },
+
+  redoEdit() {
+    const { manuscript, undoStack, redoStack, edits } = get();
+    if (!manuscript || redoStack.length === 0) return null;
+    const t = redoStack[redoStack.length - 1];
+    const nextEdits = [...edits, t.edit];
+    saveEdits(manuscript.id, nextEdits);
+    set({
+      edits: nextEdits,
+      undoStack: [...undoStack, t],
+      redoStack: redoStack.slice(0, -1),
+    });
+    return t.after;
+  },
+
+  setEditReturnScroll(y) { set({ editReturnScroll: y }); },
 }));
