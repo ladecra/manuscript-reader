@@ -68,7 +68,6 @@ export function LibraryScreen({ library, onOpen, onNew, onDelete, onUpdate, onCy
             <div className="lib-stat"><span className="lib-stat-num">{library.length}</span><span className="lib-stat-label">Manuscripts</span></div>
             <div className="lib-stat"><span className="lib-stat-num">{inProgress}</span><span className="lib-stat-label">In Progress</span></div>
             <div className="lib-stat"><span className="lib-stat-num">{stats.total.toLocaleString()}</span><span className="lib-stat-label">Annotations</span></div>
-            <div className="lib-stat"><span className="lib-stat-num">{stats.readers.size}</span><span className="lib-stat-label">Readers</span></div>
           </div>
 
           <div id="ms-list">
@@ -107,7 +106,7 @@ function ManuscriptRow({ ms, expanded, onToggleExpand, onOpen, onDelete, onUpdat
   const pct = Math.round(progress * 100);
   const annList = loadAnnotations(ms.id);
   const annCount = annList.length;
-  const readerCount = new Set(annList.map(a => a.readerName).filter(Boolean)).size;
+  const readerCount = new Set(annList.map(a => a.readerId ?? a.readerName).filter(Boolean)).size;
 
   const handleSave = () => {
     onUpdate({ title: titleInput, author: authorInput.trim(), status: selectedStatus });

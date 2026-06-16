@@ -98,6 +98,7 @@ export interface Annotation {
   chapterIndex: number;
   createdAt: number;         // Unix ms
   readerName: string | null; // null = author's own; named for beta reader imports
+  readerId?: string;         // stable identity of the beta reader (Phase 5). Survives a renamed or blank name field; absent = author's own or a legacy import. Agreement analysis keys on this, not the display name.
   imported?: boolean;
   status?: AnnotationStatus; // reserved for revision workflow; absent = 'open'
   anchor?: TextAnchor;       // durable re-location anchor (Phase 4); absent = legacy, re-anchor by quote alone
@@ -182,10 +183,6 @@ export interface Report {
   blurb: string;                // engagement blurb
   clusters: AnnotationCluster[];// detected editorial signals (confusion / continuity / structural / engagement)
   consensus: ChapterStat[];     // chapters multiple beta readers reacted to, sorted by reader agreement (empty for <2 readers)
-  // Placeholders for Phase 2 report engine:
-  engagementScore?: number;
-  annotationClusters?: AnnotationCluster[];
-  readerSessions?: ReaderSession[];
 }
 
 // ─── Export ──────────────────────────────────────────────────────────────────
@@ -221,14 +218,30 @@ export interface AnnotationCluster {
   count: number;         // annotations of this signal within the range
 }
 
-/** A beta reader's reading session — who read what and when. */
+/**
+ * A reader's reading session — who read what, how far, and when (Phase 5). The
+ * unit of multi-reader intelligence: the author is one session among several.
+ *
+ * Sessions are an *additive* layer over the flat annotation store — they record
+ * the who/how-far/when that annotations alone can't (completion, abandonment),
+ * and reference the annotations by id rather than owning them. (Phase 5.2 may
+ * later invert this so the merged view becomes a projection over sessions; the
+ * shape is ready for that without forcing it now.)
+ *
+ * Deliberately carries NO edits: editing is author-only and already modelled as
+ * the first-class `Edit` entity on Manuscript — a session is reader *reactions*,
+ * not author *decisions*.
+ */
 export interface ReaderSession {
   id: string;
+  manuscriptId: string;
+  readerId: string;            // stable identity (see Annotation.readerId); agreement joins on this
   readerName: string;
+  manuscriptVersionId?: string;// content version the reader read — distinguishes a reader of Draft 2 from a reader of Draft 3 (Phase 8 maps to snapshots)
   startedAt: number;
-  completedAt?: number;
-  progress: number; // 0–1
-  annotationIds: string[];
+  completedAt?: number;        // set when the reader reached the end
+  progress: number;            // 0–1, furthest point reached
+  annotationIds: string[];     // ids into the manuscript's annotation store
 }
 
 /** A revision packet — the editorial deliverable for a reader session. */
@@ -243,12 +256,61 @@ export interface RevisionPacket {
   format: 'markdown' | 'docx' | 'json';
 }
 
-/** An AI-interpretable set of editorial signals (Phase 6). */
+/** Per-chapter cross-reader agreement — the strongest revision signal: several
+ *  readers independently reacting to the same chapter ≈ something real; one of
+ *  many ≈ that reader's taste. */
+export interface ChapterAgreementSignal {
+  chapterIndex: number;
+  chapterTitle: string;
+  annotationCount: number;
+  readersWhoAnnotated: number;  // distinct readers who reacted here
+  readersWhoReached: number;    // readers whose progress reached this chapter (-1 if unknown — no word data)
+  agreement: number;            // readersWhoAnnotated / readersWhoReached (falls back to /readerCount), 0–1
+}
+
+/**
+ * The canonical structured output of the report engine (Phase 6) — the single
+ * object that the in-app panel, the DOCX/HTML exports, and the future AI layer
+ * all consume, so one computation never diverges into many. Deterministic; no
+ * presentation. Composed from the annotation-derived report and the
+ * session-derived multi-reader merge (see engine/editorialSignals.ts).
+ *
+ * Empty arrays / null fields are intentional when their inputs don't exist yet
+ * (e.g. `revisionImpact` needs version snapshots — Phase 8). Consumers target
+ * the shape now; the data fills in as later phases land.
+ */
 export interface EditorialSignals {
   manuscriptId: string;
+  generatedAt: number;
+
+  // ── Annotation-derived substrate (the composed single-version Report) ──
+  // The raw per-chapter stats, type totals, and engagement summary that the
+  // curated findings below are derived from. Carried here so this object is the
+  // SINGLE thing every consumer (panel, exports, AI) calls — they read raw stats
+  // from `report.*` and multi-reader findings from the fields below, without ever
+  // calling computeReport separately. Not duplication: the findings are the
+  // projection, `report` is the substrate they project from.
+  report: Report;
+
+  // ── Multi-reader context (from reader sessions) ──
+  readerCount: number;
+  completionRate: number;       // fraction of readers who finished
+  versionsRead: string[];       // distinct manuscript versions read — did everyone read the same draft?
+
+  // ── Where to look (annotation-derived) ──
   hotspots: ChapterStat[];
+  silentChapters: ChapterStat[];// reached-but-quiet, when reach is known (abandonment-aware)
   questionClusters: AnnotationCluster[];
   continuityBreaks: AnnotationCluster[];
-  silentChapters: Chapter[];
-  engagementCurve: number[]; // per-chapter normalized score
+
+  // ── Cross-reader signal ──
+  readerAgreement: ChapterAgreementSignal[]; // chapters ranked by independent-reader agreement
+  unresolvedConcerns: number;   // open (not 'resolved') question/continuity/structural annotations
+
+  // ── Engagement shape ──
+  engagementCurve: number[];    // per-chapter normalized engagement, in chapter order
+  engagementDrops: number[];    // chapter indices where engagement falls sharply vs the prior chapter
+
+  // ── Cross-version (Phase 8) ──
+  revisionImpact: null;         // placeholder until version snapshots exist; always null for now
 }

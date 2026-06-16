@@ -9,7 +9,7 @@
 // This is what lets us swap localStorage → IndexedDB (→ future SQLite/cloud)
 // without changing a single caller.
 
-import type { Annotation, Edit } from '../types';
+import type { Annotation, Edit, ReaderSession } from '../types';
 import type { StorageProvider, StoredManuscript } from './provider';
 import { LocalStorageProvider } from './localStorageProvider';
 import { IndexedDbProvider, indexedDbAvailable } from './indexedDbProvider';
@@ -23,6 +23,7 @@ const cache = {
   library: [] as StoredManuscript[],
   annotations: new Map<string, Annotation[]>(),
   edits: new Map<string, Edit[]>(),
+  sessions: new Map<string, ReaderSession[]>(),
   positions: new Map<string, number>(),
 };
 
@@ -51,6 +52,7 @@ function persist(op: () => Promise<void>): void {
 const copyMs = (m: StoredManuscript): StoredManuscript => ({ ...m });
 const copyAnn = (a: Annotation): Annotation => ({ ...a });
 const copyEdit = (e: Edit): Edit => ({ ...e });
+const copySession = (s: ReaderSession): ReaderSession => ({ ...s, annotationIds: [...s.annotationIds] });
 
 // ── Startup ──────────────────────────────────────────────────────────────────
 
@@ -64,6 +66,7 @@ export async function hydrateStorage(): Promise<void> {
   for (const m of list) {
     cache.annotations.set(m.id, await provider.loadAnnotations(m.id));
     cache.edits.set(m.id, await provider.loadEdits(m.id));
+    cache.sessions.set(m.id, await provider.loadSessions(m.id));
     const pos = await provider.loadPosition(m.id);
     cache.positions.set(m.id, pos);
     m.progress = pos; // position is the source of truth for reading progress
@@ -93,6 +96,7 @@ async function migrateFromLocalStorage(target: StorageProvider): Promise<void> {
     await target.saveManuscript(m);
     await target.saveAnnotations(m.id, await legacy.loadAnnotations(m.id));
     await target.saveEdits(m.id, await legacy.loadEdits(m.id));
+    await target.saveSessions(m.id, await legacy.loadSessions(m.id));
     await target.savePosition(m.id, await legacy.loadPosition(m.id));
   }
   console.info(`[storage] migrated ${list.length} manuscript(s) to IndexedDB`);
@@ -153,7 +157,7 @@ export function getAnnotationStats(library: StoredManuscript[]): { total: number
   for (const ms of library) {
     const anns = cache.annotations.get(ms.id) ?? [];
     total += anns.length;
-    anns.forEach(a => { if (a.readerName) readers.add(`${ms.id}::${a.readerName}`); });
+    anns.forEach(a => { const id = a.readerId ?? a.readerName; if (id) readers.add(`${ms.id}::${id}`); });
   }
   return { total, readers };
 }
@@ -167,6 +171,17 @@ export function loadEdits(id: string): Edit[] {
 export function saveEdits(id: string, edits: Edit[]): void {
   cache.edits.set(id, edits.map(copyEdit));
   persist(() => provider.saveEdits(id, edits));
+}
+
+// ── Reader sessions ────────────────────────────────────────────────────────────
+
+export function loadSessions(id: string): ReaderSession[] {
+  return (cache.sessions.get(id) ?? []).map(copySession);
+}
+
+export function saveSessions(id: string, sessions: ReaderSession[]): void {
+  cache.sessions.set(id, sessions.map(copySession));
+  persist(() => provider.saveSessions(id, sessions));
 }
 
 // ── Reading position ────────────────────────────────────────────────────────────

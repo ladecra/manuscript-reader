@@ -5,7 +5,7 @@ import { applyBlockEdit, htmlToMarkdownInline, sameProse } from '../engine/manus
 import { useReaderStore } from '../state/readerStore';
 import { useUIStore } from '../state/uiStore';
 import { useLibraryStore } from '../state/libraryStore';
-import { computeReport } from '../engine/report';
+import { computeEditorialSignals } from '../engine/editorialSignals';
 import { parseMarkdown } from '../engine/ingestion/parseMarkdown';
 import { chapterForOffset } from '../engine/manuscript/chapterForOffset';
 import { ChapterNav } from '../components/reader/ChapterNav';
@@ -14,8 +14,6 @@ import { SelectionPopup } from '../components/reader/SelectionPopup';
 import { ReportPanel } from '../components/reports/ReportPanel';
 import { AddChaptersModal } from '../components/reader/AddChaptersModal';
 import { showToast } from '../components/ui/Toast';
-import { exportRevisionPacket } from '../engine/exports/revisionPacket';
-import { exportReportJson } from '../engine/exports/reportJson';
 
 function wrapTextInMark(container: HTMLElement, text: string, id: string, type: AnnotationType) {
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
@@ -124,7 +122,7 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   const scrollSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const entranceObs = useRef<IntersectionObserver | null>(null);
 
-  const { manuscript, chapters, annotations, edits, addAnnotation, updateAnnotation, deleteAnnotation, importAnnotations, openManuscript, recordEdit } = useReaderStore();
+  const { manuscript, chapters, annotations, edits, sessions, addAnnotation, updateAnnotation, deleteAnnotation, importSession, openManuscript, recordEdit } = useReaderStore();
   const { navOpen, annSidebarOpen, reportPanelOpen, editMode, closeNav, closeAnnSidebar, closeReportPanel, toggleAnnSidebar, closeAllPanels } = useUIStore();
   const { library, updateProgress, getReadingPosition, appendChapters, replaceMarkdown } = useLibraryStore();
 
@@ -484,37 +482,65 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   }, []);
 
   const reportMarkdown = manuscript?.metadata.combinedMarkdown;
-  const report = React.useMemo(
-    () => annotations.length > 0 ? computeReport(annotations, chapters, reportMarkdown) : null,
-    [annotations, chapters, reportMarkdown],
+  const msId = manuscript?.id ?? '';
+  // Single engine entry (Phase 6.3): every consumer — the panel and all three
+  // exports — reads from this one EditorialSignals object, so the annotation
+  // report and the multi-reader merge are computed exactly once.
+  const signals = React.useMemo(
+    () => annotations.length > 0
+      ? computeEditorialSignals({ manuscriptId: msId, annotations, chapters, sessions, combinedMarkdown: reportMarkdown })
+      : null,
+    [msId, annotations, chapters, sessions, reportMarkdown],
   );
+  const report = signals?.report ?? null;
 
   // ── Export handlers ──
   const handleExportDocx = useCallback(async () => {
     if (!manuscript) return;
     if (!annotations.length) { showToast('No annotations yet.'); return; }
-    const rep = computeReport(annotations, chapters, manuscript.metadata.combinedMarkdown);
+    const sig = computeEditorialSignals({ manuscriptId: manuscript.id, annotations, chapters, sessions, combinedMarkdown: manuscript.metadata.combinedMarkdown });
     showToast('Building report…');
     try {
       const { exportRevisionDocx } = await import('../engine/exports/revisionDocx');
-      await exportRevisionDocx(manuscript.metadata.title, manuscript.id, annotations, chapters, rep);
+      await exportRevisionDocx(manuscript.metadata.title, manuscript.id, annotations, chapters, sig);
       showToast('Intelligence report exported.');
     } catch (e) {
       console.error('DOCX export error:', e);
       showToast('DOCX export failed — see console.');
     }
-  }, [manuscript, annotations, chapters]);
+  }, [manuscript, annotations, chapters, sessions]);
 
   const handleExportHtml = useCallback(() => {
     if (!manuscript) return;
     if (!annotations.length) { showToast('No annotations yet.'); return; }
     const title = library.find(m => m.id === manuscript.id)?.metadata.title ?? manuscript.metadata.title;
-    const rep = computeReport(annotations, chapters, manuscript.metadata.combinedMarkdown);
+    const sig = computeEditorialSignals({ manuscriptId: manuscript.id, annotations, chapters, sessions, combinedMarkdown: manuscript.metadata.combinedMarkdown });
     import('../engine/exports/reportHtml').then(({ exportReportHtml }) => {
-      exportReportHtml(title, manuscript.id, annotations, chapters, rep);
+      exportReportHtml(title, manuscript.id, annotations, chapters, sig);
       showToast('Intelligence report exported.');
     }).catch(e => { console.error('HTML export error:', e); showToast('Export failed — see console.'); });
-  }, [manuscript, library, annotations, chapters]);
+  }, [manuscript, library, annotations, chapters, sessions]);
+
+  const handleExportManuscript = useCallback(async (format: 'docx' | 'md') => {
+    if (!manuscript) return;
+    const md = manuscript.metadata.combinedMarkdown;
+    if (!md) { showToast('Manuscript not cached — re-import the file to export it.'); return; }
+    const title = library.find(m => m.id === manuscript.id)?.metadata.title ?? manuscript.metadata.title;
+    try {
+      if (format === 'md') {
+        const { exportManuscriptMarkdown } = await import('../engine/exports/manuscriptMarkdown');
+        exportManuscriptMarkdown(title, manuscript.id, md);
+      } else {
+        showToast('Building manuscript…');
+        const { exportManuscriptDocx } = await import('../engine/exports/manuscriptDocx');
+        await exportManuscriptDocx(title, manuscript.id, md);
+      }
+      showToast('Manuscript exported.');
+    } catch (e) {
+      console.error('Manuscript export error:', e);
+      showToast('Export failed — see console.');
+    }
+  }, [manuscript, library]);
 
   const handleExportRevisionLog = useCallback(() => {
     if (!manuscript) return;
@@ -548,14 +574,19 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
         open={annSidebarOpen} annotations={annotations} onClose={closeAnnSidebar}
         onDelete={id => { deleteAnnotation(id); removeMark(id); showToast('Annotation removed.'); }}
         onJumpTo={jumpToAnnotation}
-        onExport={() => exportRevisionPacket(manuscript.metadata.title, manuscript.id, annotations, chapters)}
-        onImport={(anns, reader) => { const n = importAnnotations(anns, reader); showToast(`${n} annotation${n !== 1 ? 's' : ''} imported.`); }}
+        onImport={(payload) => {
+          const { imported, session } = importSession(payload);
+          const who = session?.readerName ? ` from ${session.readerName}` : '';
+          const far = session ? (session.completedAt ? ' · finished' : ` · read ${Math.round(session.progress * 100)}%`) : '';
+          showToast(`${imported} annotation${imported !== 1 ? 's' : ''} imported${who}${far}.`);
+        }}
       />
       <ReportPanel
-        open={reportPanelOpen} report={report} onClose={closeReportPanel}
-        onExport={() => exportReportJson(manuscript.metadata.title, manuscript.id, report!)}
+        open={reportPanelOpen} report={report} title={manuscript.metadata.title} onClose={closeReportPanel}
         onExportDocx={handleExportDocx}
         onExportHtml={handleExportHtml}
+        onExportManuscript={handleExportManuscript}
+        manuscriptAvailable={!!manuscript.metadata.combinedMarkdown}
         onExportRevisionLog={handleExportRevisionLog}
         editCount={edits.length}
         onJumpToChapter={idx => { const ch = chapters.find(c => c.index === idx); if (ch) jumpToChapter(ch.id); }}

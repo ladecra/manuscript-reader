@@ -1,6 +1,7 @@
 import React, { useRef } from 'react';
 import type { Annotation, AnnotationType } from '../../engine/types';
 import { ANNOTATION_TYPES, ANNOTATION_LABELS, ANNOTATION_COLORS } from '../../engine/types';
+import type { ReaderExportPayload } from '../../engine/sessions';
 import { XIcon } from '../ui/Icons';
 
 interface AnnotationSidebarProps {
@@ -9,8 +10,7 @@ interface AnnotationSidebarProps {
   onClose: () => void;
   onDelete: (id: string) => void;
   onJumpTo: (id: string) => void;
-  onExport: () => void;
-  onImport: (anns: Annotation[], readerName: string | null) => void;
+  onImport: (payload: ReaderExportPayload) => void;
 }
 
 export function AnnotationSidebar({
@@ -19,7 +19,6 @@ export function AnnotationSidebar({
   onClose,
   onDelete,
   onJumpTo,
-  onExport,
   onImport,
 }: AnnotationSidebarProps) {
   const [activeFilter, setActiveFilter] = React.useState<AnnotationType | 'all'>('all');
@@ -35,13 +34,13 @@ export function AnnotationSidebar({
     reader.onload = (ev) => {
       try {
         const parsed = JSON.parse(ev.target?.result as string);
-        let list: Annotation[], readerName: string | null = null;
-        if (Array.isArray(parsed)) { list = parsed; }
-        else if (parsed && Array.isArray(parsed.annotations)) {
-          list = parsed.annotations;
-          readerName = parsed.readerName ?? null;
-        } else throw new Error('invalid');
-        onImport(list, readerName);
+        // Normalize to a ReaderExportPayload: a bare array is a legacy export
+        // (annotations only); the full object carries session fields too.
+        let payload: ReaderExportPayload;
+        if (Array.isArray(parsed)) { payload = { annotations: parsed }; }
+        else if (parsed && Array.isArray(parsed.annotations)) { payload = parsed; }
+        else throw new Error('invalid');
+        onImport(payload);
       } catch {
         alert('Could not read annotation file.');
       }
@@ -111,9 +110,6 @@ export function AnnotationSidebar({
             id="ann-import-input"
           />
         </div>
-        <button id="export-btn" onClick={onExport}>
-          Export revision packet (.md)
-        </button>
       </div>
     </div>
   );

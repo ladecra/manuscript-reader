@@ -48,6 +48,8 @@ function buildAnnotationScript(): string {
   var SLUG = title.toLowerCase().replace(/[^a-z0-9]/g,'-').slice(0,30);
   var ANN_KEY  = 'shared_ann_' + SLUG;
   var NAME_KEY = 'shared_reader_name';
+  var RID_KEY  = 'shared_reader_id';        // stable per-browser reader identity
+  var START_KEY = 'shared_started_' + SLUG; // session start, per manuscript
   var ANN_TYPES  = ['highlight','note','bookmark','question','continuity','structural'];
   var ANN_LABELS = {highlight:'Highlight',note:'Note',bookmark:'Bookmark',question:'Question',continuity:'Continuity',structural:'Structural'};
   var ANN_COLORS = {highlight:'#d9ac3c',note:'#8e9192',bookmark:'#6366f1',question:'#ef6461',continuity:'#34d399',structural:'#fb923c'};
@@ -58,10 +60,36 @@ function buildAnnotationScript(): string {
   var readerName = '';
   try { readerName = localStorage.getItem(NAME_KEY) || ''; } catch(e){}
 
+  // Stable reader identity — generated once on first open and reused thereafter,
+  // so the author can tell two beta readers apart even if both leave the name
+  // field blank or type the same name. This is the key agreement analysis joins on.
+  var readerId = '';
+  try { readerId = localStorage.getItem(RID_KEY) || ''; } catch(e){}
+  if(!readerId){ readerId = 'r'+Date.now().toString(36)+Math.random().toString(36).slice(2,8); try{ localStorage.setItem(RID_KEY, readerId); }catch(e){} }
+
+  // Session start, captured the first time this manuscript is opened.
+  var startedAt = 0;
+  try { startedAt = parseInt(localStorage.getItem(START_KEY)||'0',10) || 0; } catch(e){}
+  if(!startedAt){ startedAt = Date.now(); try{ localStorage.setItem(START_KEY, String(startedAt)); }catch(e){} }
+
   function saveAnns(){ try{ localStorage.setItem(ANN_KEY, JSON.stringify(anns)); }catch(e){} }
   function saveName(){ try{ localStorage.setItem(NAME_KEY, readerName); }catch(e){} }
   function annId(){ return 'a'+Date.now()+Math.random().toString(36).slice(2,6); }
   function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+  // Content version id of the manuscript this reader is reading. MUST stay
+  // byte-for-byte identical to engine/manuscript/manuscriptVersion.ts so the id
+  // stamped here matches what the app computes for the same source text — that's
+  // what lets us later tell whether two readers reacted to the same draft.
+  function versionId(str){
+    var h1=0xdeadbeef, h2=0x41c6ce57;
+    for(var i=0;i<str.length;i++){ var ch=str.charCodeAt(i); h1=Math.imul(h1^ch,2654435761); h2=Math.imul(h2^ch,1597334677); }
+    h1=Math.imul(h1^(h1>>>16),2246822507); h1^=Math.imul(h2^(h2>>>13),3266489909);
+    h2=Math.imul(h2^(h2>>>16),2246822507); h2^=Math.imul(h1^(h1>>>13),3266489909);
+    var n=4294967296*(2097151&h2)+(h1>>>0);
+    return 'v'+n.toString(36);
+  }
+  var MS_VERSION = versionId(md);
 
   var css = [
     'mark[data-ann]{background:rgba(217,172,60,.25);color:inherit;cursor:pointer;padding:1px 0}',
@@ -202,15 +230,48 @@ function buildAnnotationScript(): string {
   function updateBadge(){ badge.classList.toggle('vis', anns.length>0); exportBtn.disabled = anns.length===0; }
 
   function chapterForRange(range){
-    if(!range || !chapters.length) return {title:'',index:0};
+    if(!range || !chapters.length) return {title:'',index:0,id:''};
     var rect = range.getBoundingClientRect();
     var y = rect.top + window.scrollY;
-    var best = {title:'',index:0};
+    var best = {title:'',index:0,id:''};
     for(var k=0;k<chapters.length;k++){
       var el = document.getElementById(chapters[k].id);
-      if(el && el.offsetTop <= y + 100) best = {title:chapters[k].title, index:chapters[k].index};
+      if(el && el.offsetTop <= y + 100) best = {title:chapters[k].title, index:chapters[k].index, id:chapters[k].id};
     }
     return best;
+  }
+
+  // ── Durable anchor capture ───────────────────────────────────────────────────
+  // Mirrors the app's engine/annotations/anchor.ts (buildAnchor) and ReaderScreen
+  // (chapterBlockFor/offsetInContainer) EXACTLY, in the same rendered-text domain:
+  // the chapter-block's textContent. Because the shared reader renders the same
+  // combinedMarkdown into the same ch-N / .chapter-block structure, an anchor
+  // captured here re-resolves through the app's locateAnchor on import — so beta
+  // marks land precisely (duplicate-proof, reorder-proof) instead of via a
+  // fragile quote-only first-match. 40 = engine ANCHOR_CONTEXT.
+  function anchorBlockFor(chapterId){
+    if(!chapterId) return null;
+    var marker = document.getElementById(chapterId);
+    var el = marker ? marker.nextElementSibling : null;
+    while(el && !(el.classList && el.classList.contains('chapter-block'))) el = el.nextElementSibling;
+    return el || null;
+  }
+  function offsetInRoot(root, range){
+    var pre = document.createRange();
+    pre.selectNodeContents(root);
+    try { pre.setEnd(range.startContainer, range.startOffset); } catch(e){ return 0; }
+    return pre.toString().length;
+  }
+  function buildAnchorFor(range, chapterId, quote){
+    if(!range || !quote) return undefined;
+    var scope = anchorBlockFor(chapterId);
+    var root = scope || contentEl;
+    var full = root.textContent || '';
+    var start = offsetInRoot(root, range);
+    var end = start + quote.length;
+    var a = { quote: quote, prefix: full.slice(Math.max(0, start-40), start), suffix: full.slice(end, end+40), offset: start };
+    if(scope) a.chapterId = chapterId;
+    return a;
   }
 
   function wrapMark(container, text, id, type){
@@ -292,9 +353,13 @@ function buildAnnotationScript(): string {
     var sel = window.getSelection();
     var txt = sel ? sel.toString().trim() : '';
     var ch  = chapterForRange(pendingRange);
-    var ann = {id:annId(), type:type, quote:txt.slice(0,400), note:note,
+    var quote = txt.slice(0,400);
+    // Build the anchor from the current rendered text BEFORE inserting the mark,
+    // so the new <mark> doesn't perturb the offset math (matches the app).
+    var anchor = buildAnchorFor(pendingRange, ch.id, quote);
+    var ann = {id:annId(), type:type, quote:quote, note:note,
                chapterTitle:ch.title, chapterIndex:ch.index, createdAt:Date.now(),
-               readerName: readerName || null};
+               readerName: readerName || null, readerId: readerId, anchor: anchor};
     anns.push(ann); saveAnns(); updateBadge(); fadeHint();
     if(pendingRange && txt){
       try {
@@ -404,11 +469,22 @@ function buildAnnotationScript(): string {
   }
   renderSide();
 
+  // Track how far the reader got — the *furthest* point reached, not the current
+  // scroll, so reviewing earlier passages before exporting doesn't undercount.
+  var maxProgress = 0;
+  function trackProgress(){ var docH=document.documentElement.scrollHeight-window.innerHeight; var p=docH>0?window.scrollY/docH:0; if(p>maxProgress) maxProgress=p; }
+  window.addEventListener('scroll', trackProgress, {passive:true});
+  trackProgress();
+
   exportBtn.addEventListener('click', function(){
     if(!anns.length) return;
-    anns.forEach(function(a){ if(!a.readerName) a.readerName = readerName || null; });
+    anns.forEach(function(a){ if(!a.readerName) a.readerName = readerName || null; if(!a.readerId) a.readerId = readerId; });
     saveAnns();
-    var payload = { readerName: readerName || null, manuscript: title, exportedAt: Date.now(), annotations: anns };
+    var prog = Math.min(1, Math.max(0, maxProgress));
+    var payload = { readerId: readerId, readerName: readerName || null, manuscript: title,
+                    manuscriptVersionId: MS_VERSION,
+                    startedAt: startedAt, completedAt: prog>=0.985 ? Date.now() : null,
+                    exportedAt: Date.now(), progress: prog, annotations: anns };
     var blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
     var url  = URL.createObjectURL(blob);
     var a    = document.createElement('a');

@@ -1,0 +1,38 @@
+{
+  "_comment": "Hand-authored multi-reader fixture with KNOWN overlaps, for check-sessions. 4 chapters (100 words each). Reader A finished; Reader B abandoned ~40% (reached ch1-2 only); Reader C finished but read an OLDER draft (different version). Overlaps: ch2 flagged by all three (strongest consensus), ch1 by A+B, ch3 by A only, ch4 by C only.",
+  "manuscriptId": "incendiary",
+  "chapters": [
+    { "id": "ch-1", "index": 1, "title": "One",   "wordCount": 100 },
+    { "id": "ch-2", "index": 2, "title": "Two",   "wordCount": 100 },
+    { "id": "ch-3", "index": 3, "title": "Three", "wordCount": 100 },
+    { "id": "ch-4", "index": 4, "title": "Four",  "wordCount": 100 }
+  ],
+  "sessions": [
+    { "id": "session-incendiary-rA", "manuscriptId": "incendiary", "readerId": "rA", "readerName": "Ada",  "manuscriptVersionId": "v1", "startedAt": 1000, "completedAt": 2000, "progress": 1.0,  "annotationIds": ["a1", "a2", "a3"] },
+    { "id": "session-incendiary-rB", "manuscriptId": "incendiary", "readerId": "rB", "readerName": "Ben",  "manuscriptVersionId": "v1", "startedAt": 1000,                      "progress": 0.4,  "annotationIds": ["a4", "a5"] },
+    { "id": "session-incendiary-rC", "manuscriptId": "incendiary", "readerId": "rC", "readerName": "Cleo", "manuscriptVersionId": "v0", "startedAt": 1000, "completedAt": 2500, "progress": 1.0,  "annotationIds": ["a6", "a7"] }
+  ],
+  "annotations": [
+    { "id": "a1", "type": "question",   "quote": "q", "note": "", "chapterTitle": "One",   "chapterIndex": 1, "createdAt": 1, "readerName": "Ada",  "readerId": "rA" },
+    { "id": "a2", "type": "question",   "quote": "q", "note": "", "chapterTitle": "Two",   "chapterIndex": 2, "createdAt": 1, "readerName": "Ada",  "readerId": "rA" },
+    { "id": "a3", "type": "highlight",  "quote": "q", "note": "", "chapterTitle": "Three", "chapterIndex": 3, "createdAt": 1, "readerName": "Ada",  "readerId": "rA" },
+    { "id": "a4", "type": "question",   "quote": "q", "note": "", "chapterTitle": "One",   "chapterIndex": 1, "createdAt": 1, "readerName": "Ben",  "readerId": "rB" },
+    { "id": "a5", "type": "continuity", "quote": "q", "note": "", "chapterTitle": "Two",   "chapterIndex": 2, "createdAt": 1, "readerName": "Ben",  "readerId": "rB" },
+    { "id": "a6", "type": "question",   "quote": "q", "note": "", "chapterTitle": "Two",   "chapterIndex": 2, "createdAt": 1, "readerName": "Cleo", "readerId": "rC" },
+    { "id": "a7", "type": "highlight",  "quote": "q", "note": "", "chapterTitle": "Four",  "chapterIndex": 4, "createdAt": 1, "readerName": "Cleo", "readerId": "rC" }
+  ],
+  "expect": {
+    "readerCount": 3,
+    "completionRate": 0.6667,
+    "versionsReadCount": 2,
+    "topConsensusChapter": 2,
+    "topConsensusReaders": 3,
+    "ch1Readers": 2,
+    "ch3ReachedVsAnnotated": [2, 1],
+    "signals": {
+      "topAgreementChapter": 2,
+      "unresolvedConcerns": 5,
+      "versionsReadCount": 2
+    }
+  }
+}

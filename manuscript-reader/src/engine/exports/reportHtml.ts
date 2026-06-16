@@ -4,7 +4,7 @@
 // then annotation heatmap, hotspots/silent chapters, type breakdown, report
 // details (p.2). All charts are inline SVG. No external dependencies.
 
-import type { Annotation, AnnotationCluster, AnnotationType, Chapter, ChapterStat, Report } from '../types';
+import type { Annotation, AnnotationCluster, AnnotationType, Chapter, ChapterStat, EditorialSignals } from '../types';
 import { ANNOTATION_TYPES } from '../types';
 
 // ── Palette (matches app light mode: index.css :root.light) ───────────────────
@@ -499,10 +499,11 @@ function buildHtml(opts: {
   title: string;
   annotations: Annotation[];
   chapters: Chapter[];
-  report: Report;
+  signals: EditorialSignals;
   dateStr: string;
 }): string {
-  const { title, annotations, chapters, report: rep, dateStr } = opts;
+  const { title, annotations, chapters, signals, dateStr } = opts;
+  const rep = signals.report;
   const pct = (n: number) => rep.totalAnns > 0 ? Math.round((n / rep.totalAnns) * 100) : 0;
   const annById = new Map(annotations.map(a => [a.id, a]));
   const stripCh = (t: string) => t.replace(/^Chapter \d+\s*[—-]?\s*/i, '');
@@ -566,14 +567,20 @@ function buildHtml(opts: {
       <div class="silent-sub">${s.count === 0 ? 'No annotations.' : `${s.density.toFixed(1)} ann. / 1,000 words · below average (${rep.avgDensity.toFixed(1)})`}</div>
     </div>`).join('') : `<p style="color:${LBL};font-size:11px;font-style:italic">Every chapter drew engagement.</p>`;
 
-  // Reader consensus — only when 2+ beta readers (engine returns [] otherwise).
-  const maxReaders = rep.readers.length;
-  const consensusHtml = rep.consensus.length ? rep.consensus.slice(0, 6).map(c => `
+  // Cross-reader agreement — abandonment-aware (Phase 6 EditorialSignals): of the
+  // readers who *reached* a chapter, how many independently reacted. Distinguishes
+  // "silence from readers who got there" from "nobody arrived". Only meaningful
+  // with ≥1 reader session (engine returns [] otherwise).
+  const consensusHtml = signals.readerAgreement.length ? signals.readerAgreement.slice(0, 6).map(a => {
+    const reached = a.readersWhoReached < 0 ? signals.readerCount : a.readersWhoReached;
+    const pct = Math.round(a.agreement * 100);
+    return `
     <div class="consensus-row">
-      <div class="consensus-ch">Ch. ${c.index}${c.title ? ` — ${esc(stripCh(c.title))}` : ''}</div>
-      <div class="consensus-track"><div class="consensus-fill" style="width:${Math.round((c.readerCount / maxReaders) * 100)}%"></div></div>
-      <div class="consensus-val">${c.readerCount} of ${maxReaders}</div>
-    </div>`).join('') : '';
+      <div class="consensus-ch">Ch. ${a.chapterIndex}${a.chapterTitle ? ` — ${esc(stripCh(a.chapterTitle))}` : ''}</div>
+      <div class="consensus-track"><div class="consensus-fill" style="width:${pct}%"></div></div>
+      <div class="consensus-val">${a.readersWhoAnnotated} of ${reached} · ${pct}%</div>
+    </div>`;
+  }).join('') : '';
 
   // Reader feedback log (page 3) — verbatim questions, continuity & structural notes by chapter.
   const logTypes: AnnotationType[] = ['question', 'continuity', 'structural'];
@@ -650,9 +657,16 @@ function buildHtml(opts: {
       </div>
     </div>`;
 
+  const completionPct = Math.round(signals.completionRate * 100);
+  const versionsNote = signals.versionsRead.length > 1
+    ? ` · ⚠ readers saw ${signals.versionsRead.length} different drafts`
+    : '';
+  const readerSummary = signals.readerCount > 0
+    ? `${signals.readerCount} reader${signals.readerCount !== 1 ? 's' : ''} · ${completionPct}% finished${versionsNote}`
+    : '';
   const consensusSection = consensusHtml ? `
-  <div class="sec-head mt28 mb4">Reader Consensus</div>
-  <div class="sec-sub">Chapters multiple readers independently reacted to — your strongest revision signal</div>
+  <div class="sec-head mt28 mb4">Reader Agreement</div>
+  <div class="sec-sub">Of the readers who reached each chapter, how many independently reacted — your strongest revision signal.${readerSummary ? `  ${esc(readerSummary)}` : ''}</div>
   ${consensusHtml}` : '';
 
   const page3 = feedbackLogHtml ? `
@@ -759,10 +773,10 @@ export function exportReportHtml(
   id: string,
   annotations: Annotation[],
   chapters: Chapter[],
-  report: Report,
+  signals: EditorialSignals,
 ): void {
   const dateStr = new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
-  const html = buildHtml({ title, annotations, chapters, report, dateStr });
+  const html = buildHtml({ title, annotations, chapters, signals, dateStr });
   const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
