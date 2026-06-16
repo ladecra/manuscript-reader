@@ -382,6 +382,24 @@ body {
 }
 .rp-body { flex: 1; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 .rp-footer { padding: 14px 20px; border-top: 1px solid var(--border); flex-shrink: 0; }
+.rp-export-group { margin-bottom: 16px; }
+.rp-export-group:last-child { margin-bottom: 0; }
+.rp-export-group-label {
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 9px; font-weight: 500;
+  letter-spacing: 0.16em; text-transform: uppercase; color: var(--dim); margin-bottom: 8px;
+}
+.rp-export-hero {
+  width: 100%; padding: 12px; background: var(--primary);
+  border: 1px solid var(--primary); font-family: 'Schibsted Grotesk', system-ui, sans-serif;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--bg); cursor: pointer; transition: opacity 0.2s;
+}
+.rp-export-hero:hover { opacity: 0.85; }
+.rp-export-hero:disabled { opacity: 0.4; cursor: not-allowed; }
+.rp-consensus-note {
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 11px;
+  color: var(--ann-continuity-solid); line-height: 1.5; margin-top: 12px;
+}
 .rp-export-btn {
   width: 100%; padding: 11px; background: none;
   border: 1px solid var(--border); font-family: 'Schibsted Grotesk', system-ui, sans-serif;
@@ -487,6 +505,15 @@ body {
 .ms-edit-btn:hover { color: var(--primary); }
 .ms-delete-btn { color: var(--border); }
 .ms-delete-btn:hover { color: #c0392b; }
+/* The read/resume action on a library card — the primary gesture, so it carries a border. */
+.ms-read-btn {
+  background: none; cursor: pointer; border: 1px solid var(--border);
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 10px; font-weight: 500;
+  letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted);
+  padding: 5px 14px; transition: color 0.2s, border-color 0.2s; -webkit-tap-highlight-color: transparent;
+}
+.ms-read-btn:hover { color: var(--primary); border-color: var(--primary); }
+.ms-read-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .ms-meta {
   display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
   font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 11px; color: var(--dim); letter-spacing: 0.03em;
@@ -819,3 +846,190 @@ mark[data-ann]:hover { filter: brightness(1.2); }
 }
 .ch-tree-del:hover { color: #c0392b; }
 .ch-tree-del.marked-delete { color: var(--brand); }
+
+/* ─── Manuscript Hub ──────────────────────────────────────────────────────────
+   The per-manuscript home: a persistent left rail (collapsed in the reader) over
+   the manuscript's artifacts. Intelligence lives here, never over the reading view. */
+
+.topbar-title-btn { background: none; border: none; cursor: pointer; padding: 0; }
+.topbar-title-btn:hover { color: var(--primary); }
+
+.hub { display: flex; margin-top: var(--topbar-h); min-height: calc(100dvh - var(--topbar-h)); }
+
+.hub-rail {
+  position: sticky; top: var(--topbar-h); align-self: flex-start;
+  width: 268px; flex-shrink: 0; height: calc(100dvh - var(--topbar-h));
+  background: var(--surface); border-right: 1px solid var(--border);
+  padding: 30px 22px 24px; display: flex; flex-direction: column; overflow: hidden;
+}
+/* Celestial glow at the foot of the rail — echoes the library/landing aesthetic. */
+.hub-rail::after {
+  content: ''; position: absolute; inset: auto 0 0 0; height: 220px; pointer-events: none;
+  background: radial-gradient(80% 70% at 30% 120%, rgba(216, 169, 63, 0.10), transparent 70%),
+              radial-gradient(70% 60% at 90% 130%, rgba(96, 74, 150, 0.22), transparent 72%);
+}
+:root.light .hub-rail::after {
+  background: radial-gradient(80% 70% at 30% 120%, rgba(216, 169, 63, 0.12), transparent 70%),
+              radial-gradient(70% 60% at 90% 130%, rgba(140, 118, 86, 0.16), transparent 72%);
+}
+
+.hub-rail-back {
+  background: none; border: none; cursor: pointer; text-align: left; padding: 0;
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif;
+  font-size: 11px; letter-spacing: 0.04em; color: var(--dim); margin-bottom: 26px;
+}
+.hub-rail-back:hover { color: var(--primary); }
+.hub-rail-head { display: flex; flex-direction: column; }
+.hub-rail-headtext { min-width: 0; }
+.hub-rail-wordmark {
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif;
+  font-size: 9px; font-weight: 500; letter-spacing: 0.18em; text-transform: uppercase;
+  color: var(--brand); margin-bottom: 12px;
+}
+.hub-rail-title { font-family: 'EB Garamond', Georgia, serif; font-size: 25px; color: var(--primary); line-height: 1.12; }
+.hub-rail-sub {
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif;
+  font-size: 10px; letter-spacing: 0.06em; color: var(--dim); margin: 6px 0 30px;
+}
+.hub-rail-nav { display: flex; flex-direction: column; gap: 3px; position: relative; z-index: 1; }
+.hub-rail-read {
+  background: var(--primary); color: var(--bg); border: none; cursor: pointer; text-align: left;
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif;
+  font-size: 12px; font-weight: 600; letter-spacing: 0.04em; padding: 12px 14px; margin-bottom: 14px;
+}
+.hub-rail-read:hover { opacity: 0.88; }
+.hub-rail-item {
+  background: none; border: none; cursor: pointer; text-align: left;
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif;
+  font-size: 13px; letter-spacing: 0.02em; color: var(--muted);
+  padding: 10px 14px; border-left: 2px solid transparent; transition: color 0.2s, background 0.2s;
+}
+.hub-rail-item:hover { color: var(--primary); }
+.hub-rail-item.active { color: var(--primary); border-left-color: var(--brand); background: var(--surface-high); }
+
+.hub-main { flex: 1; min-width: 0; padding: 46px 56px 90px; max-width: 1000px; }
+
+.hub-warn {
+  border: 1px solid var(--ann-question-solid); border-left: 3px solid var(--ann-question-solid);
+  color: var(--ann-question-solid); font-family: 'Schibsted Grotesk', system-ui, sans-serif;
+  font-size: 12px; line-height: 1.5; padding: 10px 14px; margin-bottom: 24px;
+}
+
+.hub-panel { animation: hubfade 0.3s var(--ease-std, ease); }
+@keyframes hubfade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.hub-panel-title { font-family: 'EB Garamond', Georgia, serif; font-size: 32px; font-weight: 500; color: var(--primary); line-height: 1.1; }
+.hub-panel-lead { font-family: 'EB Garamond', Georgia, serif; font-size: 16px; color: var(--muted); margin: 8px 0 30px; }
+
+.hub-overview-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 28px; }
+.hub-byline { font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 12px; color: var(--dim); margin-top: 6px; letter-spacing: 0.02em; }
+.hub-read-cta {
+  flex-shrink: 0; background: none; border: 1px solid var(--border); cursor: pointer;
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 12px; letter-spacing: 0.04em;
+  color: var(--muted); padding: 10px 18px;
+}
+.hub-read-cta:hover { border-color: var(--primary); color: var(--primary); }
+
+.hub-stats { display: flex; gap: 40px; margin-bottom: 40px; flex-wrap: wrap; }
+.hub-section-label {
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif;
+  font-size: 10px; font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--dim); margin-bottom: 18px; padding-bottom: 10px; border-bottom: 1px solid var(--border);
+}
+.hub-form { display: flex; flex-direction: column; gap: 22px; max-width: 540px; }
+
+.hub-report { max-width: 620px; }
+.hub-report .rp-section:first-child { padding-top: 0; }
+.hub-report .rp-section { padding-left: 0; padding-right: 0; }
+
+.hub-empty {
+  border: 1px dashed var(--border); padding: 40px 28px; text-align: center;
+  font-family: 'EB Garamond', Georgia, serif; color: var(--muted); margin-top: 8px;
+}
+.hub-empty p { font-size: 17px; }
+.hub-empty-sub { font-size: 14px !important; color: var(--dim); margin: 10px auto 0; max-width: 460px; line-height: 1.55; }
+
+.hub-ann-list { display: flex; flex-direction: column; margin-top: 8px; }
+.hub-ann { display: flex; gap: 12px; padding: 16px 0; border-bottom: 1px solid var(--border); }
+.hub-ann-dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 7px; flex-shrink: 0; }
+.hub-ann-body { min-width: 0; }
+.hub-ann-meta { font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--dim); }
+.hub-ann-quote { font-family: 'EB Garamond', Georgia, serif; font-size: 15px; color: var(--muted); font-style: italic; margin-top: 6px; line-height: 1.5; }
+.hub-ann-note { font-family: 'EB Garamond', Georgia, serif; font-size: 15px; color: var(--primary); margin-top: 4px; line-height: 1.5; }
+
+@media (max-width: 760px) {
+  .hub { flex-direction: column; }
+  .hub-rail { width: auto; height: auto; position: static; border-right: none; border-bottom: 1px solid var(--border); }
+  .hub-rail::after { display: none; }
+  /* Rail head becomes a row: title/details on the left, the single Read button
+     right-aligned and vertically centered against them. */
+  .hub-rail-head { flex-direction: row; align-items: center; justify-content: space-between; gap: 16px; }
+  .hub-rail-sub { margin-bottom: 0; }
+  .hub-rail-read { margin-bottom: 0; flex-shrink: 0; }
+  .hub-rail-nav { flex-direction: row; flex-wrap: wrap; margin-top: 20px; }
+  .hub-main { padding: 30px 22px 60px; }
+}
+
+/* ── Manuscript page: hero (title page), chapter list, details form ── */
+.ms-row-clickable { cursor: pointer; }
+.ms-row-clickable:focus-visible { outline: 1px solid var(--brand); outline-offset: 6px; }
+
+.hub-hero { display: flex; align-items: center; justify-content: space-between; gap: 40px; padding: 8px 0 36px; margin-bottom: 4px; border-bottom: 1px solid var(--border); }
+.hub-hero-text { min-width: 0; }
+.hub-hero-series {
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 11px; font-weight: 500;
+  letter-spacing: 0.16em; text-transform: uppercase; color: var(--brand); margin-bottom: 14px;
+}
+.hub-hero-title { font-family: 'EB Garamond', Georgia, serif; font-size: 46px; font-weight: 500; color: var(--primary); line-height: 1.05; letter-spacing: -0.01em; }
+.hub-hero-subtitle { font-family: 'EB Garamond', Georgia, serif; font-size: 22px; font-style: italic; color: var(--muted); margin-top: 10px; line-height: 1.25; }
+.hub-hero-byline { font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 13px; letter-spacing: 0.04em; color: var(--dim); margin-top: 16px; }
+.hub-hero-meta {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-top: 22px;
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 11px; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--dim);
+}
+.hub-hero-meta .ms-status { cursor: default; }
+.hub-hero-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 12px; flex-shrink: 0; }
+.hub-play {
+  background: var(--primary); color: var(--bg); border: none; cursor: pointer;
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 13px; font-weight: 600;
+  letter-spacing: 0.06em; padding: 14px 30px; transition: opacity 0.2s;
+}
+.hub-play:hover { opacity: 0.88; }
+.hub-play-secondary {
+  background: none; border: none; cursor: pointer; color: var(--dim);
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 12px; letter-spacing: 0.04em;
+}
+.hub-play-secondary:hover { color: var(--primary); }
+
+.hub-chapters { display: flex; flex-direction: column; }
+.hub-chapter {
+  display: grid; grid-template-columns: 36px 1fr auto; align-items: baseline; gap: 18px;
+  background: none; border: none; border-bottom: 1px solid var(--border); cursor: pointer;
+  text-align: left; padding: 16px 6px; width: 100%; transition: background 0.18s, padding 0.18s;
+}
+.hub-chapter:hover { background: var(--surface); padding-left: 12px; }
+.hub-chapter-num { font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 11px; letter-spacing: 0.06em; color: var(--brand); }
+.hub-chapter-title { font-family: 'EB Garamond', Georgia, serif; font-size: 18px; color: var(--primary); min-width: 0; }
+.hub-chapter-words { font-family: 'Schibsted Grotesk', system-ui, sans-serif; font-size: 10px; letter-spacing: 0.04em; color: var(--dim); }
+
+.hub-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px 28px; max-width: 720px; }
+.hub-field { display: flex; flex-direction: column; }
+.hub-field-wide { grid-column: 1 / -1; }
+.hub-textarea { resize: vertical; min-height: 48px; line-height: 1.5; font-family: 'EB Garamond', Georgia, serif; }
+
+.hub-detail-nudge {
+  display: block; width: 100%; text-align: left; cursor: pointer;
+  background: rgba(216,169,63,0.06); border: 1px solid rgba(216,169,63,0.28); border-left: 3px solid var(--brand);
+  color: var(--muted); font-family: 'EB Garamond', Georgia, serif; font-size: 14px; line-height: 1.5;
+  padding: 12px 16px; margin-bottom: 26px;
+}
+.hub-detail-nudge:hover { color: var(--primary); border-color: var(--brand); }
+
+@media (max-width: 760px) {
+  .hub-hero-title { font-size: 34px; }
+  .hub-form-grid { grid-template-columns: 1fr; }
+  /* One Read button on mobile — the rail's. Hide the hero's. (Defined after the
+     base .hub-hero rules so it actually wins the cascade.) */
+  .hub-hero { flex-direction: column; align-items: flex-start; }
+  .hub-hero-actions { display: none; }
+}

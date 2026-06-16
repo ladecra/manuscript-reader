@@ -133,7 +133,8 @@ function manuscriptChanged(a: StoredManuscript, b: StoredManuscript): boolean {
   return a.title !== b.title || a.author !== b.author || a.status !== b.status
     || a.wordCount !== b.wordCount || a.chapterCount !== b.chapterCount
     || a.lastOpened !== b.lastOpened || a.uncached !== b.uncached
-    || a.combinedMarkdown !== b.combinedMarkdown;
+    || a.combinedMarkdown !== b.combinedMarkdown
+    || JSON.stringify(a.publishing ?? null) !== JSON.stringify(b.publishing ?? null);
 }
 
 export function manuscriptId(title: string): string {

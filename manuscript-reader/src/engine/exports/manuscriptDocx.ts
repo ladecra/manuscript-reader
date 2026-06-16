@@ -9,7 +9,7 @@
 import {
   Document, Paragraph, TextRun, AlignmentType, Packer, type IParagraphOptions,
 } from 'docx';
-import { cleanManuscriptMarkdown, exportSlug } from './manuscriptMarkdown';
+import { cleanManuscriptMarkdown, exportSlug, copyrightLine, type ExportManuscriptMeta } from './manuscriptMarkdown';
 
 const SERIF = 'Georgia';
 const INK = '1B1A17', QUOTE = '5A5750';
@@ -52,16 +52,60 @@ function heading(text: string, size: number): Paragraph {
   });
 }
 
-function buildDoc(title: string, combinedMarkdown: string): Document {
-  const lines = cleanManuscriptMarkdown(combinedMarkdown).split('\n');
-  const children: Paragraph[] = [];
-  let firstChapter = true;
+// ── Front matter (title / copyright / dedication pages) ──────────────────────
+// A centered run on its own line, at a given point size.
+function centered(text: string, halfPt: number, opts: { italics?: boolean; color?: string; before?: number; after?: number; pageBreak?: boolean } = {}): Paragraph {
+  return new Paragraph({
+    alignment: AlignmentType.CENTER, pageBreakBefore: opts.pageBreak,
+    spacing: { before: opts.before ?? 0, after: opts.after ?? 120 },
+    children: [new TextRun({ text, font: SERIF, size: halfPt, italics: opts.italics, color: opts.color ?? INK })],
+  });
+}
 
-  // Title block.
-  children.push(new Paragraph({
-    alignment: AlignmentType.CENTER, spacing: { after: 480 },
-    children: [new TextRun({ text: title, font: SERIF, size: 44, color: INK })],
-  }));
+/** The title page, copyright page, and (optional) dedication page, in order.
+ *  Only renders what the author supplied — no blank copyright page, no empty
+ *  "ISBN:" lines. Always at least a title page (the manuscript has a title). */
+function frontMatter(meta: ExportManuscriptMeta): Paragraph[] {
+  const p = meta.publishing ?? {};
+  const out: Paragraph[] = [];
+
+  // — Title page —
+  if (p.series?.trim()) out.push(centered(p.series.trim().toUpperCase(), 18, { before: 2400, after: 240, color: QUOTE }));
+  out.push(centered(meta.title, 52, { before: p.series?.trim() ? 0 : 2600, after: p.subtitle?.trim() ? 160 : 360 }));
+  if (p.subtitle?.trim()) out.push(centered(p.subtitle.trim(), 30, { italics: true, after: 360, color: QUOTE }));
+  if (meta.author?.trim()) out.push(centered(meta.author.trim(), 26, { before: 360 }));
+  if (p.publisher?.trim() || p.imprint?.trim()) {
+    out.push(centered([p.imprint?.trim(), p.publisher?.trim()].filter(Boolean).join(' · '), 18, { before: 2600, color: QUOTE }));
+  }
+
+  // — Copyright page (verso) — only if there's anything to put on it.
+  const cr = copyrightLine(p);
+  const crLines: string[] = [];
+  if (cr) crLines.push(cr);
+  if (p.rights?.trim()) crLines.push(p.rights.trim());
+  if (p.edition?.trim()) crLines.push(p.edition.trim());
+  if (p.publisher?.trim() || p.imprint?.trim()) crLines.push([p.imprint?.trim(), p.publisher?.trim()].filter(Boolean).join(', '));
+  if (p.publicationDate?.trim()) crLines.push(p.publicationDate.trim());
+  if (p.isbn?.trim()) crLines.push(`ISBN ${p.isbn.trim()}`);
+  if (p.language?.trim()) crLines.push(p.language.trim());
+  if (crLines.length) {
+    crLines.forEach((t, i) => out.push(new Paragraph({
+      pageBreakBefore: i === 0, spacing: { before: i === 0 ? 1800 : 0, after: 80 },
+      children: [new TextRun({ text: t, font: SERIF, size: 18, color: QUOTE })],
+    })));
+  }
+
+  // — Dedication page —
+  if (p.dedication?.trim()) out.push(centered(p.dedication.trim(), 26, { italics: true, before: 2800, pageBreak: true, color: QUOTE }));
+
+  return out;
+}
+
+function buildDoc(meta: ExportManuscriptMeta, combinedMarkdown: string): Document {
+  const lines = cleanManuscriptMarkdown(combinedMarkdown).split('\n');
+  const children: Paragraph[] = [...frontMatter(meta)];
+  // Front matter always precedes the body, so the first chapter starts a fresh page.
+  let firstChapter = false;
 
   const paraOpts = (): IParagraphOptions => ({
     spacing: { line: 360, lineRule: 'auto', after: 60 },
@@ -135,7 +179,11 @@ function buildDoc(title: string, combinedMarkdown: string): Document {
     children.push(new Paragraph({ ...paraOpts(), children: inlineRuns(buf.join(' ').trim()) }));
   }
 
+  const p = meta.publishing ?? {};
   return new Document({
+    title: meta.title,
+    creator: meta.author || undefined,
+    description: p.subtitle || undefined,
     styles: { default: { document: { run: { font: SERIF, size: BODY, color: INK } } } },
     sections: [{
       properties: { page: { margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 } } },
@@ -144,13 +192,13 @@ function buildDoc(title: string, combinedMarkdown: string): Document {
   });
 }
 
-export async function exportManuscriptDocx(title: string, id: string, combinedMarkdown: string): Promise<void> {
-  const doc = buildDoc(title, combinedMarkdown);
+export async function exportManuscriptDocx(meta: ExportManuscriptMeta, id: string, combinedMarkdown: string): Promise<void> {
+  const doc = buildDoc(meta, combinedMarkdown);
   const blob = await Packer.toBlob(doc);
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `${exportSlug(title, id)}-${new Date().toISOString().slice(0, 10)}.docx`;
+  a.download = `${exportSlug(meta.title, id)}-${new Date().toISOString().slice(0, 10)}.docx`;
   document.body.appendChild(a);
   a.click();
   setTimeout(() => { URL.revokeObjectURL(url); document.body.removeChild(a); }, 1000);

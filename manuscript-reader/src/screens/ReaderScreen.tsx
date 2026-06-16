@@ -5,13 +5,11 @@ import { applyBlockEdit, htmlToMarkdownBlocks, sameProse } from '../engine/manus
 import { useReaderStore } from '../state/readerStore';
 import { useUIStore } from '../state/uiStore';
 import { useLibraryStore } from '../state/libraryStore';
-import { computeEditorialSignals } from '../engine/editorialSignals';
 import { parseMarkdown } from '../engine/ingestion/parseMarkdown';
 import { chapterForOffset } from '../engine/manuscript/chapterForOffset';
 import { ChapterNav } from '../components/reader/ChapterNav';
 import { AnnotationSidebar } from '../components/reader/AnnotationSidebar';
 import { SelectionPopup } from '../components/reader/SelectionPopup';
-import { ReportPanel } from '../components/reports/ReportPanel';
 import { AddChaptersModal } from '../components/reader/AddChaptersModal';
 import { showToast } from '../components/ui/Toast';
 
@@ -125,9 +123,9 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   const scrollSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const entranceObs = useRef<IntersectionObserver | null>(null);
 
-  const { manuscript, chapters, annotations, edits, sessions, addAnnotation, updateAnnotation, deleteAnnotation, importSession, openManuscript, recordEdit, pushEditTransition, setEditReturnScroll } = useReaderStore();
-  const { navOpen, annSidebarOpen, reportPanelOpen, editMode, closeNav, closeAnnSidebar, closeReportPanel, toggleAnnSidebar, closeAllPanels } = useUIStore();
-  const { library, updateProgress, getReadingPosition, appendChapters, replaceMarkdown } = useLibraryStore();
+  const { manuscript, chapters, annotations, addAnnotation, updateAnnotation, deleteAnnotation, importSession, openManuscript, recordEdit, pushEditTransition, setEditReturnScroll } = useReaderStore();
+  const { navOpen, annSidebarOpen, editMode, closeNav, closeAnnSidebar, toggleAnnSidebar, closeAllPanels } = useUIStore();
+  const { updateProgress, getReadingPosition, appendChapters, replaceMarkdown } = useLibraryStore();
 
   const [activeChapterIdx, setActiveChapterIdx] = useState(0);
   const [scrollPct, setScrollPct] = useState(0);
@@ -187,6 +185,23 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
       setupEditable(c, editModeRef.current);
       reapplyHighlights();
       window.scrollTo(0, editScroll);
+      return;
+    }
+
+    // A jump sent from the hub (a Report chip): land at that chapter instead of
+    // fading in + resuming the last position. Consume it so it fires only once.
+    const pendingIdx = useUIStore.getState().pendingChapterIndex;
+    if (pendingIdx != null) {
+      useUIStore.getState().setPendingChapterIndex(null);
+      c.querySelectorAll('p, blockquote, ul, ol').forEach(el => el.classList.add('visible'));
+      if (editModeRef.current) setupEditable(c, true);
+      reapplyHighlights();
+      const target = chapters.find(ch => ch.index === pendingIdx);
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        const el = target ? document.getElementById(target.id) : null;
+        if (el) el.scrollIntoView({ block: 'start' });
+        else window.scrollTo(0, 0);
+      }));
       return;
     }
 
@@ -509,77 +524,6 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     if (mark) { const p = mark.parentNode!; while (mark.firstChild) p.insertBefore(mark.firstChild, mark); p.removeChild(mark); (p as Element).normalize?.(); }
   }, []);
 
-  const reportMarkdown = manuscript?.metadata.combinedMarkdown;
-  const msId = manuscript?.id ?? '';
-  // Single engine entry (Phase 6.3): every consumer — the panel and all three
-  // exports — reads from this one EditorialSignals object, so the annotation
-  // report and the multi-reader merge are computed exactly once.
-  const signals = React.useMemo(
-    () => annotations.length > 0
-      ? computeEditorialSignals({ manuscriptId: msId, annotations, chapters, sessions, combinedMarkdown: reportMarkdown })
-      : null,
-    [msId, annotations, chapters, sessions, reportMarkdown],
-  );
-  const report = signals?.report ?? null;
-
-  // ── Export handlers ──
-  const handleExportDocx = useCallback(async () => {
-    if (!manuscript) return;
-    if (!annotations.length) { showToast('No annotations yet.'); return; }
-    const sig = computeEditorialSignals({ manuscriptId: manuscript.id, annotations, chapters, sessions, combinedMarkdown: manuscript.metadata.combinedMarkdown });
-    showToast('Building report…');
-    try {
-      const { exportRevisionDocx } = await import('../engine/exports/revisionDocx');
-      await exportRevisionDocx(manuscript.metadata.title, manuscript.id, annotations, chapters, sig);
-      showToast('Intelligence report exported.');
-    } catch (e) {
-      console.error('DOCX export error:', e);
-      showToast('DOCX export failed — see console.');
-    }
-  }, [manuscript, annotations, chapters, sessions]);
-
-  const handleExportHtml = useCallback(() => {
-    if (!manuscript) return;
-    if (!annotations.length) { showToast('No annotations yet.'); return; }
-    const title = library.find(m => m.id === manuscript.id)?.metadata.title ?? manuscript.metadata.title;
-    const sig = computeEditorialSignals({ manuscriptId: manuscript.id, annotations, chapters, sessions, combinedMarkdown: manuscript.metadata.combinedMarkdown });
-    import('../engine/exports/reportHtml').then(({ exportReportHtml }) => {
-      exportReportHtml(title, manuscript.id, annotations, chapters, sig);
-      showToast('Intelligence report exported.');
-    }).catch(e => { console.error('HTML export error:', e); showToast('Export failed — see console.'); });
-  }, [manuscript, library, annotations, chapters, sessions]);
-
-  const handleExportManuscript = useCallback(async (format: 'docx' | 'md') => {
-    if (!manuscript) return;
-    const md = manuscript.metadata.combinedMarkdown;
-    if (!md) { showToast('Manuscript not cached — re-import the file to export it.'); return; }
-    const title = library.find(m => m.id === manuscript.id)?.metadata.title ?? manuscript.metadata.title;
-    try {
-      if (format === 'md') {
-        const { exportManuscriptMarkdown } = await import('../engine/exports/manuscriptMarkdown');
-        exportManuscriptMarkdown(title, manuscript.id, md);
-      } else {
-        showToast('Building manuscript…');
-        const { exportManuscriptDocx } = await import('../engine/exports/manuscriptDocx');
-        await exportManuscriptDocx(title, manuscript.id, md);
-      }
-      showToast('Manuscript exported.');
-    } catch (e) {
-      console.error('Manuscript export error:', e);
-      showToast('Export failed — see console.');
-    }
-  }, [manuscript, library]);
-
-  const handleExportRevisionLog = useCallback(() => {
-    if (!manuscript) return;
-    if (!edits.length) { showToast('No edits yet.'); return; }
-    const title = library.find(m => m.id === manuscript.id)?.metadata.title ?? manuscript.metadata.title;
-    import('../engine/exports/revisionLog').then(({ exportRevisionLog }) => {
-      exportRevisionLog(title, manuscript.id, edits);
-      showToast('Revision log exported.');
-    }).catch(e => { console.error('Revision log export error:', e); showToast('Export failed — see console.'); });
-  }, [manuscript, library, edits]);
-
   const handleAppendChapters = useCallback((chunk: string) => {
     if (!manuscript) return;
     const updated = appendChapters(manuscript.id, chunk);
@@ -608,16 +552,6 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
           const far = session ? (session.completedAt ? ' · finished' : ` · read ${Math.round(session.progress * 100)}%`) : '';
           showToast(`${imported} annotation${imported !== 1 ? 's' : ''} imported${who}${far}.`);
         }}
-      />
-      <ReportPanel
-        open={reportPanelOpen} report={report} title={manuscript.metadata.title} onClose={closeReportPanel}
-        onExportDocx={handleExportDocx}
-        onExportHtml={handleExportHtml}
-        onExportManuscript={handleExportManuscript}
-        manuscriptAvailable={!!manuscript.metadata.combinedMarkdown}
-        onExportRevisionLog={handleExportRevisionLog}
-        editCount={edits.length}
-        onJumpToChapter={idx => { const ch = chapters.find(c => c.index === idx); if (ch) jumpToChapter(ch.id); }}
       />
       <SelectionPopup visible={selection.visible} position={selection.position} onSave={handleSaveAnnotation} onClose={() => setSelection(s => ({ ...s, visible: false, range: null }))} />
       <AddChaptersModal
