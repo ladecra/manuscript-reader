@@ -13,8 +13,17 @@ import {
   MAMMOTH_STYLE_MAP,
 } from '../src/engine/ingestion/preprocessMarkdown.ts';
 import { parseMarkdown, countWords } from '../src/engine/ingestion/parseMarkdown.ts';
+import { buildManuscriptStructure } from '../src/engine/ingestion/manuscriptStructure.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
+
+/** Compact "role:count role:count" tally of a block list, in a stable order. */
+const ROLE_ORDER = ['chapter-heading', 'subheading', 'paragraph', 'blockquote', 'scene-break', 'list', 'code'];
+function roleTally(blocks) {
+  const counts = {};
+  for (const b of blocks) counts[b.role] = (counts[b.role] ?? 0) + 1;
+  return ROLE_ORDER.filter(r => counts[r]).map(r => `${r}:${counts[r]}`).join('  ') || '(none)';
+}
 
 // Mirror fileReader.readDocx exactly.
 async function docxToMarkdown(path) {
@@ -61,5 +70,19 @@ for (const f of files) {
   console.log('WORDS:  ', countWords(md));
   console.log('CHAPTERS:', chapters.length);
   for (const c of chapters) console.log(`   [${String(c.index).padStart(2, '0')}] ${c.title}`);
+
+  // ── Structural model (Stage 0) ──
+  const structure = buildManuscriptStructure(md);
+  const sceneBreaks = structure.chapters.reduce((n, c) => n + c.sceneBreakCount, 0);
+  console.log('STRUCTURE:');
+  console.log('   front-matter blocks:', structure.frontMatter.length, `[${roleTally(structure.frontMatter)}]`);
+  console.log('   body chapters:      ', structure.chapters.length, `· scene breaks: ${sceneBreaks}`);
+  console.log('   back-matter blocks: ', structure.backMatter.length, '(dropped upstream — capture is the Stage-0/1 follow-up)');
+  console.log('   block roles (all):  ', roleTally(structure.blocks));
+  const withBreaks = structure.chapters.filter(c => c.sceneBreakCount > 0);
+  if (withBreaks.length) {
+    console.log('   scene breaks by chapter:');
+    for (const c of withBreaks) console.log(`      [${String(c.index).padStart(2, '0')}] ${c.sceneBreakCount} · ${c.title}`);
+  }
 }
 console.log('');

@@ -1,98 +1,27 @@
-import React from 'react';
-import type { Report, ChapterStat } from '../../engine/types';
+import type { EditorialSignals, ChapterStat } from '../../engine/types';
 import { ANNOTATION_TYPES, ANNOTATION_LABELS, ANNOTATION_COLORS } from '../../engine/types';
-import { XIcon } from '../ui/Icons';
-import { ExportChoiceModal } from './ExportChoiceModal';
 
-interface ReportPanelProps {
-  open: boolean;
-  report: Report | null;
-  title: string;
-  onClose: () => void;
-  onExportDocx: () => void | Promise<void>;
-  onExportHtml: () => void;
-  onExportManuscript: (format: 'docx' | 'md') => void | Promise<void>;
-  manuscriptAvailable: boolean;
-  onExportRevisionLog: () => void;
-  editCount: number;
-  onJumpToChapter: (index: number) => void;
+// The Manuscript Intelligence content, rendered inline on the manuscript hub's
+// Report tab. (It used to live in a reader drawer; the drawer is gone — intelligence
+// lives on the hub now, never over the reading view.) Pure presentation over a
+// precomputed EditorialSignals; jumping a chapter is delegated to the host.
+export function ReportView({ signals, onJump }: { signals: EditorialSignals | null; onJump: (index: number) => void }) {
+  const report = signals?.report ?? null;
+  if (!report || report.totalAnns === 0) {
+    return (
+      <div className="rp-empty">
+        <p>No annotations yet.</p>
+        <p style={{ fontSize: '14px', marginTop: '8px' }}>
+          Open the reader and select text to begin annotating.
+        </p>
+      </div>
+    );
+  }
+  return <ReportBody signals={signals!} onJump={onJump} />;
 }
 
-export function ReportPanel({ open, report, title, onClose, onExportDocx, onExportHtml, onExportManuscript, manuscriptAvailable, onExportRevisionLog, editCount, onJumpToChapter }: ReportPanelProps) {
-  const [reportExportOpen, setReportExportOpen] = React.useState(false);
-  const [manuscriptExportOpen, setManuscriptExportOpen] = React.useState(false);
-  return (
-    <div id="report-panel" className={open ? 'open' : ''}>
-      <div className="rp-header">
-        <div className="rp-header-row">
-          <span className="rp-title">Manuscript Intelligence</span>
-          <button
-            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--dim)', padding: '2px', display: 'flex' }}
-            onClick={onClose}
-            aria-label="Close report"
-          >
-            <XIcon size={14} />
-          </button>
-        </div>
-      </div>
-
-      <div id="report-body" className="rp-body">
-        {!report || report.totalAnns === 0 ? (
-          <div className="rp-empty">
-            <p>No annotations yet.</p>
-            <p style={{ fontSize: '14px', marginTop: '8px' }}>
-              Select text in the reader to begin annotating.
-            </p>
-          </div>
-        ) : (
-          <ReportBody report={report} onJump={onJumpToChapter} />
-        )}
-      </div>
-
-      <div className="rp-footer">
-        <button id="export-manuscript-btn" className="rp-export-btn" onClick={() => setManuscriptExportOpen(true)} disabled={!manuscriptAvailable} title={manuscriptAvailable ? undefined : 'Re-import this manuscript to export it'} style={manuscriptAvailable ? undefined : { opacity: 0.4, cursor: 'not-allowed' }}>
-          Export manuscript
-        </button>
-        <button id="export-report-btn" className="rp-export-btn ann-export-secondary" onClick={() => setReportExportOpen(true)} style={{ marginTop: '8px' }}>
-          Export intelligence report
-        </button>
-        {editCount > 0 && (
-          <button id="revision-log-btn" className="rp-export-btn ann-export-secondary" onClick={onExportRevisionLog} style={{ marginTop: '8px' }}>
-            Export revision log ({editCount} edit{editCount !== 1 ? 's' : ''})
-          </button>
-        )}
-      </div>
-
-      <ExportChoiceModal
-        open={manuscriptExportOpen}
-        heading="Export manuscript"
-        subject={title}
-        primaryLabel="Download manuscript"
-        formats={[
-          { key: 'docx', label: 'Word (.docx)', desc: 'A formatted Word document — chapters, headings, and scene breaks preserved. Opens in Word, Pages, or Google Docs.' },
-          { key: 'md', label: 'Markdown (.md)', desc: 'Plain-text Markdown — portable and version-control friendly. The manuscript exactly as stored.' },
-        ]}
-        onClose={() => setManuscriptExportOpen(false)}
-        onExport={(format) => onExportManuscript(format as 'docx' | 'md')}
-      />
-
-      <ExportChoiceModal
-        open={reportExportOpen}
-        heading="Export intelligence report"
-        subject={title}
-        primaryLabel="Download report"
-        formats={[
-          { key: 'docx', label: 'Word (.docx)', desc: 'A formatted Word document — best for sharing, adding comments, and print.' },
-          { key: 'html', label: 'Web page (.html)', desc: 'A self-contained web page — opens in any browser, easy to skim or print.' },
-        ]}
-        onClose={() => setReportExportOpen(false)}
-        onExport={(format) => (format === 'docx' ? onExportDocx() : onExportHtml())}
-      />
-    </div>
-  );
-}
-
-function ReportBody({ report, onJump }: { report: Report; onJump: (i: number) => void }) {
+function ReportBody({ signals, onJump }: { signals: EditorialSignals; onJump: (i: number) => void }) {
+  const report = signals.report;
   const maxT = Math.max(1, ...ANNOTATION_TYPES.map(t => report.typeTotals[t] ?? 0));
 
   return (
@@ -118,6 +47,9 @@ function ReportBody({ report, onJump }: { report: Report; onJump: (i: number) =>
           )}
         </div>
       </Section>
+
+      {/* ── Reader consensus (the multi-reader moat — only when beta readers exist) ── */}
+      {signals.readerCount > 0 && <ReaderConsensus signals={signals} onJump={onJump} />}
 
       {/* ── Type distribution ── */}
       <Section title="Annotation types">
@@ -187,6 +119,68 @@ function ReportBody({ report, onJump }: { report: Report; onJump: (i: number) =>
         )}
       </Section>
     </>
+  );
+}
+
+function ReaderConsensus({ signals, onJump }: { signals: EditorialSignals; onJump: (i: number) => void }) {
+  const { readerCount, completionRate, versionsRead, readerAgreement } = signals;
+  const finishedPct = Math.round(completionRate * 100);
+  const topAgreement = readerAgreement.slice(0, 5);
+  const mixedDrafts = versionsRead.length > 1;
+
+  return (
+    <Section title="Reader consensus">
+      <div className="rp-overview-grid">
+        <div className="rp-stat">
+          <span className="rp-stat-num">{readerCount}</span>
+          <span className="rp-stat-label">Beta reader{readerCount !== 1 ? 's' : ''}</span>
+        </div>
+        <div className="rp-stat">
+          <span className="rp-stat-num">{finishedPct}%</span>
+          <span className="rp-stat-label">Finished</span>
+        </div>
+      </div>
+
+      {mixedDrafts && (
+        <div className="rp-consensus-note">
+          Readers responded to {versionsRead.length} different drafts — consensus may mix versions.
+        </div>
+      )}
+
+      <div className="rp-finding" style={{ marginTop: '16px' }}>
+        <div className="rp-finding-head">
+          <span className="rp-finding-dot" style={{ background: 'var(--primary)' }} />
+          <span className="rp-finding-title">Where readers agree</span>
+        </div>
+        <div className="rp-finding-desc">
+          Chapters several readers reacted to independently — agreement is the strongest signal that something needs attention, not just one reader's taste.
+        </div>
+        {topAgreement.length > 0 ? (
+          <div className="rp-chips">
+            {topAgreement.map(a => {
+              const reached = a.readersWhoReached > 0 ? a.readersWhoReached : readerCount;
+              return (
+                <button
+                  key={a.chapterIndex}
+                  className="rp-chip"
+                  onClick={() => onJump(a.chapterIndex)}
+                  title={`Jump to ${a.chapterTitle || `Ch. ${a.chapterIndex}`} · ${a.readersWhoAnnotated} of ${reached} readers reacted`}
+                >
+                  <span className="rp-chip-name">
+                    {a.chapterTitle ? a.chapterTitle.slice(0, 22) : `Ch. ${a.chapterIndex}`}
+                  </span>
+                  <span className="rp-chip-count">{a.readersWhoAnnotated}/{reached}</span>
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <div style={{ color: 'var(--dim)', fontFamily: "'Schibsted Grotesk', system-ui, sans-serif", fontSize: '12px', fontStyle: 'italic', padding: '6px 0' }}>
+            No overlapping reactions yet.
+          </div>
+        )}
+      </div>
+    </Section>
   );
 }
 

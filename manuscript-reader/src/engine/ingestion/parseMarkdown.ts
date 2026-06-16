@@ -2,7 +2,7 @@
 // Converts normalized Markdown (post-preprocessMarkdown) into rendered HTML
 // and a structured chapters array.
 
-import type { Chapter, ParsedManuscript } from '../types';
+import type { Chapter, ParsedManuscript, StructuralBlock } from '../types';
 
 function escHtml(s: string): string {
   return String(s)
@@ -61,6 +61,12 @@ export function parseMarkdown(md: string): ParsedManuscript {
   let chIdx = 0;
   let inBlock = false;
   const chapters: Chapter[] = [];
+  // Structural substrate, pushed from the SAME pass that builds `html`. Each
+  // block records its role, source span, plain text, and owning chapter (0 =
+  // forematter). The structural model (manuscriptStructure.ts) groups these.
+  const blocks: StructuralBlock[] = [];
+  const block = (role: StructuralBlock['role'], start: number, end: number, text: string, level?: number) =>
+    blocks.push({ role, sourceStart: start, sourceEnd: end, text: text.trim(), level, chapterIndex: chIdx });
 
   while (i < lines.length) {
     const line = lines[i];
@@ -75,6 +81,7 @@ export function parseMarkdown(md: string): ParsedManuscript {
       const title = stripChapterLabel(line.replace(/^# /, '').trim());
       const id = `ch-${chIdx}`;
       chapters.push({ index: chIdx, title, id });
+      block('chapter-heading', lineStart[i], lineEnd(i), title);
       html +=
         `<span class="chapter-marker" id="${id}">` +
         `Chapter ${String(chIdx).padStart(2, '0')}</span>` +
@@ -87,18 +94,23 @@ export function parseMarkdown(md: string): ParsedManuscript {
 
     // ── Section headings ──
     if (/^## /.test(line)) {
-      html += `<h2${src(lineStart[i], lineEnd(i))}>${inline(line.replace(/^## /, '').trim())}</h2>`;
+      const text = line.replace(/^## /, '').trim();
+      block('subheading', lineStart[i], lineEnd(i), text, 2);
+      html += `<h2${src(lineStart[i], lineEnd(i))}>${inline(text)}</h2>`;
       i++;
       continue;
     }
     if (/^### /.test(line)) {
-      html += `<h3${src(lineStart[i], lineEnd(i))}>${inline(line.replace(/^### /, '').trim())}</h3>`;
+      const text = line.replace(/^### /, '').trim();
+      block('subheading', lineStart[i], lineEnd(i), text, 3);
+      html += `<h3${src(lineStart[i], lineEnd(i))}>${inline(text)}</h3>`;
       i++;
       continue;
     }
 
     // ── Horizontal rule / scene break ──
     if (/^(-{3,}|\*{3,}|_{3,})$/.test(line.trim())) {
+      block('scene-break', lineStart[i], lineEnd(i), '');
       html += '<hr>';
       i++;
       continue;
@@ -108,38 +120,53 @@ export function parseMarkdown(md: string): ParsedManuscript {
     if (/^> /.test(line)) {
       const bqStart = i;
       let bq = '';
+      let bqText = '';
       while (i < lines.length && /^> /.test(lines[i])) {
-        bq += inline(lines[i].replace(/^> /, '')) + ' ';
+        const inner = lines[i].replace(/^> /, '');
+        bq += inline(inner) + ' ';
+        bqText += inner + ' ';
         i++;
       }
+      block('blockquote', lineStart[bqStart], lineEnd(i - 1), bqText);
       html += `<blockquote${src(lineStart[bqStart], lineEnd(i - 1))}>${bq.trim()}</blockquote>`;
       continue;
     }
 
     // ── Unordered list ──
     if (/^[-*+] /.test(line)) {
+      const listStart = i;
+      let listText = '';
       html += '<ul>';
       while (i < lines.length && /^[-*+] /.test(lines[i])) {
-        html += `<li>${inline(lines[i].replace(/^[-*+] /, ''))}</li>`;
+        const item = lines[i].replace(/^[-*+] /, '');
+        html += `<li>${inline(item)}</li>`;
+        listText += item + '\n';
         i++;
       }
       html += '</ul>';
+      block('list', lineStart[listStart], lineEnd(i - 1), listText);
       continue;
     }
 
     // ── Ordered list ──
     if (/^\d+\. /.test(line)) {
+      const listStart = i;
+      let listText = '';
       html += '<ol>';
       while (i < lines.length && /^\d+\. /.test(lines[i])) {
-        html += `<li>${inline(lines[i].replace(/^\d+\. /, ''))}</li>`;
+        const item = lines[i].replace(/^\d+\. /, '');
+        html += `<li>${inline(item)}</li>`;
+        listText += item + '\n';
         i++;
       }
       html += '</ol>';
+      block('list', lineStart[listStart], lineEnd(i - 1), listText);
       continue;
     }
 
     // ── Code block ──
     if (/^```/.test(line)) {
+      const codeStart = i;
       i++;
       let code = '';
       while (i < lines.length && !/^```/.test(lines[i])) {
@@ -147,6 +174,7 @@ export function parseMarkdown(md: string): ParsedManuscript {
         i++;
       }
       html += `<pre><code>${code}</code></pre>`;
+      block('code', lineStart[codeStart], lineEnd(Math.min(i, lines.length - 1)), code);
       i++;
       continue;
     }
@@ -161,6 +189,7 @@ export function parseMarkdown(md: string): ParsedManuscript {
       const title = stripChapterLabel(line.trim());
       const id = `ch-${chIdx}`;
       chapters.push({ index: chIdx, title, id });
+      block('chapter-heading', lineStart[i], lineEnd(i + 1), title);
       html +=
         `<span class="chapter-marker" id="${id}">` +
         `Chapter ${String(chIdx).padStart(2, '0')}</span>` +
@@ -191,12 +220,15 @@ export function parseMarkdown(md: string): ParsedManuscript {
       para += lines[i] + ' ';
       i++;
     }
-    if (para.trim()) html += `<p${src(lineStart[paraStart], lineEnd(i - 1))}>${inline(para.trim())}</p>`;
+    if (para.trim()) {
+      block('paragraph', lineStart[paraStart], lineEnd(i - 1), para);
+      html += `<p${src(lineStart[paraStart], lineEnd(i - 1))}>${inline(para.trim())}</p>`;
+    }
   }
 
   if (inBlock) html += '</div>';
 
-  return { html, chapters };
+  return { html, chapters, blocks };
 }
 
 /** Word count from raw markdown text. */

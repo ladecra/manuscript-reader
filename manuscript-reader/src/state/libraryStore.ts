@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Manuscript, ManuscriptStatus } from '../engine/types';
+import type { Manuscript, ManuscriptStatus, PublishingMetadata } from '../engine/types';
 import { MANUSCRIPT_STATUSES } from '../engine/types';
 import { loadLibrary, saveLibrary, manuscriptId, savePosition, loadPosition, type StoredManuscript } from '../engine/storage';
 import { parseMarkdown, countWords } from '../engine/ingestion/parseMarkdown';
@@ -17,6 +17,7 @@ function toManuscript(s: StoredManuscript): Manuscript {
       combinedMarkdown: s.combinedMarkdown,
       uncached: s.uncached,
       progress: s.progress,
+      publishing: s.publishing,
     },
     chapters: [],
     annotations: [],
@@ -30,7 +31,7 @@ interface LibraryStore {
   library: Manuscript[];
   refresh: () => void;
   upsertManuscript: (md: string) => Manuscript;
-  updateManuscript: (id: string, patch: { title?: string; author?: string; status?: ManuscriptStatus; chapterCount?: number }) => void;
+  updateManuscript: (id: string, patch: { title?: string; author?: string; status?: ManuscriptStatus; chapterCount?: number; publishing?: PublishingMetadata }) => void;
   cycleStatus: (id: string) => void;
   deleteManuscript: (id: string) => void;
   touchManuscript: (id: string) => void;
@@ -77,6 +78,7 @@ export const useLibraryStore = create<LibraryStore>((_set, _get) => {
       if (patch.author !== undefined) stored[idx].author = patch.author;
       if (patch.status) stored[idx].status = patch.status;
       if (patch.chapterCount !== undefined) stored[idx].chapterCount = patch.chapterCount;
+      if (patch.publishing !== undefined) stored[idx].publishing = patch.publishing;
       saveLibrary(stored);
       set({ library: stored.map(toManuscript) });
     },

@@ -6,9 +6,10 @@ import { LandingScreen } from './screens/LandingScreen';
 import { LibraryScreen } from './screens/LibraryScreen';
 import { LoadScreen } from './screens/LoadScreen';
 import { ReaderScreen } from './screens/ReaderScreen';
+import { ManuscriptHubScreen } from './screens/ManuscriptHubScreen';
 import { Toast, useToast } from './components/ui/Toast';
 import { SettingsMenu } from './components/ui/SettingsMenu';
-import { QuillIcon, MenuIcon, AnnotateIcon, ReportIcon, LibraryIcon, PencilIcon, UndoIcon, RedoIcon } from './components/ui/Icons';
+import { QuillIcon, MenuIcon, AnnotateIcon, LibraryIcon, PencilIcon, UndoIcon, RedoIcon } from './components/ui/Icons';
 import { parseMarkdown } from './engine/ingestion/parseMarkdown';
 import type { Manuscript } from './engine/types';
 
@@ -29,8 +30,8 @@ function IconBtn({ onClick, active, title, label, disabled, children }: {
 }
 
 export function App() {
-  const { screen, theme, fontSize, annSidebarOpen, reportPanelOpen, editMode, setScreen, toggleNav, toggleAnnSidebar, toggleReportPanel, toggleEditMode } = useUIStore();
-  const { library, upsertManuscript, updateManuscript, cycleStatus, deleteManuscript, replaceMarkdown, getReadingPosition } = useLibraryStore();
+  const { screen, theme, fontSize, annSidebarOpen, editMode, setScreen, toggleNav, toggleAnnSidebar, toggleEditMode } = useUIStore();
+  const { library, upsertManuscript, cycleStatus, deleteManuscript, replaceMarkdown, getReadingPosition } = useLibraryStore();
   const { manuscript, annotations, openManuscript, closeManuscript, undoEdit, redoEdit, setEditReturnScroll, undoStack, redoStack } = useReaderStore();
   const { toastState, showToast } = useToast();
 
@@ -95,7 +96,22 @@ export function App() {
     showToast(`Loaded ${chapters.length} chapter${chapters.length !== 1 ? 's' : ''}.`);
   }
 
-  function handleOpenFromLibrary(ms: Manuscript) {
+  // Open a manuscript's page (its home) — the title page + publishing workbench.
+  // The card lands here; the reader ("Play") is entered from the page.
+  function handleOpenHub(ms: Manuscript) {
+    if (!ms.metadata.combinedMarkdown) {
+      showToast('Files need reloading — use Load to re-import.');
+      setScreen('load');
+      return;
+    }
+    const { chapters } = parseMarkdown(ms.metadata.combinedMarkdown);
+    openManuscript(ms, chapters);
+    setScreen('manuscript');
+    window.scrollTo(0, 0);
+  }
+
+  // Read straight from the library card — enter the reader without the page stop.
+  function handleReadFromLibrary(ms: Manuscript) {
     if (!ms.metadata.combinedMarkdown) {
       showToast('Files need reloading — use Load to re-import.');
       setScreen('load');
@@ -134,7 +150,8 @@ export function App() {
           {screen === 'reader' ? (
             <>
               <IconBtn onClick={toggleNav} title="Chapters"><MenuIcon /></IconBtn>
-              <span id="topbar-title">{title}</span>
+              {/* The title links back to the manuscript's page (its home). */}
+              <button id="topbar-title" className="topbar-title-btn" onClick={() => setScreen('manuscript')} title="Manuscript page">{title}</button>
             </>
           ) : (
             <button id="brand" className="show" onClick={handleHomeNav} title="Home">
@@ -155,7 +172,6 @@ export function App() {
                 <IconBtn onClick={toggleAnnSidebar} active={annSidebarOpen} title="Annotations (⌘E)" label="Annotations"><AnnotateIcon /></IconBtn>
                 {hasAnnotations && <span id="revision-mode-badge" className="visible" />}
               </div>
-              <IconBtn onClick={toggleReportPanel} active={reportPanelOpen} title="Report" label="Report"><ReportIcon /></IconBtn>
               <IconBtn onClick={toggleEditMode} active={editMode} title="Edit prose" label="Edit"><PencilIcon /></IconBtn>
               {editMode && (
                 <>
@@ -180,9 +196,16 @@ export function App() {
       {screen === 'library' && (
         <div id="screen-library" className="active">
           <div className="screen-inner">
-            <LibraryScreen library={library} onOpen={handleOpenFromLibrary} onNew={() => setScreen('load')} onDelete={deleteManuscript} onUpdate={(id, p) => updateManuscript(id, p as Parameters<typeof updateManuscript>[1])} onCycleStatus={cycleStatus} onReplaceMarkdown={(id, md) => { replaceMarkdown(id, md); }} getReadingPosition={getReadingPosition} />
+            <LibraryScreen library={library} onOpen={handleOpenHub} onRead={handleReadFromLibrary} onNew={() => setScreen('load')} onDelete={deleteManuscript} onCycleStatus={cycleStatus} getReadingPosition={getReadingPosition} />
           </div>
         </div>
+      )}
+
+      {screen === 'manuscript' && (
+        <ManuscriptHubScreen
+          onRead={() => { setScreen('reader'); window.scrollTo(0, 0); }}
+          onExit={handleLibraryNav}
+        />
       )}
 
       {screen === 'load' && (

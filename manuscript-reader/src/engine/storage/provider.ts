@@ -16,7 +16,7 @@
 // floated a per-reader `session:{id}:{readerId}` key; a per-manuscript list is
 // simpler and consistent with how every other child entity is stored.)
 
-import type { Annotation, Edit, ReaderSession } from '../types';
+import type { Annotation, Edit, ReaderSession, PublishingMetadata } from '../types';
 
 /** The flat record persisted per manuscript (matches the v0.9 localStorage schema
  *  for backward compatibility). `combinedMarkdown` is the source of truth. */
@@ -31,6 +31,7 @@ export interface StoredManuscript {
   combinedMarkdown?: string;
   uncached?: boolean;
   progress?: number; // mirror of the position record; persisted via savePosition
+  publishing?: PublishingMetadata; // author-supplied publishing data (optional; absent on legacy records)
 }
 
 export interface StorageProvider {

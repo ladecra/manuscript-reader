@@ -26,7 +26,47 @@ export interface ManuscriptMetadata {
   combinedMarkdown?: string; // source of truth; may be evicted to free localStorage
   uncached?: boolean;
   progress?: number;         // 0–1 reading position fraction
+  publishing?: PublishingMetadata; // author-supplied publishing data, applied to exported artifacts
 }
+
+// ─── Publishing metadata (author-supplied, flows into exported artifacts) ──────
+//
+// The non-prose data a manuscript needs to become a *publishable* artifact: the
+// title page, copyright page, and document properties of an export. Every field
+// is author-entered and deterministic — none is inferred. The author maintains it
+// on the manuscript page; the manuscript/DOCX & Markdown exports render it into
+// front matter. Empty fields are simply omitted from the artifact (no blank
+// "ISBN:" lines). Extend deliberately — a field added here must be consumed by an
+// export, or it's a promise the artifact breaks.
+export interface PublishingMetadata {
+  subtitle?: string;
+  publisher?: string;
+  imprint?: string;
+  isbn?: string;
+  edition?: string;          // e.g. "First edition"
+  series?: string;           // e.g. "The Hollow Cycle, Book 1"
+  publicationDate?: string;  // free text, e.g. "Spring 2027"
+  language?: string;         // e.g. "English"
+  copyrightYear?: string;
+  copyrightHolder?: string;
+  rights?: string;           // e.g. "All rights reserved"
+  dedication?: string;       // rendered as its own front-matter page
+}
+
+export const PUBLISHING_FIELDS: { key: keyof PublishingMetadata; label: string; placeholder: string; long?: boolean }[] = [
+  { key: 'subtitle',        label: 'Subtitle',        placeholder: 'A subtitle, if any' },
+  { key: 'series',          label: 'Series',          placeholder: 'The Hollow Cycle, Book 1' },
+  { key: 'publisher',       label: 'Publisher',       placeholder: 'Publishing house' },
+  { key: 'imprint',         label: 'Imprint',         placeholder: 'Imprint' },
+  { key: 'isbn',            label: 'ISBN',            placeholder: '978-…' },
+  { key: 'edition',         label: 'Edition',         placeholder: 'First edition' },
+  { key: 'publicationDate', label: 'Publication date', placeholder: 'Spring 2027' },
+  { key: 'language',        label: 'Language',        placeholder: 'English' },
+  { key: 'copyrightYear',   label: 'Copyright year',  placeholder: String(new Date().getFullYear()) },
+  { key: 'copyrightHolder', label: 'Copyright holder', placeholder: 'Author or estate name' },
+  { key: 'rights',          label: 'Rights',          placeholder: 'All rights reserved' },
+  { key: 'dedication',      label: 'Dedication',      placeholder: 'For…', long: true },
+];
 
 export type ManuscriptStatus =
   | 'Draft'
@@ -201,6 +241,64 @@ export type ExportType = 'revision-packet-md' | 'revision-packet-docx' | 'report
 export interface ParsedManuscript {
   html: string;
   chapters: Chapter[];
+  /** Flat, document-order structural blocks lifted from the SAME parse pass that
+   *  produces `html`/`chapters` — the substrate the structural model groups. A
+   *  single parse, so no second parser to drift. Additive: existing consumers
+   *  destructure only `html`/`chapters` and ignore this. */
+  blocks: StructuralBlock[];
+}
+
+// ─── Structural model (Stage 0 — the publish-ready linchpin) ──────────────────
+// A canonical, browser-independent description of a manuscript's structure that
+// every downstream stage (publish-ready renderer, tiering, query export) renders
+// from — instead of each consumer re-deriving structure by re-parsing markdown.
+// Built from `parseMarkdown`'s block stream; see engine/ingestion/manuscriptStructure.ts.
+
+/** What a block IS, structurally. Mirrors exactly the block grammar parseMarkdown emits. */
+export type BlockRole =
+  | 'chapter-heading'  // `# ` (or setext ===) — opens a chapter
+  | 'subheading'       // `## ` / `### `
+  | 'paragraph'
+  | 'blockquote'       // also the epigraph carrier
+  | 'scene-break'      // a `<hr>` (`* * *`) inside a chapter
+  | 'list'
+  | 'code';
+
+export interface StructuralBlock {
+  role: BlockRole;
+  /** Source span into the NORMALIZED markdown — identical domain to the parser's
+   *  `data-md-start/end`, so edits and the renderer share one coordinate system. */
+  sourceStart: number;
+  sourceEnd: number;
+  /** Plain text of the block (heading/paragraph/quote text); '' for scene-break. */
+  text: string;
+  /** Heading depth for subheadings (2 or 3); undefined otherwise. */
+  level?: number;
+  /** 1-based chapter this block belongs to; 0 = before the first chapter (the
+   *  forematter region — sparse today, see the capture gap in the Stage-0 brief). */
+  chapterIndex: number;
+}
+
+export interface ChapterSection {
+  index: number;   // 1-based, aligns with Chapter.index / 'ch-N'
+  id: string;
+  title: string;
+  blocks: StructuralBlock[];  // body blocks: paragraphs, subheadings, scene breaks, quotes…
+  sceneBreakCount: number;
+}
+
+export interface ManuscriptStructure {
+  title: string;
+  /** Pre-first-chapter region. Sparse today: `structureManuscript` strips most
+   *  front matter upstream (only the title survives, as a comment). Retaining it
+   *  is the key Stage-0/1 follow-up before publish-ready export. */
+  frontMatter: StructuralBlock[];
+  chapters: ChapterSection[];
+  /** Empty today: back matter is dropped by `structureManuscript` upstream.
+   *  Same capture follow-up as `frontMatter`. */
+  backMatter: StructuralBlock[];
+  /** Full document-order substrate the groupings above project from. */
+  blocks: StructuralBlock[];
 }
 
 // ─── Placeholder interfaces for future engine outputs ────────────────────────
