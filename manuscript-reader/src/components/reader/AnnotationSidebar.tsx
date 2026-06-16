@@ -10,7 +10,6 @@ interface AnnotationSidebarProps {
   onClose: () => void;
   onDelete: (id: string) => void;
   onJumpTo: (id: string) => void;
-  onExport: () => void;
   onImport: (payload: ReaderExportPayload) => void;
 }
 
@@ -20,7 +19,6 @@ export function AnnotationSidebar({
   onClose,
   onDelete,
   onJumpTo,
-  onExport,
   onImport,
 }: AnnotationSidebarProps) {
   const [activeFilter, setActiveFilter] = React.useState<AnnotationType | 'all'>('all');
@@ -112,9 +110,6 @@ export function AnnotationSidebar({
             id="ann-import-input"
           />
         </div>
-        <button id="export-btn" onClick={onExport}>
-          Export revision packet (.md)
-        </button>
       </div>
     </div>
   );

@@ -219,6 +219,5 @@ export function computeReport(annotations: Annotation[], chapters: Chapter[], co
     blurb,
     clusters,
     consensus,
-    annotationClusters: clusters,
   };
 }

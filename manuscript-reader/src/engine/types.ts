@@ -183,10 +183,6 @@ export interface Report {
   blurb: string;                // engagement blurb
   clusters: AnnotationCluster[];// detected editorial signals (confusion / continuity / structural / engagement)
   consensus: ChapterStat[];     // chapters multiple beta readers reacted to, sorted by reader agreement (empty for <2 readers)
-  // Placeholders for Phase 2 report engine:
-  engagementScore?: number;
-  annotationClusters?: AnnotationCluster[];
-  readerSessions?: ReaderSession[];
 }
 
 // ─── Export ──────────────────────────────────────────────────────────────────
@@ -286,6 +282,15 @@ export interface ChapterAgreementSignal {
 export interface EditorialSignals {
   manuscriptId: string;
   generatedAt: number;
+
+  // ── Annotation-derived substrate (the composed single-version Report) ──
+  // The raw per-chapter stats, type totals, and engagement summary that the
+  // curated findings below are derived from. Carried here so this object is the
+  // SINGLE thing every consumer (panel, exports, AI) calls — they read raw stats
+  // from `report.*` and multi-reader findings from the fields below, without ever
+  // calling computeReport separately. Not duplication: the findings are the
+  // projection, `report` is the substrate they project from.
+  report: Report;
 
   // ── Multi-reader context (from reader sessions) ──
   readerCount: number;

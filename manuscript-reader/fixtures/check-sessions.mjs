@@ -61,6 +61,10 @@ for (const file of files) {
   console.log(`    readers ${sig.readerCount}, completion ${(sig.completionRate*100).toFixed(0)}%, versions [${sig.versionsRead.join(', ')}], unresolved concerns ${sig.unresolvedConcerns}`);
   console.log(`    agreement: ${sig.readerAgreement.map(a => `ch.${a.chapterIndex} ${a.readersWhoAnnotated}/${a.readersWhoReached<0?'?':a.readersWhoReached} (${(a.agreement*100).toFixed(0)}%)`).join(', ')}`);
   console.log(`    engagement curve: [${sig.engagementCurve.map(v => v.toFixed(2)).join(', ')}]  drops at: ${sig.engagementDrops.join(', ') || 'none'}`);
+  // The exports/panel read raw per-chapter stats from sig.report (the composed
+  // substrate); guard that it's carried so the single-entry repoint can't regress.
+  check('signals: carries composed report substrate (chapters + typeTotals)',
+    !!sig.report && Array.isArray(sig.report.chapters) && typeof sig.report.typeTotals === 'object');
   if (e && e.signals) {
     check(`signals: top agreement chapter = ch.${e.signals.topAgreementChapter}`, sig.readerAgreement[0]?.chapterIndex === e.signals.topAgreementChapter);
     check(`signals: unresolved concerns = ${e.signals.unresolvedConcerns}`, sig.unresolvedConcerns === e.signals.unresolvedConcerns);

@@ -1,14 +1,15 @@
 // ─── DOCX Intelligence Report Export ──────────────────────────────────────────
 // Builds a richly formatted Word document from a manuscript's annotations and
-// computed report. Ported from the v0.9 prototype's buildRevisionPacketDoc,
-// adapted to the typed `docx` npm package and the canonical Report shape.
+// the EditorialSignals object. Ported from the v0.9 prototype's buildRevisionPacketDoc,
+// adapted to the typed `docx` npm package; reads raw stats from signals.report and
+// the cross-reader agreement from the multi-reader fields.
 
 import {
   Document, Paragraph, TextRun, AlignmentType, BorderStyle, WidthType,
   Table, TableRow, TableCell, ShadingType, PageNumber, Footer, Packer,
   type IParagraphOptions, type ITableCellOptions,
 } from 'docx';
-import type { Annotation, AnnotationType, Chapter, Report } from '../types';
+import type { Annotation, AnnotationType, Chapter, EditorialSignals } from '../types';
 import { ANNOTATION_TYPES, ANNOTATION_LABELS } from '../types';
 
 const HEX: Record<AnnotationType, string> = {
@@ -34,12 +35,13 @@ function stripChapterPrefix(title: string): string {
 
 function buildDoc(data: {
   title: string;
-  rep: Report;
+  signals: EditorialSignals;
   annotations: Annotation[];
   chapters: Chapter[];
   dateStr: string;
 }): Document {
-  const { title, rep, annotations, chapters, dateStr } = data;
+  const { title, signals, annotations, chapters, dateStr } = data;
+  const rep = signals.report;
   const pct = (n: number) => rep.totalAnns ? Math.round((n / rep.totalAnns) * 100) : 0;
 
   const label = (t: string, opts: LabelOpts = {}): Paragraph => new Paragraph({
@@ -218,6 +220,39 @@ function buildDoc(data: {
   }
   children.push(gap(0, 320));
 
+  // ════════ READER AGREEMENT (multi-reader; Phase 6 EditorialSignals) ════════
+  // Of the readers who *reached* each chapter, how many independently reacted —
+  // the cross-reader signal the single-version report can't produce. Only shown
+  // once at least one reader session exists.
+  if (signals.readerCount > 0) {
+    children.push(label('Reader Agreement', { before: 200, after: 60, border: true }));
+    const completionPct = Math.round(signals.completionRate * 100);
+    const versionsNote = signals.versionsRead.length > 1
+      ? `  ·  readers saw ${signals.versionsRead.length} different drafts`
+      : '';
+    children.push(new Paragraph({
+      children: [new TextRun({ text: `${signals.readerCount} reader${signals.readerCount !== 1 ? 's' : ''}  ·  ${completionPct}% finished${versionsNote}`, font: SANS, size: 15, color: META })],
+      spacing: { after: 140 },
+    }));
+    if (signals.readerAgreement.length) {
+      signals.readerAgreement.slice(0, 6).forEach(a => {
+        const reached = a.readersWhoReached < 0 ? signals.readerCount : a.readersWhoReached;
+        const pct = Math.round(a.agreement * 100);
+        children.push(new Paragraph({
+          children: [new TextRun({ text: `Chapter ${a.chapterIndex}${a.chapterTitle ? ' — ' + stripChapterPrefix(a.chapterTitle) : ''}`, font: SERIF, size: 20, color: HEAD })],
+          spacing: { before: 100, after: 16 },
+        }));
+        children.push(new Paragraph({
+          children: [new TextRun({ text: `${a.readersWhoAnnotated} of ${reached} readers reacted  ·  ${pct}% agreement`, font: SANS, size: 15, color: META })],
+          spacing: { after: 30 },
+        }));
+      });
+    } else {
+      children.push(new Paragraph({ children: [new TextRun({ text: 'No chapter drew multiple readers yet.', font: SERIF, size: 19, color: LABEL })], spacing: { after: 40 } }));
+    }
+    children.push(gap(0, 320));
+  }
+
   // ════════ ANNOTATION TYPE BREAKDOWN ════════
   children.push(label('Annotation Type Breakdown', { before: 200, after: 60 }));
   children.push(new Paragraph({ children: [new TextRun({ text: 'Distribution across the manuscript', font: SANS, size: 15, color: LABEL })], spacing: { after: 140 } }));
@@ -297,10 +332,10 @@ export async function exportRevisionDocx(
   id: string,
   annotations: Annotation[],
   chapters: Chapter[],
-  report: Report,
+  signals: EditorialSignals,
 ): Promise<void> {
   const dateStr = new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
-  const doc = buildDoc({ title, rep: report, annotations, chapters, dateStr });
+  const doc = buildDoc({ title, signals, annotations, chapters, dateStr });
   const blob = await Packer.toBlob(doc);
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

@@ -85,6 +85,7 @@ export function computeEditorialSignals(input: EditorialSignalsInput): Editorial
   return {
     manuscriptId,
     generatedAt: Date.now(),
+    report,
     readerCount: merge.readerCount,
     completionRate: merge.completionRate,
     versionsRead: merge.versionsRead,

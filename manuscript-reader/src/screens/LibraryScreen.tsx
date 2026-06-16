@@ -68,7 +68,6 @@ export function LibraryScreen({ library, onOpen, onNew, onDelete, onUpdate, onCy
             <div className="lib-stat"><span className="lib-stat-num">{library.length}</span><span className="lib-stat-label">Manuscripts</span></div>
             <div className="lib-stat"><span className="lib-stat-num">{inProgress}</span><span className="lib-stat-label">In Progress</span></div>
             <div className="lib-stat"><span className="lib-stat-num">{stats.total.toLocaleString()}</span><span className="lib-stat-label">Annotations</span></div>
-            <div className="lib-stat"><span className="lib-stat-num">{stats.readers.size}</span><span className="lib-stat-label">Readers</span></div>
           </div>
 
           <div id="ms-list">

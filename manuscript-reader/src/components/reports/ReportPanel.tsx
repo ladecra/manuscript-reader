@@ -2,20 +2,25 @@ import React from 'react';
 import type { Report, ChapterStat } from '../../engine/types';
 import { ANNOTATION_TYPES, ANNOTATION_LABELS, ANNOTATION_COLORS } from '../../engine/types';
 import { XIcon } from '../ui/Icons';
+import { ExportChoiceModal } from './ExportChoiceModal';
 
 interface ReportPanelProps {
   open: boolean;
   report: Report | null;
+  title: string;
   onClose: () => void;
-  onExport: () => void;
-  onExportDocx: () => void;
+  onExportDocx: () => void | Promise<void>;
   onExportHtml: () => void;
+  onExportManuscript: (format: 'docx' | 'md') => void | Promise<void>;
+  manuscriptAvailable: boolean;
   onExportRevisionLog: () => void;
   editCount: number;
   onJumpToChapter: (index: number) => void;
 }
 
-export function ReportPanel({ open, report, onClose, onExport, onExportDocx, onExportHtml, onExportRevisionLog, editCount, onJumpToChapter }: ReportPanelProps) {
+export function ReportPanel({ open, report, title, onClose, onExportDocx, onExportHtml, onExportManuscript, manuscriptAvailable, onExportRevisionLog, editCount, onJumpToChapter }: ReportPanelProps) {
+  const [reportExportOpen, setReportExportOpen] = React.useState(false);
+  const [manuscriptExportOpen, setManuscriptExportOpen] = React.useState(false);
   return (
     <div id="report-panel" className={open ? 'open' : ''}>
       <div className="rp-header">
@@ -45,14 +50,11 @@ export function ReportPanel({ open, report, onClose, onExport, onExportDocx, onE
       </div>
 
       <div className="rp-footer">
-        <button id="export-html-btn" className="rp-export-btn" onClick={onExportHtml} style={{ marginBottom: '8px' }}>
-          Export intelligence report (.html)
+        <button id="export-manuscript-btn" className="rp-export-btn" onClick={() => setManuscriptExportOpen(true)} disabled={!manuscriptAvailable} title={manuscriptAvailable ? undefined : 'Re-import this manuscript to export it'} style={manuscriptAvailable ? undefined : { opacity: 0.4, cursor: 'not-allowed' }}>
+          Export manuscript
         </button>
-        <button id="export-docx-btn" className="rp-export-btn ann-export-secondary" onClick={onExportDocx} style={{ marginBottom: '8px' }}>
-          Export intelligence report (.docx)
-        </button>
-        <button id="report-export-btn" className="rp-export-btn ann-export-secondary" onClick={onExport}>
-          Export report data (.json)
+        <button id="export-report-btn" className="rp-export-btn ann-export-secondary" onClick={() => setReportExportOpen(true)} style={{ marginTop: '8px' }}>
+          Export intelligence report
         </button>
         {editCount > 0 && (
           <button id="revision-log-btn" className="rp-export-btn ann-export-secondary" onClick={onExportRevisionLog} style={{ marginTop: '8px' }}>
@@ -60,6 +62,32 @@ export function ReportPanel({ open, report, onClose, onExport, onExportDocx, onE
           </button>
         )}
       </div>
+
+      <ExportChoiceModal
+        open={manuscriptExportOpen}
+        heading="Export manuscript"
+        subject={title}
+        primaryLabel="Download manuscript"
+        formats={[
+          { key: 'docx', label: 'Word (.docx)', desc: 'A formatted Word document — chapters, headings, and scene breaks preserved. Opens in Word, Pages, or Google Docs.' },
+          { key: 'md', label: 'Markdown (.md)', desc: 'Plain-text Markdown — portable and version-control friendly. The manuscript exactly as stored.' },
+        ]}
+        onClose={() => setManuscriptExportOpen(false)}
+        onExport={(format) => onExportManuscript(format as 'docx' | 'md')}
+      />
+
+      <ExportChoiceModal
+        open={reportExportOpen}
+        heading="Export intelligence report"
+        subject={title}
+        primaryLabel="Download report"
+        formats={[
+          { key: 'docx', label: 'Word (.docx)', desc: 'A formatted Word document — best for sharing, adding comments, and print.' },
+          { key: 'html', label: 'Web page (.html)', desc: 'A self-contained web page — opens in any browser, easy to skim or print.' },
+        ]}
+        onClose={() => setReportExportOpen(false)}
+        onExport={(format) => (format === 'docx' ? onExportDocx() : onExportHtml())}
+      />
     </div>
   );
 }

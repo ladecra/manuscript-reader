@@ -41,8 +41,17 @@ export function LoadScreen({ onLoad }: LoadScreenProps) {
     const raw = pasteText.trim();
     if (!raw) { showToast('Paste some text first.'); return; }
     let combined = preprocessMarkdown(raw);
+    const title = pasteTitle.trim();
     if (!hasHeading(combined)) {
-      combined = `# ${pasteTitle.trim() || 'Untitled'}\n\n${combined}`;
+      // Unstructured text: use the given title (or a fallback) as the opening heading.
+      combined = `# ${title || 'Untitled'}\n\n${combined}`;
+    }
+    // When a title is given, stamp it explicitly so it becomes the library title even
+    // if the pasted text already starts with its own heading (which would otherwise win).
+    // The <!-- title: --> comment has top priority in upsertManuscript and is stripped
+    // from both chapter-splitting and rendered content by parseMarkdown.
+    if (title) {
+      combined = `<!-- title: ${title} -->\n${combined}`;
     }
     onLoad(combined);
   }, [pasteText, pasteTitle, onLoad]);
