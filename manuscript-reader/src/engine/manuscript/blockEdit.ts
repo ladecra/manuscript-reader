@@ -1,14 +1,16 @@
 // ─── Block Editing Engine (Phase 4 → edit mode) ───────────────────────────────
-// Pure functions backing the reader's light-touch prose edit. Two concerns:
+// Pure functions backing the reader's prose edit. Three concerns:
 //
-//  1. applyBlockEdit — splice a block's new markdown into the manuscript at the
-//     exact source span the parser recorded (data-md-start/end). Browser-free.
-//  2. htmlToMarkdownInline — serialize a contentEditable block's edited HTML
+//  1. applyBlockEdit — splice new markdown into the manuscript at an exact source
+//     span (data-md-start/end, or a chapter body span). Browser-free.
+//  2. htmlToMarkdownInline — serialize one contentEditable block's edited HTML
 //     back into the small inline-markdown subset parseMarkdown emits, so an
 //     edit round-trips (bold/italic/code/links preserved) instead of being
 //     flattened to plain text. Annotation <mark> wrappers are unwrapped.
+//  3. htmlToMarkdownBlocks — serialize a whole edited chapter body, walking its
+//     top-level blocks, so structural edits (split/merge/add/delete) round-trip.
 //
-// Both are pure string→string transforms: testable without a DOM, per the
+// All are pure string→string transforms: testable without a DOM, per the
 // engine-purity rule.
 
 export interface BlockEditResult {
@@ -78,4 +80,67 @@ export function htmlToMarkdownInline(html: string): string {
 /** Whitespace-insensitive comparison, to tell a real edit from re-wrapping. */
 export function sameProse(a: string, b: string): boolean {
   return a.replace(/\s+/g, ' ').trim() === b.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Serialize the inner HTML of an edited *chapter body* (a `.chapter-block`) back
+ * to markdown. Where htmlToMarkdownInline rewrites one block in place, this walks
+ * the whole region's top-level blocks — so structural edits the lightweight mode
+ * couldn't express (splitting a paragraph with Enter, merging with Backspace,
+ * adding or deleting paragraphs, editing headings/quotes/lists) all round-trip.
+ *
+ * Covers exactly the block grammar parseMarkdown emits inside a chapter: p, the
+ * section headings h2–h4, blockquote, ul/ol, and hr. The chapter's own `# `
+ * heading lives *outside* the block, so it is never touched here. Each block's
+ * inline content goes through htmlToMarkdownInline, which defensively flattens any
+ * unexpected nested markup to text rather than corrupting the source. Empty blocks
+ * (e.g. the `<p><br></p>` a stray Enter leaves) are dropped. Pure string→string.
+ */
+export function htmlToMarkdownBlocks(html: string): string {
+  // Drop annotation marks up front, keeping inner text (re-anchored on re-render).
+  const s = html.replace(/<mark\b[^>]*>([\s\S]*?)<\/mark>/gi, '$1');
+
+  const out: string[] = [];
+  const pushInline = (raw: string) => {
+    const md = htmlToMarkdownInline(raw);
+    if (md) out.push(md);
+  };
+
+  // Match a void <hr> or any paired block element (non-greedy: contentEditable
+  // splits prose into *sibling* blocks, not nested ones, so first-close is right).
+  const re = /<hr\s*\/?>|<(p|div|h2|h3|h4|blockquote|ul|ol)\b[^>]*>([\s\S]*?)<\/\1>/gi;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(s)) !== null) {
+    if (m.index > last) pushInline(s.slice(last, m.index)); // loose text → paragraph
+    last = re.lastIndex;
+
+    if (/^<hr/i.test(m[0])) { out.push('---'); continue; }
+
+    const tag = m[1].toLowerCase();
+    const inner = m[2];
+    switch (tag) {
+      case 'h2': { const t = htmlToMarkdownInline(inner); if (t) out.push(`## ${t}`); break; }
+      case 'h3': { const t = htmlToMarkdownInline(inner); if (t) out.push(`### ${t}`); break; }
+      case 'h4': { const t = htmlToMarkdownInline(inner); if (t) out.push(`#### ${t}`); break; }
+      case 'blockquote': { const t = htmlToMarkdownInline(inner); if (t) out.push(`> ${t}`); break; }
+      case 'ul':
+      case 'ol': {
+        const items: string[] = [];
+        const liRe = /<li\b[^>]*>([\s\S]*?)<\/li>/gi;
+        let li: RegExpExecArray | null;
+        let n = 0;
+        while ((li = liRe.exec(inner)) !== null) {
+          const t = htmlToMarkdownInline(li[1]);
+          if (t) { n++; items.push(tag === 'ol' ? `${n}. ${t}` : `- ${t}`); }
+        }
+        if (items.length) out.push(items.join('\n'));
+        break;
+      }
+      default: pushInline(inner); // p, div → a paragraph
+    }
+  }
+  if (last < s.length) pushInline(s.slice(last)); // trailing loose text
+
+  return out.join('\n\n');
 }

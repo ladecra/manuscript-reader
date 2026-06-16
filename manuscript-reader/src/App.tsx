@@ -8,19 +8,20 @@ import { LoadScreen } from './screens/LoadScreen';
 import { ReaderScreen } from './screens/ReaderScreen';
 import { Toast, useToast } from './components/ui/Toast';
 import { SettingsMenu } from './components/ui/SettingsMenu';
-import { QuillIcon, MenuIcon, AnnotateIcon, ReportIcon, LibraryIcon, PencilIcon } from './components/ui/Icons';
+import { QuillIcon, MenuIcon, AnnotateIcon, ReportIcon, LibraryIcon, PencilIcon, UndoIcon, RedoIcon } from './components/ui/Icons';
 import { parseMarkdown } from './engine/ingestion/parseMarkdown';
 import type { Manuscript } from './engine/types';
 
-function IconBtn({ onClick, active, title, label, children }: {
+function IconBtn({ onClick, active, title, label, disabled, children }: {
   onClick?: () => void;
   active?: boolean;
   title?: string;
   label?: string;
+  disabled?: boolean;
   children: React.ReactNode;
 }) {
   return (
-    <button className={`icon-btn${active ? ' active-btn' : ''}`} onClick={onClick} title={title} aria-label={title}>
+    <button className={`icon-btn${active ? ' active-btn' : ''}`} onClick={onClick} title={title} aria-label={title} disabled={disabled}>
       {children}
       {label && <span className="icon-btn-label">{label}</span>}
     </button>
@@ -30,8 +31,23 @@ function IconBtn({ onClick, active, title, label, children }: {
 export function App() {
   const { screen, theme, fontSize, annSidebarOpen, reportPanelOpen, editMode, setScreen, toggleNav, toggleAnnSidebar, toggleReportPanel, toggleEditMode } = useUIStore();
   const { library, upsertManuscript, updateManuscript, cycleStatus, deleteManuscript, replaceMarkdown, getReadingPosition } = useLibraryStore();
-  const { manuscript, annotations, openManuscript, closeManuscript } = useReaderStore();
+  const { manuscript, annotations, openManuscript, closeManuscript, undoEdit, redoEdit, setEditReturnScroll, undoStack, redoStack } = useReaderStore();
   const { toastState, showToast } = useToast();
+
+  // Undo/redo a committed prose edit: restore the snapshot markdown the store
+  // returns, re-store it, and reopen (same id → history + scroll are preserved).
+  const restoreEdit = React.useCallback((markdown: string | null, msg: string) => {
+    if (markdown == null || !manuscript) return;
+    setEditReturnScroll(window.scrollY);
+    const updated = replaceMarkdown(manuscript.id, markdown);
+    if (!updated) return;
+    const { chapters } = parseMarkdown(updated.metadata.combinedMarkdown!);
+    openManuscript(updated, chapters);
+    showToast(msg);
+  }, [manuscript, replaceMarkdown, openManuscript, setEditReturnScroll, showToast]);
+
+  const handleUndo = React.useCallback(() => restoreEdit(undoEdit(), 'Edit undone.'), [restoreEdit, undoEdit]);
+  const handleRedo = React.useCallback(() => restoreEdit(redoEdit(), 'Edit redone.'), [restoreEdit, redoEdit]);
 
   const [topbarHidden, setTopbarHidden] = React.useState(false);
   const [chapterLabel, setChapterLabel] = React.useState('');
@@ -50,6 +66,26 @@ export function App() {
     window.addEventListener('scroll', onScroll, { passive: true });
     return () => window.removeEventListener('scroll', onScroll);
   }, [screen]);
+
+  // Undo/redo committed edits: ⌘/Ctrl+Z, and ⇧⌘Z / Ctrl+Y to redo. While the
+  // caret is inside a chapter being edited, defer to the browser's native
+  // text-undo; our manuscript-level undo applies to already-committed edits.
+  useEffect(() => {
+    if (screen !== 'reader') return;
+    function onKey(e: KeyboardEvent) {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      const k = e.key.toLowerCase();
+      const isUndo = k === 'z' && !e.shiftKey;
+      const isRedo = (k === 'z' && e.shiftKey) || k === 'y';
+      if (!isUndo && !isRedo) return;
+      const active = document.activeElement as HTMLElement | null;
+      if (active?.closest?.('.chapter-block[contenteditable="true"]')) return; // native undo while typing
+      e.preventDefault();
+      if (isRedo) handleRedo(); else handleUndo();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [screen, handleUndo, handleRedo]);
 
   function handleLoad(combinedMarkdown: string) {
     const ms = upsertManuscript(combinedMarkdown);
@@ -121,6 +157,12 @@ export function App() {
               </div>
               <IconBtn onClick={toggleReportPanel} active={reportPanelOpen} title="Report" label="Report"><ReportIcon /></IconBtn>
               <IconBtn onClick={toggleEditMode} active={editMode} title="Edit prose" label="Edit"><PencilIcon /></IconBtn>
+              {editMode && (
+                <>
+                  <IconBtn onClick={handleUndo} disabled={undoStack.length === 0} title="Undo edit (⌘Z)"><UndoIcon /></IconBtn>
+                  <IconBtn onClick={handleRedo} disabled={redoStack.length === 0} title="Redo edit (⇧⌘Z)"><RedoIcon /></IconBtn>
+                </>
+              )}
               {/* Divider fences the per-manuscript panel toggles off from the
                   leave-the-reader / settings controls, so Library isn't a stray click away. */}
               <span aria-hidden="true" style={{ width: '1px', height: '18px', background: 'var(--border)', margin: '0 6px', alignSelf: 'center' }} />

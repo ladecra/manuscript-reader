@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
 import type { AnnotationType, TextAnchor, Chapter } from '../engine/types';
 import { buildAnchor, locateAnchor, anchorFromQuote } from '../engine/annotations/anchor';
-import { applyBlockEdit, htmlToMarkdownInline, sameProse } from '../engine/manuscript/blockEdit';
+import { applyBlockEdit, htmlToMarkdownBlocks, sameProse } from '../engine/manuscript/blockEdit';
 import { useReaderStore } from '../state/readerStore';
 import { useUIStore } from '../state/uiStore';
 import { useLibraryStore } from '../state/libraryStore';
@@ -98,18 +98,21 @@ function offsetInContainer(container: HTMLElement, range: Range): number {
   return pre.toString().length;
 }
 
-// Per-paragraph snapshot of innerHTML at focus time, so a commit can tell a
-// real edit from a focus-through and skip needless re-renders.
+// Per-chapter snapshot of innerHTML at focus time, so a commit can tell a real
+// edit from a focus-through and skip needless re-renders.
 const editOriginalHtml = new WeakMap<HTMLElement, string>();
 
-// Toggle the light-touch edit affordance: prose paragraphs (the only blocks
-// that carry a source span) become contentEditable; everything else stays
-// read-only. The reading layout is unchanged — only the cursor/affordance.
+// Toggle the prose-edit affordance: each chapter body (.chapter-block) becomes
+// contentEditable, so edits within a chapter — including splitting a paragraph
+// with Enter, merging, adding, or deleting blocks — round-trip through the block
+// serializer. The chapter's own `# ` heading lives outside the block and stays
+// read-only, so chapter structure can't be corrupted from the reading view. The
+// reading layout is unchanged — only the cursor/affordance.
 function setupEditable(container: HTMLElement, on: boolean) {
   container.classList.toggle('edit-mode', on);
-  container.querySelectorAll('p[data-md-start]').forEach(p => {
-    if (on) p.setAttribute('contenteditable', 'true');
-    else p.removeAttribute('contenteditable');
+  container.querySelectorAll<HTMLElement>('.chapter-block').forEach(block => {
+    if (on) block.setAttribute('contenteditable', 'true');
+    else block.removeAttribute('contenteditable');
   });
 }
 
@@ -122,7 +125,7 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   const scrollSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const entranceObs = useRef<IntersectionObserver | null>(null);
 
-  const { manuscript, chapters, annotations, edits, sessions, addAnnotation, updateAnnotation, deleteAnnotation, importSession, openManuscript, recordEdit } = useReaderStore();
+  const { manuscript, chapters, annotations, edits, sessions, addAnnotation, updateAnnotation, deleteAnnotation, importSession, openManuscript, recordEdit, pushEditTransition, setEditReturnScroll } = useReaderStore();
   const { navOpen, annSidebarOpen, reportPanelOpen, editMode, closeNav, closeAnnSidebar, closeReportPanel, toggleAnnSidebar, closeAllPanels } = useUIStore();
   const { library, updateProgress, getReadingPosition, appendChapters, replaceMarkdown } = useLibraryStore();
 
@@ -138,7 +141,6 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   const lastScrollY = useRef(0);
   const topbarVisible = useRef(true);
   const editModeRef = useRef(false);
-  const pendingEditScroll = useRef<number | null>(null); // set before an edit re-render to restore exact scroll (no resume/flash)
   const cancelEditRef = useRef(false);
   const commitRef = useRef<(p: HTMLElement) => void>(() => {});
   useEffect(() => { editModeRef.current = editMode; }, [editMode]);
@@ -178,9 +180,9 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
 
     // An edit re-render: keep the reading posture — no fade-in, no resume toast,
     // restore the exact scroll, re-apply edit affordance and re-anchor marks.
-    const editScroll = pendingEditScroll.current;
+    const editScroll = useReaderStore.getState().editReturnScroll;
     if (editScroll != null) {
-      pendingEditScroll.current = null;
+      setEditReturnScroll(null);
       c.querySelectorAll('p, blockquote, ul, ol').forEach(el => el.classList.add('visible'));
       setupEditable(c, editModeRef.current);
       reapplyHighlights();
@@ -227,57 +229,76 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     window.scrollTo(0, sy);
   }, [manuscript, reapplyHighlights]);
 
-  // Commit one paragraph: serialize its edited HTML back to markdown, splice it
-  // into the source at the block's recorded span, persist, and re-render. A
-  // paragraph that was only focused-through (innerHTML unchanged) is left alone.
-  const commitBlockEdit = useCallback((p: HTMLElement) => {
-    const origHtml = editOriginalHtml.get(p);
-    editOriginalHtml.delete(p);
+  // Commit one chapter: serialize its whole edited body back to markdown, splice
+  // it into the source between this chapter's heading and the next, persist, and
+  // re-render. Serializing the entire body (not one paragraph) is what lets the
+  // structural edits work — split/merge/add/delete are just a different block
+  // sequence. A body only focused-through (innerHTML unchanged) is left alone.
+  const commitChapterEdit = useCallback((block: HTMLElement) => {
+    const origHtml = editOriginalHtml.get(block);
+    editOriginalHtml.delete(block);
     const cancelled = cancelEditRef.current; cancelEditRef.current = false;
-    const startAttr = p.dataset.mdStart, endAttr = p.dataset.mdEnd;
     const md = manuscript?.metadata.combinedMarkdown;
-    if (startAttr == null || endAttr == null || !md || !manuscript) return;
-    if (!cancelled && origHtml !== undefined && p.innerHTML === origHtml) return; // untouched
+    if (!md || !manuscript) return;
+    if (!cancelled && origHtml !== undefined && block.innerHTML === origHtml) return; // untouched
+
+    // The body spans from the end of this chapter's `# ` heading to the start of
+    // the next chapter's heading (or end of source). The heading is the H1 that
+    // immediately precedes the block; the next heading is the next H1 in order.
+    let heading = block.previousElementSibling;
+    while (heading && heading.tagName !== 'H1') heading = heading.previousElementSibling;
+    const headingEnd = heading ? Number((heading as HTMLElement).dataset.mdEnd) : NaN;
+    if (!heading || Number.isNaN(headingEnd)) { rerenderInPlace(); return; }
+
+    let nextH1 = block.nextElementSibling;
+    while (nextH1 && nextH1.tagName !== 'H1') nextH1 = nextH1.nextElementSibling;
 
     const norm = md.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-    const start = +startAttr, end = +endAttr;
-    const original = norm.slice(start, end);
-    const newSource = htmlToMarkdownInline(p.innerHTML);
+    const bodyStart = headingEnd;
+    const bodyEnd = nextH1 ? Number((nextH1 as HTMLElement).dataset.mdStart) : norm.length;
+    const original = norm.slice(bodyStart, bodyEnd);
+    const newBody = htmlToMarkdownBlocks(block.innerHTML);
 
-    if (cancelled || !newSource || sameProse(newSource, original)) {
+    if (cancelled || !newBody || sameProse(newBody, original)) {
       rerenderInPlace(); // nothing to save — restore clean rendered HTML
       return;
     }
-    const res = applyBlockEdit(norm, start, end, newSource);
+    // Re-pad with surrounding blank lines so the body stays a well-formed block
+    // run; the reparse normalizes any extra blank lines.
+    const res = applyBlockEdit(norm, bodyStart, bodyEnd, `\n\n${newBody}\n\n`);
     if (!res) { rerenderInPlace(); return; }
     const updated = replaceMarkdown(manuscript.id, res.markdown);
     if (updated) {
       // Record the author's decision as a durable Edit (distinct from a reader
       // annotation) before re-rendering — recordEdit persists synchronously, so
-      // the openManuscript reload below picks it up. Attribute the chapter from
-      // the edited paragraph's position; anchor in the source-markdown domain.
-      const owner = chapterForOffset(
-        chapters.map(ch => ({ chapter: ch, offset: document.getElementById(ch.id)?.offsetTop ?? Infinity })),
-        (p.getBoundingClientRect().top + window.scrollY) + 100,
-      );
-      recordEdit({
+      // the openManuscript reload below picks it up. Structural edits don't map
+      // to a single paragraph, so the record is the whole chapter body's
+      // before/after, attributed to the chapter from its heading id.
+      const owner = chapters.find(ch => ch.id === (heading as HTMLElement).id);
+      // Anchor on the trimmed body at its true offset (bodyStart points at the
+      // leading blank line), so the quote aligns with the source for re-location.
+      const quote = original.trim();
+      const quoteStart = bodyStart + (original.length - original.trimStart().length);
+      const edit = recordEdit({
         chapterId: owner?.id ?? '',
         chapterIndex: owner?.index ?? 0,
         chapterTitle: owner?.title ?? '',
-        anchor: buildAnchor(norm, start, original),
-        originalText: original,
-        replacementText: newSource,
+        anchor: buildAnchor(norm, quoteStart, quote),
+        originalText: quote,
+        replacementText: newBody,
       });
-      pendingEditScroll.current = window.scrollY;
+      setEditReturnScroll(window.scrollY);
       const { chapters: newChapters } = parseMarkdown(updated.metadata.combinedMarkdown!);
       openManuscript(updated, newChapters); // → render effect restores scroll, re-anchors
+      // Make the edit reversible: snapshot full before/after + the record it made.
+      if (edit) pushEditTransition(norm, res.markdown, edit);
       showToast('Edit saved.');
     } else {
       rerenderInPlace();
       showToast('Could not save — manuscript not cached.');
     }
-  }, [manuscript, chapters, replaceMarkdown, openManuscript, rerenderInPlace, recordEdit]);
-  useEffect(() => { commitRef.current = commitBlockEdit; }, [commitBlockEdit]);
+  }, [manuscript, chapters, replaceMarkdown, openManuscript, rerenderInPlace, recordEdit, pushEditTransition, setEditReturnScroll]);
+  useEffect(() => { commitRef.current = commitChapterEdit; }, [commitChapterEdit]);
 
   // Apply/remove the editable affordance when the toggle flips. Leaving edit
   // mode commits any block still focused.
@@ -286,6 +307,9 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     if (!editMode) {
       const active = document.activeElement as HTMLElement | null;
       if (active && c.contains(active)) active.blur(); // fires focusout → commit
+    } else {
+      // Prefer <p> over <div> when Enter splits a paragraph (cleaner serialize).
+      try { document.execCommand('defaultParagraphSeparator', false, 'p'); } catch { /* unsupported */ }
     }
     setupEditable(c, editMode);
   }, [editMode]);
@@ -294,19 +318,23 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   useEffect(() => {
     const c = contentRef.current; if (!c) return;
     const onFocusIn = (e: FocusEvent) => {
-      const p = (e.target as HTMLElement)?.closest?.('p[data-md-start]') as HTMLElement | null;
-      if (p && editModeRef.current) editOriginalHtml.set(p, p.innerHTML);
+      const block = (e.target as HTMLElement)?.closest?.('.chapter-block') as HTMLElement | null;
+      if (block && editModeRef.current) editOriginalHtml.set(block, block.innerHTML);
     };
     const onFocusOut = (e: FocusEvent) => {
-      const p = (e.target as HTMLElement)?.closest?.('p[data-md-start]') as HTMLElement | null;
-      if (p && editModeRef.current) commitRef.current(p);
+      const block = (e.target as HTMLElement)?.closest?.('.chapter-block') as HTMLElement | null;
+      // Ignore focus moves that stay inside the same editable chapter body.
+      const to = (e as FocusEvent & { relatedTarget: EventTarget | null }).relatedTarget as Node | null;
+      if (block && to && block.contains(to)) return;
+      if (block && editModeRef.current) commitRef.current(block);
     };
     const onKeyDown = (e: KeyboardEvent) => {
       if (!editModeRef.current) return;
-      const p = (e.target as HTMLElement)?.closest?.('p[data-md-start]') as HTMLElement | null;
-      if (!p) return;
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); p.blur(); }
-      else if (e.key === 'Escape') { e.preventDefault(); cancelEditRef.current = true; p.blur(); }
+      const block = (e.target as HTMLElement)?.closest?.('.chapter-block') as HTMLElement | null;
+      if (!block) return;
+      // Enter splits a paragraph (default contentEditable behavior); Escape
+      // abandons the chapter's edits and restores the rendered source.
+      if (e.key === 'Escape') { e.preventDefault(); cancelEditRef.current = true; block.blur(); }
     };
     c.addEventListener('focusin', onFocusIn as EventListener);
     c.addEventListener('focusout', onFocusOut as EventListener);
