@@ -368,12 +368,6 @@ export function LandingScreen({ onOpenApp }: LandingScreenProps) {
             </p>
           </div>
         </div>
-        <figure className="lp-art lp-reveal">
-          <img src="/screenshots/reader-light.png" alt="The Vellibris reader in light mode — clean, immersive prose" loading="lazy" />
-        </figure>
-        <figure className="lp-art lp-art-dark lp-reveal">
-          <img src="/screenshots/reader-annotated.png" alt="A manuscript with reader annotations in the margin" loading="lazy" />
-        </figure>
       </section>
 
       {/* ── 5. Intelligence Emerging ─────────────────────────────────────────── */}
@@ -400,7 +394,7 @@ export function LandingScreen({ onOpenApp }: LandingScreenProps) {
               ))}
             </div>
             <figure className="lp-art lp-art-inset">
-              <img src="/screenshots/reader-dark.png" alt="The intelligence report drawn from the manuscript and its annotations" loading="lazy" />
+              <img src="/screenshots/annotation.png" alt="The intelligence report drawn from the manuscript and its annotations" loading="lazy" />
             </figure>
           </div>
         </div>
