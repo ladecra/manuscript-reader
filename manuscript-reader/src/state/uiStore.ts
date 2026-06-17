@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { loadTheme, saveTheme, loadFontSize, saveFontSize } from '../engine/storage';
+import type { HubPane } from '../components/layout/ManuscriptWorkspaceRail';
 
 export type Screen = 'landing' | 'library' | 'load' | 'manuscript' | 'reader';
 
@@ -12,6 +13,8 @@ interface UIStore {
   navOpen: boolean;
   annSidebarOpen: boolean;
   editMode: boolean;
+  workspaceRailOpen: boolean;
+  hubPane: HubPane;
 
   // A chapter index the reader should scroll to on its next mount, set when the
   // hub (e.g. a Report chip) sends the author into the prose at a specific spot.
@@ -42,6 +45,11 @@ interface UIStore {
   enterEditMode: () => void;
   exitEditMode: () => void;
 
+  toggleWorkspaceRail: () => void;
+  openWorkspaceRail: () => void;
+  closeWorkspaceRail: () => void;
+  setHubPane: (p: HubPane) => void;
+
   closeAllPanels: () => void;
 
   setPendingChapterIndex: (n: number | null) => void;
@@ -58,11 +66,20 @@ export const useUIStore = create<UIStore>((set, get) => ({
   navOpen: false,
   annSidebarOpen: false,
   editMode: false,
+  workspaceRailOpen: false,
+  hubPane: 'contents',
   pendingChapterIndex: null,
   pendingReaderIntent: null,
 
   setScreen(s) {
-    set({ screen: s, navOpen: false, annSidebarOpen: false, editMode: false });
+    const closeRail = s === 'reader';
+    set({
+      screen: s,
+      navOpen: false,
+      annSidebarOpen: false,
+      editMode: false,
+      ...(closeRail ? { workspaceRailOpen: false } : {}),
+    });
     // Apply theme class whenever screen changes (safe to re-apply)
     document.documentElement.classList.toggle('light', get().theme === 'light');
   },
@@ -99,6 +116,11 @@ export const useUIStore = create<UIStore>((set, get) => ({
   toggleEditMode() { set(s => ({ editMode: !s.editMode, navOpen: false, annSidebarOpen: false })); },
   enterEditMode()  { set({ editMode: true, navOpen: false, annSidebarOpen: false }); },
   exitEditMode()   { set({ editMode: false }); },
+
+  toggleWorkspaceRail() { set(s => ({ workspaceRailOpen: !s.workspaceRailOpen })); },
+  openWorkspaceRail()   { set({ workspaceRailOpen: true }); },
+  closeWorkspaceRail()  { set({ workspaceRailOpen: false }); },
+  setHubPane(p) { set({ hubPane: p }); },
 
   closeAllPanels() { set({ navOpen: false, annSidebarOpen: false }); },
 

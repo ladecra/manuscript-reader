@@ -1,7 +1,7 @@
-import { useState } from 'react';
 import type { Manuscript } from '../engine/types';
 import { loadAnnotations, getAnnotationStats } from '../engine/storage';
 import { PlusIcon, StarIcon } from '../components/ui/Icons';
+import type { LibraryNavFilter } from '../components/layout/AppShell';
 
 function timeAgo(ts: number | undefined): string {
   if (!ts) return '—';
@@ -21,6 +21,8 @@ function statusClass(status: string): string {
 
 interface LibraryScreenProps {
   library: Manuscript[];
+  libraryFilter: LibraryNavFilter;
+  onLibraryFilter?: (filter: LibraryNavFilter) => void;
   onOpen: (ms: Manuscript) => void;     // open the manuscript's page (its home)
   onRead: (ms: Manuscript) => void;     // enter the reader directly from the card
   onNew: () => void;
@@ -30,14 +32,19 @@ interface LibraryScreenProps {
   getReadingPosition: (id: string) => number;
 }
 
-export function LibraryScreen({ library, onOpen, onRead, onNew, onDelete, onCycleStatus, onToggleFavorite, getReadingPosition }: LibraryScreenProps) {
-  const [filter, setFilter] = useState<'all' | 'favorites'>('all');
+export function LibraryScreen({
+  library, libraryFilter, onLibraryFilter, onOpen, onRead, onNew, onDelete, onCycleStatus, onToggleFavorite, getReadingPosition,
+}: LibraryScreenProps) {
   const stored = library.map(ms => ({ id: ms.id, title: ms.metadata.title, wordCount: ms.metadata.wordCount, chapterCount: ms.metadata.chapterCount, lastOpened: ms.metadata.lastOpened, status: ms.metadata.status, uncached: ms.metadata.uncached }));
   const stats = getAnnotationStats(stored);
   const inProgress = library.filter(m => m.metadata.status === 'In Progress').length;
   const favCount = library.filter(m => m.metadata.favorite).length;
   const sorted = [...library]
-    .filter(m => filter === 'all' || m.metadata.favorite)
+    .filter(m => {
+      if (libraryFilter === 'favorites') return m.metadata.favorite;
+      if (libraryFilter === 'recent') return !!m.metadata.lastOpened;
+      return true;
+    })
     .sort((a, b) => (b.metadata.lastOpened ?? 0) - (a.metadata.lastOpened ?? 0));
 
   return (
@@ -67,17 +74,23 @@ export function LibraryScreen({ library, onOpen, onRead, onNew, onDelete, onCycl
             <div className="lib-stat"><span className="lib-stat-num">{stats.total.toLocaleString()}</span><span className="lib-stat-label">Annotations</span></div>
           </div>
 
-          {favCount > 0 && (
-            <div className="library-filters">
-              <button className={`lib-filter${filter === 'all' ? ' active' : ''}`} onClick={() => setFilter('all')}>All</button>
-              <button className={`lib-filter${filter === 'favorites' ? ' active' : ''}`} onClick={() => setFilter('favorites')}>
+          {onLibraryFilter && favCount > 0 && (
+            <div className="library-filters library-filters--shell-mobile">
+              <button type="button" className={`lib-filter${libraryFilter === 'all' ? ' active' : ''}`} onClick={() => onLibraryFilter('all')}>All</button>
+              <button type="button" className={`lib-filter${libraryFilter === 'favorites' ? ' active' : ''}`} onClick={() => onLibraryFilter('favorites')}>
                 Favorites <span className="lib-filter-count">{favCount}</span>
               </button>
             </div>
           )}
 
           {sorted.length === 0 ? (
-            <div className="library-empty"><p>No favorites yet.<br />Star a manuscript to keep it close.</p></div>
+            <div className="library-empty">
+              <p>
+                {libraryFilter === 'favorites' && <>No favorites yet.<br />Star a manuscript to keep it close.</>}
+                {libraryFilter === 'recent' && <>Nothing recent yet.<br />Open a manuscript to see it here.</>}
+                {libraryFilter === 'all' && <>No manuscripts match this view.</>}
+              </p>
+            </div>
           ) : (
             <div id="ms-list">
               {sorted.map(ms => (

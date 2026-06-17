@@ -50,6 +50,8 @@ function frontMatterYaml(meta: ExportManuscriptMeta): string {
     ['title', meta.title],
     ['subtitle', p.subtitle],
     ['author', meta.author],
+    ['genre', p.genre],
+    ['description', p.synopsis],
     ['series', p.series],
     ['publisher', p.publisher],
     ['imprint', p.imprint],

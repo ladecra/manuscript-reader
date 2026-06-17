@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useUIStore } from './state/uiStore';
 import { useLibraryStore } from './state/libraryStore';
 import { useReaderStore } from './state/readerStore';
@@ -7,9 +7,11 @@ import { LibraryScreen } from './screens/LibraryScreen';
 import { LoadScreen } from './screens/LoadScreen';
 import { ReaderScreen } from './screens/ReaderScreen';
 import { ManuscriptHubScreen } from './screens/ManuscriptHubScreen';
+import { ManuscriptWorkspaceRail, type HubPane } from './components/layout/ManuscriptWorkspaceRail';
 import { Toast, useToast } from './components/ui/Toast';
 import { SettingsMenu } from './components/ui/SettingsMenu';
-import { QuillIcon, MenuIcon, AnnotateIcon, LibraryIcon, PencilIcon, UndoIcon, RedoIcon } from './components/ui/Icons';
+import { AppShell, type LibraryNavFilter } from './components/layout/AppShell';
+import { QuillIcon, MenuIcon, AnnotateIcon, LibraryIcon, PencilIcon, UndoIcon, RedoIcon, PanelIcon } from './components/ui/Icons';
 import { parseMarkdown } from './engine/ingestion/parseMarkdown';
 import type { Manuscript } from './engine/types';
 
@@ -30,7 +32,11 @@ function IconBtn({ onClick, active, title, label, disabled, children }: {
 }
 
 export function App() {
-  const { screen, theme, fontSize, annSidebarOpen, editMode, setScreen, toggleNav, toggleAnnSidebar, toggleEditMode } = useUIStore();
+  const {
+    screen, theme, fontSize, annSidebarOpen, editMode, workspaceRailOpen,
+    setScreen, toggleNav, toggleAnnSidebar, toggleEditMode, toggleWorkspaceRail,
+    setHubPane, openAnnSidebar,
+  } = useUIStore();
   const { library, upsertManuscript, cycleStatus, toggleFavorite, deleteManuscript, replaceMarkdown, getReadingPosition } = useLibraryStore();
   const { manuscript, annotations, openManuscript, closeManuscript, undoEdit, redoEdit, setEditReturnScroll, undoStack, redoStack } = useReaderStore();
   const { toastState, showToast } = useToast();
@@ -52,6 +58,33 @@ export function App() {
 
   const [topbarHidden, setTopbarHidden] = React.useState(false);
   const [chapterLabel, setChapterLabel] = React.useState('');
+  const [libraryFilter, setLibraryFilter] = useState<LibraryNavFilter>('all');
+
+  const shellActive = screen === 'library' || screen === 'manuscript' || screen === 'load';
+  const favCount = library.filter(m => m.metadata.favorite).length;
+
+  const workspaceManuscripts = useMemo(
+    () =>
+      [...library]
+        .sort((a, b) => (b.metadata.lastOpened ?? 0) - (a.metadata.lastOpened ?? 0))
+        .slice(0, 12)
+        .map(m => ({ id: m.id, title: m.metadata.title })),
+    [library],
+  );
+
+  function handleSwitchManuscript(id: string) {
+    if (manuscript?.id === id) return;
+    const ms = library.find(m => m.id === id);
+    if (!ms) return;
+    handleOpenHub(ms);
+  }
+
+  function goLibrary(filter: LibraryNavFilter = libraryFilter) {
+    setLibraryFilter(filter);
+    setScreen('library');
+    closeManuscript();
+    window.scrollTo(0, 0);
+  }
 
   useEffect(() => {
     document.documentElement.classList.toggle('light', theme === 'light');
@@ -106,6 +139,7 @@ export function App() {
     }
     const { chapters } = parseMarkdown(ms.metadata.combinedMarkdown);
     openManuscript(ms, chapters);
+    setHubPane('contents');
     setScreen('manuscript');
     window.scrollTo(0, 0);
   }
@@ -123,9 +157,7 @@ export function App() {
   }
 
   function handleLibraryNav() {
-    setScreen('library');
-    closeManuscript();
-    window.scrollTo(0, 0);
+    goLibrary(libraryFilter);
   }
 
   // The wordmark is the "home" affordance — back out to the marketing landing.
@@ -138,10 +170,34 @@ export function App() {
   const title = manuscript?.metadata.title ?? '';
   const hasAnnotations = annotations.length > 0;
 
+  const workspaceSavedLabel = manuscript?.metadata.lastOpened
+    ? `Auto-saved · ${new Date(manuscript.metadata.lastOpened).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`
+    : 'Auto-saved';
+
+  const handleReaderRailPane = React.useCallback((id: HubPane) => {
+    if (id === 'feedback') {
+      openAnnSidebar();
+      return;
+    }
+    setHubPane(id);
+    setScreen('manuscript');
+    window.scrollTo(0, 0);
+  }, [openAnnSidebar, setHubPane, setScreen]);
+
   // The marketing front door owns the full viewport — no app topbar.
   if (screen === 'landing') {
     return <LandingScreen onOpenApp={handleLibraryNav} />;
   }
+
+  const toolsToggle = (screen === 'reader' || screen === 'manuscript') && (
+    <IconBtn
+      onClick={toggleWorkspaceRail}
+      active={workspaceRailOpen}
+      title="Manuscript tools"
+    >
+      <PanelIcon />
+    </IconBtn>
+  );
 
   return (
     <>
@@ -150,7 +206,6 @@ export function App() {
           {screen === 'reader' ? (
             <>
               <IconBtn onClick={toggleNav} title="Chapters"><MenuIcon /></IconBtn>
-              {/* The title links back to the manuscript's page (its home). */}
               <button id="topbar-title" className="topbar-title-btn" onClick={() => setScreen('manuscript')} title="Manuscript page">{title}</button>
             </>
           ) : (
@@ -179,12 +234,11 @@ export function App() {
                   <IconBtn onClick={handleRedo} disabled={redoStack.length === 0} title="Redo edit (⇧⌘Z)"><RedoIcon /></IconBtn>
                 </>
               )}
-              {/* Divider fences the per-manuscript panel toggles off from the
-                  leave-the-reader / settings controls, so Library isn't a stray click away. */}
               <span aria-hidden="true" style={{ width: '1px', height: '18px', background: 'var(--border)', margin: '0 6px', alignSelf: 'center' }} />
             </>
           )}
-          {(screen === 'reader' || screen === 'load') && (
+          {toolsToggle}
+          {screen === 'load' && (
             <IconBtn onClick={handleLibraryNav} title="Library" label="Library"><LibraryIcon /></IconBtn>
           )}
           <SettingsMenu />
@@ -193,30 +247,78 @@ export function App() {
 
       {screen === 'reader' && <div id="progress-track"><div id="progress-fill" /></div>}
 
-      {screen === 'library' && (
-        <div id="screen-library" className="active">
-          <div className="screen-inner">
-            <LibraryScreen library={library} onOpen={handleOpenHub} onRead={handleReadFromLibrary} onNew={() => setScreen('load')} onDelete={deleteManuscript} onCycleStatus={cycleStatus} onToggleFavorite={toggleFavorite} getReadingPosition={getReadingPosition} />
-          </div>
-        </div>
-      )}
-
-      {screen === 'manuscript' && (
-        <ManuscriptHubScreen
-          onRead={() => { setScreen('reader'); window.scrollTo(0, 0); }}
-          onExit={handleLibraryNav}
+      {workspaceRailOpen && (screen === 'reader' || screen === 'manuscript') && (
+        <button
+          type="button"
+          className="workspace-rail-backdrop"
+          aria-label="Close manuscript tools"
+          onClick={toggleWorkspaceRail}
         />
       )}
 
-      {screen === 'load' && (
-        <div id="screen-load" className="active">
-          <div className="screen-inner">
-            <LoadScreen onLoad={handleLoad} />
-          </div>
+      {shellActive ? (
+        <AppShell
+          variant={screen === 'manuscript' ? 'manuscript' : screen === 'load' ? 'library' : 'library'}
+          libraryFilter={libraryFilter}
+          onLibraryFilter={f => goLibrary(f)}
+          manuscriptCount={library.length}
+          favoritesCount={favCount}
+          activeManuscriptId={manuscript?.id}
+          workspaceManuscripts={workspaceManuscripts}
+          onSwitchManuscript={handleSwitchManuscript}
+          onNewManuscript={() => setScreen('load')}
+        >
+          {screen === 'library' && (
+            <div id="screen-library" className="active app-shell-screen">
+              <div className="screen-inner">
+                <LibraryScreen
+                  library={library}
+                  libraryFilter={libraryFilter}
+                  onLibraryFilter={f => setLibraryFilter(f)}
+                  onOpen={handleOpenHub}
+                  onRead={handleReadFromLibrary}
+                  onNew={() => setScreen('load')}
+                  onDelete={deleteManuscript}
+                  onCycleStatus={cycleStatus}
+                  onToggleFavorite={toggleFavorite}
+                  getReadingPosition={getReadingPosition}
+                />
+              </div>
+            </div>
+          )}
+          {screen === 'load' && (
+            <div id="screen-load" className="active app-shell-screen">
+              <div className="screen-inner">
+                <LoadScreen onLoad={handleLoad} />
+              </div>
+            </div>
+          )}
+          {screen === 'manuscript' && manuscript && (
+            <ManuscriptHubScreen
+              key={manuscript.id}
+              workspaceRailOpen={workspaceRailOpen}
+              onRead={() => { setScreen('reader'); window.scrollTo(0, 0); }}
+              onExit={handleLibraryNav}
+            />
+          )}
+        </AppShell>
+      ) : null}
+
+      {screen === 'reader' && manuscript && (
+        <div className={`reader-workspace${workspaceRailOpen ? ' reader-workspace--rail-open' : ''}`}>
+          <ReaderScreen onChapterLabelChange={setChapterLabel} />
+          {workspaceRailOpen && (
+            <ManuscriptWorkspaceRail
+              context="reader"
+              pane="contents"
+              annotationCount={annotations.length}
+              savedLabel={workspaceSavedLabel}
+              onTogglePane={handleReaderRailPane}
+              onLibrary={handleLibraryNav}
+            />
+          )}
         </div>
       )}
-
-      {screen === 'reader' && <ReaderScreen onChapterLabelChange={setChapterLabel} />}
 
       <Toast message={toastState.message} visible={toastState.visible} />
     </>

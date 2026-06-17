@@ -1,12 +1,13 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useReaderStore } from '../state/readerStore';
 import { useLibraryStore } from '../state/libraryStore';
 import { useUIStore } from '../state/uiStore';
 import { computeEditorialSignals } from '../engine/editorialSignals';
 import { parseMarkdown, countWords } from '../engine/ingestion/parseMarkdown';
 import { buildManuscriptStructure } from '../engine/ingestion/manuscriptStructure';
+import { estimateReadingPagePosition } from '../engine/reading/manuscriptPages';
 import { MANUSCRIPT_STATUSES, PUBLISHING_FIELDS, ANNOTATION_LABELS, ANNOTATION_COLORS } from '../engine/types';
-import type { ManuscriptStatus, PublishingMetadata } from '../engine/types';
+import type { ManuscriptStatus, PublishingMetadata, Chapter } from '../engine/types';
 import { applyChapterEdits, type ChapterEdit } from '../engine/manuscript/chapterEdit';
 import type { ExportManuscriptMeta } from '../engine/exports/manuscriptMarkdown';
 import { ChapterTree } from '../components/library/ChapterTree';
@@ -15,36 +16,48 @@ import { ExportChoiceModal } from '../components/reports/ExportChoiceModal';
 import { ShareModal } from '../components/reader/ShareModal';
 import { exportShareableReader, ShareReaderBuildError } from '../engine/exports/shareableReader';
 import { showToast } from '../components/ui/Toast';
+import { PencilIcon, BookIcon, ChevronLeftIcon, DotsIcon } from '../components/ui/Icons';
+import { coverSvgDataUrl } from '../engine/cover';
+import { ManuscriptWorkspaceRail, type HubPane } from '../components/layout/ManuscriptWorkspaceRail';
 
-// The manuscript page: a book's antechamber, not a project dashboard. The
-// manuscript is the hero (title block → continue-reading → contents); the
-// software lives quietly in the right "This manuscript" rail, whose items swap
-// the center pane. The reader is the thing you *enter* — intelligence and
-// artifacts live here, never over the reading view. Versions is an honest stub.
-type HubPane = 'contents' | 'details' | 'feedback' | 'report' | 'exports' | 'share' | 'versions';
-
-function statusClass(status: string): string {
-  return 'status--' + status.toLowerCase().replace(/[^a-z]+/g, '-');
-}
+// The manuscript page: a book's antechamber. Shared `.instrument-*` list styling
+// (hub rail, contents, publishing fields) is the evolving shell language; a
+// collapsible reader-side rail can reuse it later (library → hub, tools → reader).
 
 interface ManuscriptHubScreenProps {
   onRead: () => void;   // enter the immersive reader at the resume position
   onExit: () => void;   // back to the library
+  workspaceRailOpen: boolean;
 }
 
-export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps) {
+export function ManuscriptHubScreen({ onRead, onExit, workspaceRailOpen }: ManuscriptHubScreenProps) {
   const { manuscript, chapters, annotations, edits, sessions, openManuscript } = useReaderStore();
-  const { library, updateManuscript, replaceMarkdown, getReadingPosition, updateProgress } = useLibraryStore();
-  const { setPendingChapterIndex, setPendingReaderIntent } = useUIStore();
-  const [pane, setPane] = useState<HubPane>('contents');
+  const { library, updateManuscript, replaceMarkdown, getReadingPosition, updateProgress, cycleStatus } = useLibraryStore();
+  const { setPendingChapterIndex, setPendingReaderIntent, hubPane: pane, setHubPane } = useUIStore();
   const [shareModalOpen, setShareModalOpen] = useState(false);
   const [editStructure, setEditStructure] = useState(false);
   const [chapterEdits, setChapterEdits] = useState<ChapterEdit[]>([]);
+  const [tocQuery, setTocQuery] = useState('');
+  const [tocCompact, setTocCompact] = useState(false);
+  const [openChapterMenu, setOpenChapterMenu] = useState<number | null>(null);
 
   const title = manuscript?.metadata.title ?? '';
   const combinedMarkdown = manuscript?.metadata.combinedMarkdown;
   const manuscriptAvailable = !!combinedMarkdown;
   const pct = manuscript ? Math.round(getReadingPosition(manuscript.id) * 100) : 0;
+  const progressFrac = manuscript ? getReadingPosition(manuscript.id) : 0;
+  const pageEstimate = useMemo(() => {
+    const wc = manuscript?.metadata.wordCount ?? 0;
+    return estimateReadingPagePosition(wc, progressFrac);
+  }, [manuscript?.metadata.wordCount, progressFrac]);
+
+  const filteredChapters = useMemo(() => {
+    const q = tocQuery.trim().toLowerCase();
+    if (!q) return chapters;
+    return chapters.filter(ch =>
+      String(ch.index).includes(q) || (ch.title ?? '').toLowerCase().includes(q),
+    );
+  }, [chapters, tocQuery]);
 
   const signals = useMemo(
     () => manuscript && annotations.length > 0
@@ -66,15 +79,6 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
     return map;
   }, [combinedMarkdown]);
 
-  // How many annotations land in each chapter — a quiet "N notes" marker per row.
-  const annsByChapter = useMemo(() => {
-    const map = new Map<number, number>();
-    for (const a of annotations) map.set(a.chapterIndex, (map.get(a.chapterIndex) ?? 0) + 1);
-    return map;
-  }, [annotations]);
-
-  // The chapter the reading position lands in — drives the Continue Reading band.
-  // Walks cumulative words so it tracks real position, not a naive index split.
   const resumeChapter = useMemo(() => {
     if (!chapters.length) return null;
     const total = chapters.reduce((s, ch) => s + (wordsByChapter.get(ch.index) ?? 0), 0);
@@ -195,25 +199,25 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
     showToast('No chapter changes.');
   }, [manuscript, combinedMarkdown, chapterEdits, replaceMarkdown, openManuscript]);
 
+  const coverUrl = useMemo(
+    () => coverSvgDataUrl({ title, author: manuscript?.metadata.author, series: manuscript?.metadata.publishing?.series }),
+    [title, manuscript?.metadata.author, manuscript?.metadata.publishing?.series],
+  );
+
+  const toggleToolPane = useCallback((id: HubPane) => {
+    setHubPane(pane === id ? 'contents' : id);
+  }, [pane, setHubPane]);
+
   if (!manuscript) return null;
 
   const { author, wordCount, chapterCount, status, uncached, publishing } = manuscript.metadata;
   const readerCount = new Set(annotations.map(a => a.readerId ?? a.readerName).filter(Boolean)).size;
-
-  // The quiet right rail — "This manuscript". Each item swaps the center pane;
-  // Contents (the manuscript itself) is the default and lives in the center, not here.
-  const tools: { id: HubPane; label: string; badge?: number }[] = [
-    { id: 'feedback', label: 'Annotations', badge: annotations.length },
-    { id: 'report', label: 'Report' },
-    { id: 'details', label: 'Publishing details' },
-    { id: 'exports', label: 'Exports' },
-    { id: 'share', label: 'Share' },
-    { id: 'versions', label: 'Versions' },
-  ];
+  const savedLabel = manuscript.metadata.lastOpened
+    ? `Auto-saved · ${new Date(manuscript.metadata.lastOpened).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`
+    : 'Auto-saved';
 
   return (
-    <div className="hub">
-      {/* ── Center column: the manuscript is the hero ── */}
+    <div className={`hub${workspaceRailOpen ? ' hub--rail-open' : ''}`}>
       <main className="hub-main">
         {uncached && (
           <div className="hub-warn" role="alert">
@@ -224,88 +228,172 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
 
         {pane === 'contents' ? (
           <div className="hub-panel">
-            <button className="hub-back" onClick={onExit}>‹ Library</button>
-
-            {/* Band 1 — manuscript hero (large, editorial; the title gains identity) */}
+            <button type="button" className="hub-breadcrumb" onClick={onExit}>
+              <ChevronLeftIcon size={10} />
+              Back to library
+            </button>
             <header className="hub-hero">
+            <div className="hub-hero-cover" aria-hidden="true">
+              <img src={coverUrl} alt="" />
+            </div>
+            <div className="hub-hero-text">
               {publishing?.series && <div className="hub-hero-series">{publishing.series}</div>}
               <h1 className="hub-hero-title">{title}</h1>
-              {publishing?.subtitle && <div className="hub-hero-subtitle">{publishing.subtitle}</div>}
-              {author && <div className="hub-hero-byline">by {author}</div>}
-              <div className="hub-hero-stats">
-                <button className={`ms-status ${statusClass(status ?? 'Draft')}`} disabled>{status ?? 'Draft'}</button>
-                {wordCount ? <span>{wordCount.toLocaleString()} words</span> : null}
-                <span>{chapterCount ?? 0} chapters</span>
-                {annotations.length > 0 && <span>{annotations.length} annotation{annotations.length !== 1 ? 's' : ''}</span>}
-              </div>
-            </header>
-
-            {/* Band 2 — reading continuation (the dominant action) */}
-            <section className="hub-continue">
-              <div className="hub-continue-label">{pct > 1 ? 'Continue reading' : 'Start reading'}</div>
-              {resumeChapter && (
-                <div className="hub-continue-where">
-                  <span className="hub-continue-chapter">Chapter {resumeChapter.index}</span>
-                  {resumeChapter.title && <span className="hub-continue-title">· {resumeChapter.title}</span>}
-                </div>
-              )}
-              <div className="hub-continue-bar"><div className="hub-continue-fill" style={{ width: `${pct}%` }} /></div>
-              <div className="hub-continue-foot">
-                <span className="hub-continue-pct">{pct > 0 ? `${pct}% complete` : 'Not started'}</span>
-                <div className="hub-continue-actions">
-                  {pct > 1 && <button className="hub-play-secondary" onClick={startOver}>Start from the beginning</button>}
-                  <button className="hub-continue-btn" onClick={onRead} disabled={!manuscriptAvailable}>
-                    {pct > 1 ? 'Continue reading' : 'Start reading'}
+              {publishing?.genre?.trim() && (
+                <div className="hub-hero-genre">
+                  <span>{publishing.genre.trim()}</span>
+                  <button type="button" className="hub-hero-genre-edit" onClick={() => setHubPane('details')} aria-label="Edit genre and synopsis">
+                    <PencilIcon size={14} />
                   </button>
                 </div>
+              )}
+              {publishing?.subtitle && <div className="hub-hero-subtitle">{publishing.subtitle}</div>}
+              {author && <div className="hub-hero-byline">by {author}</div>}
+              {publishing?.synopsis?.trim() && (
+                <p className="hub-hero-synopsis">{publishing.synopsis.trim()}</p>
+              )}
+              <div className="ms-meta hub-hero-meta">
+                {wordCount != null && wordCount > 0 ? <span>{wordCount.toLocaleString()} words</span> : null}
+                {wordCount != null && wordCount > 0 ? <span className="dot" /> : null}
+                <span>{chapterCount ?? 0} chapter{(chapterCount ?? 0) !== 1 ? 's' : ''}</span>
+                <span className="dot" />
+                <button
+                  type="button"
+                  className={`ms-status ${hubStatusClass(status ?? 'Draft')}`}
+                  onClick={() => {
+                    if (!manuscript) return;
+                    cycleStatus(manuscript.id);
+                    const refreshed = useLibraryStore.getState().library.find(m => m.id === manuscript.id);
+                    if (refreshed) openManuscript(refreshed, chapters);
+                  }}
+                >
+                  {status ?? 'Draft'}
+                </button>
+                <span className="dot" />
+                <span>{pct > 0 ? `${pct}% read` : 'Unread'}</span>
+                {annotations.length > 0 && (
+                  <>
+                    <span className="dot" />
+                    <span>{annotations.length} annotation{annotations.length !== 1 ? 's' : ''}</span>
+                  </>
+                )}
+                {readerCount > 0 && (
+                  <>
+                    <span className="dot" />
+                    <span>{readerCount} reader{readerCount !== 1 ? 's' : ''}</span>
+                  </>
+                )}
+                <span className="dot" />
+                <span>{hubTimeAgo(manuscript.metadata.lastOpened)}</span>
               </div>
-            </section>
+            </div>
+          </header>
 
-            {/* Band 3 — contents (the center of the page) */}
-            <section className="hub-toc-section">
-              <div className="hub-toc-head">
-                <div className="hub-section-label hub-section-label--bare">Contents</div>
-                <button className="hub-toc-edit" onClick={() => setEditStructure(v => !v)}>
-                  {editStructure ? 'Done' : 'Reorder & rename'}
+          <section className="hub-continue">
+            <div className="hub-continue-grid">
+              <div className="hub-continue-copy">
+                <div className="hub-continue-eyebrow">
+                  <span className="hub-continue-icon" aria-hidden="true"><BookIcon size={14} /></span>
+                  {pct > 1 ? 'Continue reading' : 'Start reading'}
+                </div>
+                {resumeChapter && (
+                  <p className="hub-continue-place">
+                    Chapter {resumeChapter.index}
+                    {resumeChapter.title ? ` · ${resumeChapter.title}` : ''}
+                  </p>
+                )}
+                <div className="hub-continue-bar" aria-hidden="true">
+                  <div className="hub-continue-fill" style={{ width: `${pct}%` }} />
+                </div>
+                <p className="hub-continue-pct">
+                  {pct > 0 ? (
+                    <>
+                      {pct}% complete
+                      {wordCount != null && wordCount > 0 && (
+                        <> · ~ page {pageEstimate.current} of {pageEstimate.total}</>
+                      )}
+                    </>
+                  ) : (
+                    'Not yet opened in the reader'
+                  )}
+                </p>
+              </div>
+              <div className="hub-continue-aside">
+                <button type="button" className="hub-continue-btn btn-accent" onClick={onRead} disabled={!manuscriptAvailable}>
+                  {pct > 1 ? 'Continue reading' : 'Start reading'}
+                </button>
+                <button type="button" className="hub-continue-open" onClick={onRead} disabled={!manuscriptAvailable}>
+                  Open in reader →
                 </button>
               </div>
+            </div>
+          </section>
 
-              {editStructure ? (
-                <div className="hub-form">
-                  <ChapterTree key={combinedMarkdown} combinedMarkdown={combinedMarkdown} onChange={setChapterEdits} />
-                  <button className="edit-save-btn" style={{ marginTop: '20px', alignSelf: 'flex-start' }}
-                    onClick={() => { saveChapters(); setEditStructure(false); }}>Save chapter changes</button>
-                </div>
-              ) : (
-                <div className="hub-toc">
-                  {chapters.map(ch => {
-                    const w = wordsByChapter.get(ch.index);
-                    const n = annsByChapter.get(ch.index) ?? 0;
-                    return (
-                      <div key={ch.id} className="hub-toc-row" role="button" tabIndex={0}
-                        onClick={() => enterReader(ch.index)}
-                        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); enterReader(ch.index); } }}>
-                        <span className="hub-toc-num">{String(ch.index).padStart(2, '0')}</span>
-                        <span className="hub-toc-title">{ch.title}</span>
-                        <span className="hub-toc-meta">
-                          {w ? `${w.toLocaleString()} words` : ''}
-                          {n > 0 ? `${w ? ' · ' : ''}${n} note${n !== 1 ? 's' : ''}` : ''}
-                        </span>
-                        <span className="hub-toc-actions">
-                          <button onClick={e => { e.stopPropagation(); enterReader(ch.index); }}>Read</button>
-                          <button onClick={e => { e.stopPropagation(); enterReader(ch.index, 'annotate'); }}>Annotate</button>
-                          <button onClick={e => { e.stopPropagation(); enterReader(ch.index, 'edit'); }} disabled={!manuscriptAvailable}>Edit</button>
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </section>
+          <section className="hub-toc-section">
+            <div className="hub-toc-head">
+              <div className="instrument-group-label hub-section-label--bare">Contents</div>
+              <div className="hub-toc-actions">
+                <label className="hub-toc-search">
+                  <span className="visually-hidden">Search chapters</span>
+                  <input
+                    type="search"
+                    className="hub-toc-search-input"
+                    placeholder="Search chapters"
+                    value={tocQuery}
+                    onChange={e => setTocQuery(e.target.value)}
+                  />
+                </label>
+                <button
+                  type="button"
+                  className={`hub-toc-action${tocCompact ? ' active' : ''}`}
+                  onClick={() => setTocCompact(v => !v)}
+                >
+                  View
+                </button>
+                <button
+                  type="button"
+                  className={`hub-toc-action${editStructure ? ' active' : ''}`}
+                  onClick={() => setEditStructure(v => !v)}
+                >
+                  {editStructure ? 'Done' : 'Structure'}
+                </button>
+              </div>
+            </div>
+
+            {editStructure ? (
+              <div className="hub-form">
+                <ChapterTree key={combinedMarkdown} combinedMarkdown={combinedMarkdown} onChange={setChapterEdits} />
+                <button className="edit-save-btn" style={{ marginTop: '20px', alignSelf: 'flex-start' }}
+                  onClick={() => { saveChapters(); setEditStructure(false); }}>Save chapter changes</button>
+              </div>
+            ) : (
+              <nav className={`instrument-nav${tocCompact ? ' instrument-nav--compact' : ''}`} aria-label="Table of contents">
+                {filteredChapters.map(ch => (
+                  <HubTocRow
+                    key={ch.id}
+                    ch={ch}
+                    wordCount={wordsByChapter.get(ch.index)}
+                    isActive={resumeChapter?.index === ch.index}
+                    compact={tocCompact}
+                    menuOpen={openChapterMenu === ch.index}
+                    onToggleMenu={() => setOpenChapterMenu(id => (id === ch.index ? null : ch.index))}
+                    onCloseMenu={() => setOpenChapterMenu(null)}
+                    onRead={() => enterReader(ch.index)}
+                    onAnnotate={() => enterReader(ch.index, 'annotate')}
+                    onEdit={() => enterReader(ch.index, 'edit')}
+                    onStartOver={startOver}
+                  />
+                ))}
+                {filteredChapters.length === 0 && (
+                  <p className="hub-toc-empty">No chapters match your search.</p>
+                )}
+              </nav>
+            )}
+          </section>
           </div>
         ) : (
-          <div className="hub-panel">
-            <button className="hub-back" onClick={() => setPane('contents')}>‹ {title}</button>
+          <div className="hub-panel hub-tool-pane">
+            <button type="button" className="hub-back" onClick={() => setHubPane('contents')}>‹ Contents</button>
 
             {pane === 'details' && (
               <DetailsTab
@@ -333,7 +421,7 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
                 annCount={annotations.length}
                 editCount={edits.length}
                 hasPublishing={!!publishing && Object.values(publishing).some(Boolean)}
-                onGoToDetails={() => setPane('details')}
+                onGoToDetails={() => setHubPane('details')}
                 onExportManuscript={handleExportManuscript}
                 onExportReportDocx={handleExportReportDocx}
                 onExportReportHtml={handleExportReportHtml}
@@ -379,18 +467,104 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
         )}
       </main>
 
-      {/* ── Right rail: the software, kept quiet ── */}
-      <aside className="hub-tools">
-        <div className="hub-tools-label">This manuscript</div>
-        <nav className="hub-tools-nav">
-          {tools.map(t => (
-            <button key={t.id} className={`hub-tools-item${pane === t.id ? ' active' : ''}`} onClick={() => setPane(t.id)}>
-              <span className="hub-tools-item-label">{t.label}</span>
-              {t.badge != null && t.badge > 0 && <span className="hub-tools-badge">{t.badge}</span>}
-            </button>
-          ))}
-        </nav>
-      </aside>
+      {workspaceRailOpen && (
+        <ManuscriptWorkspaceRail
+          context="hub"
+          pane={pane}
+          annotationCount={annotations.length}
+          savedLabel={savedLabel}
+          readerSubtext={pct > 1 ? 'Resume where you left off' : 'Open in the reader'}
+          onTogglePane={toggleToolPane}
+          onRead={onRead}
+        />
+      )}
+    </div>
+  );
+}
+
+function hubStatusClass(status: string): string {
+  return 'status--' + status.toLowerCase().replace(/[^a-z]+/g, '-');
+}
+
+function hubTimeAgo(ts: number | undefined): string {
+  if (!ts) return '—';
+  const m = Math.floor((Date.now() - ts) / 60000);
+  if (m < 2) return 'Just now';
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  if (d < 7) return `${d}d ago`;
+  return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function HubTocRow({
+  ch, wordCount, isActive, compact, menuOpen, onToggleMenu, onCloseMenu, onRead, onAnnotate, onEdit, onStartOver,
+}: {
+  ch: Chapter;
+  wordCount: number | undefined;
+  isActive: boolean;
+  compact: boolean;
+  menuOpen: boolean;
+  onToggleMenu: () => void;
+  onCloseMenu: () => void;
+  onRead: () => void;
+  onAnnotate: () => void;
+  onEdit: () => void;
+  onStartOver: () => void;
+}) {
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    function onDoc(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) onCloseMenu();
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onCloseMenu();
+    }
+    document.addEventListener('mousedown', onDoc);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [menuOpen, onCloseMenu]);
+
+  return (
+    <div
+      className={`instrument-item instrument-item--toc${isActive ? ' active' : ''}`}
+      role="button"
+      tabIndex={0}
+      onClick={onRead}
+      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onRead(); } }}
+    >
+      <span className="instrument-item-label instrument-item-label--serif">
+        <span className="instrument-item-num">{ch.index}</span>
+        {ch.title}
+      </span>
+      {!compact && wordCount != null && (
+        <span className="instrument-item-meta">{wordCount.toLocaleString()}</span>
+      )}
+      <div className="hub-toc-menu-wrap" ref={menuRef}>
+        <button
+          type="button"
+          className="hub-toc-menu-btn"
+          aria-label={`Chapter ${ch.index} actions`}
+          aria-expanded={menuOpen}
+          onClick={e => { e.stopPropagation(); onToggleMenu(); }}
+        >
+          <DotsIcon size={13} />
+        </button>
+        {menuOpen && (
+          <div className="hub-toc-menu" role="menu">
+            <button type="button" role="menuitem" onClick={e => { e.stopPropagation(); onCloseMenu(); onRead(); }}>Read</button>
+            <button type="button" role="menuitem" onClick={e => { e.stopPropagation(); onCloseMenu(); onAnnotate(); }}>Annotate</button>
+            <button type="button" role="menuitem" onClick={e => { e.stopPropagation(); onCloseMenu(); onEdit(); }}>Edit prose</button>
+            <button type="button" role="menuitem" className="hub-toc-menu-muted" onClick={e => { e.stopPropagation(); onCloseMenu(); onStartOver(); }}>Start from beginning</button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -420,38 +594,43 @@ function DetailsTab({
       <h2 className="hub-panel-title">Details</h2>
       <p className="hub-panel-lead">The title page and publishing data — applied to every artifact you export.</p>
 
-      <div className="hub-section-label">Title page</div>
-      <div className="hub-form">
-        <div className="hub-field"><label className="edit-field-label">Title</label>
-          <input className="edit-input" type="text" value={titleInput} onChange={e => setTitleInput(e.target.value)} /></div>
-        <div className="hub-field"><label className="edit-field-label">Author</label>
-          <input className="edit-input" type="text" value={authorInput} placeholder="Author (optional)" onChange={e => setAuthorInput(e.target.value)} /></div>
-        <div className="hub-field"><label className="edit-field-label">Status</label>
+      <div className="instrument-group-label">Title page</div>
+      <div className="instrument-nav">
+        <div className="instrument-field">
+          <label className="instrument-field-label" htmlFor="hub-detail-title">Title</label>
+          <input id="hub-detail-title" className="instrument-field-input" type="text" value={titleInput} onChange={e => setTitleInput(e.target.value)} />
+        </div>
+        <div className="instrument-field">
+          <label className="instrument-field-label" htmlFor="hub-detail-author">Author</label>
+          <input id="hub-detail-author" className="instrument-field-input" type="text" value={authorInput} placeholder="Author (optional)" onChange={e => setAuthorInput(e.target.value)} />
+        </div>
+        <div className="instrument-field">
+          <span className="instrument-field-label">Status</span>
           <div className="status-options">
             {MANUSCRIPT_STATUSES.map(s => (
-              <button key={s} className={`status-opt${selectedStatus === s ? ' selected' : ''}`} onClick={() => setSelectedStatus(s)}>{s}</button>
+              <button key={s} type="button" className={`status-opt${selectedStatus === s ? ' selected' : ''}`} onClick={() => setSelectedStatus(s)}>{s}</button>
             ))}
           </div>
         </div>
       </div>
 
-      <div className="hub-section-label" style={{ marginTop: '40px' }}>Publishing</div>
-      <div className="hub-form hub-form-grid">
+      <div className="instrument-group-label" style={{ marginTop: '36px' }}>Publishing</div>
+      <div className="instrument-nav">
         {PUBLISHING_FIELDS.map(f => (
-          <div key={f.key} className={`hub-field${f.long ? ' hub-field-wide' : ''}`}>
-            <label className="edit-field-label">{f.label}</label>
+          <div key={f.key} className={`instrument-field${f.long ? ' instrument-field--wide' : ''}`}>
+            <label className="instrument-field-label" htmlFor={`hub-pub-${f.key}`}>{f.label}</label>
             {f.long ? (
-              <textarea className="edit-input hub-textarea" value={pub[f.key] ?? ''} placeholder={f.placeholder}
-                onChange={e => setField(f.key, e.target.value)} rows={2} />
+              <textarea id={`hub-pub-${f.key}`} className="instrument-field-input" value={pub[f.key] ?? ''} placeholder={f.placeholder}
+                onChange={e => setField(f.key, e.target.value)} rows={3} />
             ) : (
-              <input className="edit-input" type="text" value={pub[f.key] ?? ''} placeholder={f.placeholder}
+              <input id={`hub-pub-${f.key}`} className="instrument-field-input" type="text" value={pub[f.key] ?? ''} placeholder={f.placeholder}
                 onChange={e => setField(f.key, e.target.value)} />
             )}
           </div>
         ))}
       </div>
 
-      <button className="edit-save-btn" style={{ marginTop: '28px' }} onClick={save}>Save changes</button>
+      <button type="button" className="edit-save-btn" style={{ marginTop: '28px' }} onClick={save}>Save changes</button>
     </div>
   );
 }

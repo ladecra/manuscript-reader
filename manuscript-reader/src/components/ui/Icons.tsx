@@ -190,3 +190,85 @@ export function GearIcon({ size = 17 }: IconProps) {
     </svg>
   );
 }
+
+export function BookIcon({ size = 17 }: IconProps) {
+  return (
+    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.2"
+      strokeLinecap="square" width={size} height={size}>
+      <path d="M9 4v11"/>
+      <rect x="3" y="4" width="6" height="11"/>
+      <rect x="9" y="4" width="6" height="11"/>
+      <line x1="4.5" y1="7" x2="7.5" y2="7"/>
+      <line x1="4.5" y1="9.5" x2="7.5" y2="9.5"/>
+    </svg>
+  );
+}
+
+export function ExportTrayIcon({ size = 17 }: IconProps) {
+  return (
+    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.2"
+      strokeLinecap="square" width={size} height={size}>
+      <line x1="9" y1="3" x2="9" y2="12"/>
+      <polyline points="6,6 9,3 12,6"/>
+      <path d="M3 12v3h12v-3"/>
+    </svg>
+  );
+}
+
+export function LayersIcon({ size = 17 }: IconProps) {
+  return (
+    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.2"
+      strokeLinecap="square" width={size} height={size}>
+      <polyline points="2,7 9,3 16,7 9,11 2,7"/>
+      <polyline points="2,11 9,15 16,11"/>
+    </svg>
+  );
+}
+
+export function PanelIcon({ size = 17 }: IconProps) {
+  return (
+    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.2"
+      strokeLinecap="round" strokeLinejoin="round" width={size} height={size}>
+      <rect x="2.5" y="3" width="13" height="12" rx="1"/>
+      <line x1="11.5" y1="3" x2="11.5" y2="15"/>
+    </svg>
+  );
+}
+
+export function ChevronRightIcon({ size = 10, className }: IconProps) {
+  return (
+    <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.3"
+      strokeLinecap="square" width={size} height={size} className={className}>
+      <polyline points="3.5,2 6.5,5 3.5,8"/>
+    </svg>
+  );
+}
+
+export function ChevronLeftIcon({ size = 10, className }: IconProps) {
+  return (
+    <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.3"
+      strokeLinecap="square" width={size} height={size} className={className}>
+      <polyline points="6.5,2 3.5,5 6.5,8"/>
+    </svg>
+  );
+}
+
+export function CheckIcon({ size = 12, className }: IconProps) {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"
+      strokeLinecap="round" strokeLinejoin="round" width={size} height={size} className={className}>
+      <polyline points="3.5 8.5 6.5 11.5 12.5 4.5" />
+    </svg>
+  );
+}
+
+export function ClockIcon({ size = 15 }: IconProps) {
+  return (
+    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.2"
+      strokeLinecap="round" width={size} height={size}>
+      <circle cx="9" cy="9" r="6.5"/>
+      <line x1="9" y1="5" x2="9" y2="9"/>
+      <line x1="9" y1="9" x2="12" y2="11"/>
+    </svg>
+  );
+}

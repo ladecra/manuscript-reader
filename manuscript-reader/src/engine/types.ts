@@ -40,6 +40,8 @@ export interface ManuscriptMetadata {
 // "ISBN:" lines). Extend deliberately — a field added here must be consumed by an
 // export, or it's a promise the artifact breaks.
 export interface PublishingMetadata {
+  genre?: string;
+  synopsis?: string;
   subtitle?: string;
   publisher?: string;
   imprint?: string;
@@ -55,6 +57,8 @@ export interface PublishingMetadata {
 }
 
 export const PUBLISHING_FIELDS: { key: keyof PublishingMetadata; label: string; placeholder: string; long?: boolean }[] = [
+  { key: 'genre',           label: 'Genre',           placeholder: 'Literary fiction, memoir, thriller…' },
+  { key: 'synopsis',        label: 'Synopsis',        placeholder: 'A short description for your title page and exports (Pandoc: description).', long: true },
   { key: 'subtitle',        label: 'Subtitle',        placeholder: 'A subtitle, if any' },
   { key: 'series',          label: 'Series',          placeholder: 'The Hollow Cycle, Book 1' },
   { key: 'publisher',       label: 'Publisher',       placeholder: 'Publishing house' },
