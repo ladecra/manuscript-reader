@@ -146,7 +146,7 @@ export function App() {
       const isRedo = (k === 'z' && e.shiftKey) || k === 'y';
       if (!isUndo && !isRedo) return;
       const active = document.activeElement as HTMLElement | null;
-      if (active?.closest?.('.chapter-block[contenteditable="true"]')) return; // native undo while typing
+      if (active?.closest?.('.chapter-block[contenteditable="true"], .chapter-block [contenteditable="true"]')) return; // native undo while typing
       e.preventDefault();
       if (isRedo) handleRedo(); else handleUndo();
     }

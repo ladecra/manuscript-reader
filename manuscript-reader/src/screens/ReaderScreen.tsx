@@ -100,17 +100,43 @@ function offsetInContainer(container: HTMLElement, range: Range): number {
 // edit from a focus-through and skip needless re-renders.
 const editOriginalHtml = new WeakMap<HTMLElement, string>();
 
-// Toggle the prose-edit affordance: each chapter body (.chapter-block) becomes
-// contentEditable, so edits within a chapter — including splitting a paragraph
-// with Enter, merging, adding, or deleting blocks — round-trip through the block
-// serializer. The chapter's own `# ` heading lives outside the block and stays
-// read-only, so chapter structure can't be corrupted from the reading view. The
-// reading layout is unchanged — only the cursor/affordance.
+const EDITABLE_LEAF_SELECTOR = 'p, blockquote, h2, h3, h4, li';
+
+function isAppleTouchSafari(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent;
+  if (/iPad|iPhone|iPod/.test(ua)) return true;
+  return navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
+}
+
+function stripAnnotationMarks(container: HTMLElement) {
+  container.querySelectorAll('mark[data-ann]').forEach(mark => {
+    const parent = mark.parentNode!;
+    while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
+    parent.removeChild(mark);
+    (parent as Element).normalize?.();
+  });
+}
+
+// Toggle the prose-edit affordance. Desktop: the whole `.chapter-block` is
+// contentEditable (structural edits). iOS Safari: only block-level leaves are
+// editable — a multi-block container breaks caret/insert behavior. The chapter
+// `# ` heading stays outside the block and read-only.
 function setupEditable(container: HTMLElement, on: boolean) {
   container.classList.toggle('edit-mode', on);
+  const leafOnIos = on && isAppleTouchSafari();
   container.querySelectorAll<HTMLElement>('.chapter-block').forEach(block => {
-    if (on) block.setAttribute('contenteditable', 'true');
-    else block.removeAttribute('contenteditable');
+    block.querySelectorAll<HTMLElement>(EDITABLE_LEAF_SELECTOR).forEach(el => el.removeAttribute('contenteditable'));
+    if (!on) {
+      block.removeAttribute('contenteditable');
+      return;
+    }
+    if (leafOnIos) {
+      block.removeAttribute('contenteditable');
+      block.querySelectorAll<HTMLElement>(EDITABLE_LEAF_SELECTOR).forEach(el => el.setAttribute('contenteditable', 'true'));
+    } else {
+      block.setAttribute('contenteditable', 'true');
+    }
   });
 }
 
@@ -153,11 +179,7 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   // use-before-declaration in the render/edit re-render paths).
   const reapplyHighlights = useCallback(() => {
     const c = contentRef.current; if (!c) return;
-    c.querySelectorAll('mark[data-ann]').forEach(mark => {
-      const parent = mark.parentNode!;
-      while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
-      parent.removeChild(mark); (parent as Element).normalize?.();
-    });
+    stripAnnotationMarks(c);
     annotations.forEach(ann => {
       if (!ann.quote) return;
       const mark = markByAnchor(c, ann.anchor ?? anchorFromQuote(ann.quote), ann.id, ann.type);
@@ -167,6 +189,13 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
       });
     });
   }, [annotations]);
+
+  const syncAnnotationDOM = useCallback(() => {
+    if (editModeRef.current) {
+      const c = contentRef.current;
+      if (c) stripAnnotationMarks(c);
+    } else reapplyHighlights();
+  }, [reapplyHighlights]);
 
   // Render content + entrance observer + restore position
   useEffect(() => {
@@ -183,7 +212,7 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
       setEditReturnScroll(null);
       c.querySelectorAll('p, blockquote, ul, ol').forEach(el => el.classList.add('visible'));
       setupEditable(c, editModeRef.current);
-      reapplyHighlights();
+      syncAnnotationDOM();
       window.scrollTo(0, editScroll);
       return;
     }
@@ -195,7 +224,7 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
       useUIStore.getState().setPendingChapterIndex(null);
       c.querySelectorAll('p, blockquote, ul, ol').forEach(el => el.classList.add('visible'));
       if (editModeRef.current) setupEditable(c, true);
-      reapplyHighlights();
+      syncAnnotationDOM();
       const target = chapters.find(ch => ch.index === pendingIdx);
       requestAnimationFrame(() => requestAnimationFrame(() => {
         const el = target ? document.getElementById(target.id) : null;
@@ -236,8 +265,7 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-render content only when the manuscript changes
   }, [manuscript?.id, manuscript?.metadata.combinedMarkdown]);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- reapply marks only when annotations change
-  useEffect(() => { reapplyHighlights(); }, [annotations]);
+  useEffect(() => { syncAnnotationDOM(); }, [annotations, editMode, syncAnnotationDOM]);
 
   // ── Edit mode ──────────────────────────────────────────────────────────────
   // Re-render the current source in place (no persist): used to discard stray
@@ -249,9 +277,9 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     c.innerHTML = parseMarkdown(md).html;
     c.querySelectorAll('p, blockquote, ul, ol').forEach(el => el.classList.add('visible'));
     setupEditable(c, editModeRef.current);
-    reapplyHighlights();
+    syncAnnotationDOM();
     window.scrollTo(0, sy);
-  }, [manuscript, reapplyHighlights]);
+  }, [manuscript, syncAnnotationDOM]);
 
   // Commit one chapter: serialize its whole edited body back to markdown, splice
   // it into the source between this chapter's heading and the next, persist, and
@@ -335,22 +363,33 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
       // Prefer <p> over <div> when Enter splits a paragraph (cleaner serialize).
       try { document.execCommand('defaultParagraphSeparator', false, 'p'); } catch { /* unsupported */ }
     }
+    if (editMode) stripAnnotationMarks(c);
     setupEditable(c, editMode);
-  }, [editMode]);
+    if (!editMode) reapplyHighlights();
+  }, [editMode, reapplyHighlights]);
 
   // Delegated commit-on-blur + Enter/Escape, attached once.
   useEffect(() => {
     const c = contentRef.current; if (!c) return;
     const onFocusIn = (e: FocusEvent) => {
       const block = (e.target as HTMLElement)?.closest?.('.chapter-block') as HTMLElement | null;
-      if (block && editModeRef.current) editOriginalHtml.set(block, block.innerHTML);
+      // Snapshot once per chapter focus session — iOS refires focusin on inner nodes.
+      if (block && editModeRef.current && !editOriginalHtml.has(block)) {
+        editOriginalHtml.set(block, block.innerHTML);
+      }
     };
     const onFocusOut = (e: FocusEvent) => {
       const block = (e.target as HTMLElement)?.closest?.('.chapter-block') as HTMLElement | null;
-      // Ignore focus moves that stay inside the same editable chapter body.
+      if (!block) return;
       const to = (e as FocusEvent & { relatedTarget: EventTarget | null }).relatedTarget as Node | null;
-      if (block && to && block.contains(to)) return;
-      if (block && editModeRef.current) commitRef.current(block);
+      if (to && block.contains(to)) return;
+      // iOS Safari often fires focusout with relatedTarget=null while the caret
+      // is still in the field (virtual keyboard). Defer and verify activeElement.
+      window.setTimeout(() => {
+        const active = document.activeElement;
+        if (active && block.contains(active)) return;
+        commitRef.current(block);
+      }, 0);
     };
     const onKeyDown = (e: KeyboardEvent) => {
       if (!editModeRef.current) return;
@@ -358,7 +397,13 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
       if (!block) return;
       // Enter splits a paragraph (default contentEditable behavior); Escape
       // abandons the chapter's edits and restores the rendered source.
-      if (e.key === 'Escape') { e.preventDefault(); cancelEditRef.current = true; block.blur(); }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        cancelEditRef.current = true;
+        const active = document.activeElement as HTMLElement | null;
+        if (active && block.contains(active)) active.blur();
+        else block.blur();
+      }
     };
     c.addEventListener('focusin', onFocusIn as EventListener);
     c.addEventListener('focusout', onFocusOut as EventListener);

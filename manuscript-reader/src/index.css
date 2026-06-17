@@ -858,12 +858,14 @@ html.shell-scroll-lock body {
 /* ── Edit mode: in-chapter prose editing ── */
 /* The whole chapter body is the editable region (so Enter splits, Backspace
    merges, blocks can be added/deleted). No extra affordance — just a text caret. */
-#content.edit-mode .chapter-block[contenteditable] {
+#content.edit-mode .chapter-block[contenteditable],
+#content.edit-mode .chapter-block [contenteditable="true"] {
   cursor: text;
   outline: none;
   -webkit-user-select: text;
   user-select: text;
   -webkit-touch-callout: default;
+  -webkit-user-modify: read-write;
   caret-color: var(--primary);
 }
 /* Drop cap fights caret placement while editing — suppress it in edit mode. */
