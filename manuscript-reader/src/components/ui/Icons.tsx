@@ -151,6 +151,15 @@ export function PlusIcon({ size = 11 }: IconProps) {
   );
 }
 
+export function StarIcon({ size = 14, filled = false }: IconProps & { filled?: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" fill={filled ? 'currentColor' : 'none'} stroke="currentColor"
+      strokeWidth="1.5" strokeLinejoin="round" width={size} height={size}>
+      <path d="M12 2.5l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 18.9 6.1 20.5l1.2-6.5L2.5 9.4l6.6-.9z"/>
+    </svg>
+  );
+}
+
 export function LibraryIcon({ size = 17 }: IconProps) {
   return (
     <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.2"

@@ -31,7 +31,7 @@ function IconBtn({ onClick, active, title, label, disabled, children }: {
 
 export function App() {
   const { screen, theme, fontSize, annSidebarOpen, editMode, setScreen, toggleNav, toggleAnnSidebar, toggleEditMode } = useUIStore();
-  const { library, upsertManuscript, cycleStatus, deleteManuscript, replaceMarkdown, getReadingPosition } = useLibraryStore();
+  const { library, upsertManuscript, cycleStatus, toggleFavorite, deleteManuscript, replaceMarkdown, getReadingPosition } = useLibraryStore();
   const { manuscript, annotations, openManuscript, closeManuscript, undoEdit, redoEdit, setEditReturnScroll, undoStack, redoStack } = useReaderStore();
   const { toastState, showToast } = useToast();
 
@@ -196,7 +196,7 @@ export function App() {
       {screen === 'library' && (
         <div id="screen-library" className="active">
           <div className="screen-inner">
-            <LibraryScreen library={library} onOpen={handleOpenHub} onRead={handleReadFromLibrary} onNew={() => setScreen('load')} onDelete={deleteManuscript} onCycleStatus={cycleStatus} getReadingPosition={getReadingPosition} />
+            <LibraryScreen library={library} onOpen={handleOpenHub} onRead={handleReadFromLibrary} onNew={() => setScreen('load')} onDelete={deleteManuscript} onCycleStatus={cycleStatus} onToggleFavorite={toggleFavorite} getReadingPosition={getReadingPosition} />
           </div>
         </div>
       )}

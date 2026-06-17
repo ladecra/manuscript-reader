@@ -27,6 +27,7 @@ export interface ManuscriptMetadata {
   uncached?: boolean;
   progress?: number;         // 0–1 reading position fraction
   publishing?: PublishingMetadata; // author-supplied publishing data, applied to exported artifacts
+  favorite?: boolean;        // author-flagged in the library (a starred shelf, not a status)
 }
 
 // ─── Publishing metadata (author-supplied, flows into exported artifacts) ──────

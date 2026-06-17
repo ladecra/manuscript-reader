@@ -3,7 +3,8 @@ import { useReaderStore } from '../state/readerStore';
 import { useLibraryStore } from '../state/libraryStore';
 import { useUIStore } from '../state/uiStore';
 import { computeEditorialSignals } from '../engine/editorialSignals';
-import { parseMarkdown } from '../engine/ingestion/parseMarkdown';
+import { parseMarkdown, countWords } from '../engine/ingestion/parseMarkdown';
+import { buildManuscriptStructure } from '../engine/ingestion/manuscriptStructure';
 import { MANUSCRIPT_STATUSES, PUBLISHING_FIELDS, ANNOTATION_LABELS, ANNOTATION_COLORS } from '../engine/types';
 import type { ManuscriptStatus, PublishingMetadata } from '../engine/types';
 import { applyChapterEdits, type ChapterEdit } from '../engine/manuscript/chapterEdit';
@@ -15,36 +16,29 @@ import { ShareModal } from '../components/reader/ShareModal';
 import { exportShareableReader, ShareReaderBuildError } from '../engine/exports/shareableReader';
 import { showToast } from '../components/ui/Toast';
 
-// The manuscript page: a title page + publishing workbench. Card-click lands here;
-// the rail's Read button is "Play" (the immersive reader). Intelligence and
-// artifacts live here, never over the reading view. Versions is an honest stub
-// (lights up with Phase 8 draft snapshots).
-type HubTab = 'overview' | 'details' | 'feedback' | 'report' | 'exports' | 'share' | 'versions';
-const TABS: { id: HubTab; label: string }[] = [
-  { id: 'overview', label: 'Overview' },
-  { id: 'details', label: 'Details' },
-  { id: 'feedback', label: 'Feedback' },
-  { id: 'report', label: 'Report' },
-  { id: 'exports', label: 'Exports' },
-  { id: 'share', label: 'Share' },
-  { id: 'versions', label: 'Versions' },
-];
+// The manuscript page: a book's antechamber, not a project dashboard. The
+// manuscript is the hero (title block → continue-reading → contents); the
+// software lives quietly in the right "This manuscript" rail, whose items swap
+// the center pane. The reader is the thing you *enter* — intelligence and
+// artifacts live here, never over the reading view. Versions is an honest stub.
+type HubPane = 'contents' | 'details' | 'feedback' | 'report' | 'exports' | 'share' | 'versions';
 
 function statusClass(status: string): string {
   return 'status--' + status.toLowerCase().replace(/[^a-z]+/g, '-');
 }
 
 interface ManuscriptHubScreenProps {
-  onRead: () => void;   // enter the immersive reader ("Play")
+  onRead: () => void;   // enter the immersive reader at the resume position
   onExit: () => void;   // back to the library
 }
 
 export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps) {
   const { manuscript, chapters, annotations, edits, sessions, openManuscript } = useReaderStore();
   const { library, updateManuscript, replaceMarkdown, getReadingPosition, updateProgress } = useLibraryStore();
-  const { setPendingChapterIndex } = useUIStore();
-  const [tab, setTab] = useState<HubTab>('overview');
+  const { setPendingChapterIndex, setPendingReaderIntent } = useUIStore();
+  const [pane, setPane] = useState<HubPane>('contents');
   const [shareModalOpen, setShareModalOpen] = useState(false);
+  const [editStructure, setEditStructure] = useState(false);
   const [chapterEdits, setChapterEdits] = useState<ChapterEdit[]>([]);
 
   const title = manuscript?.metadata.title ?? '';
@@ -59,11 +53,48 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
     [manuscript, annotations, chapters, sessions, combinedMarkdown],
   );
 
-  // Send the author into the prose at a chosen chapter (chapter list / Report chips).
-  const jumpToChapter = useCallback((index: number) => {
-    setPendingChapterIndex(index);
+  // Per-chapter word counts, lifted from the structural model (the same parse the
+  // reader uses) — surfaced in the contents list. Empty map ⇒ list omits counts.
+  const wordsByChapter = useMemo(() => {
+    const map = new Map<number, number>();
+    if (!combinedMarkdown) return map;
+    try {
+      for (const sec of buildManuscriptStructure(combinedMarkdown).chapters) {
+        map.set(sec.index, countWords(sec.blocks.map(b => b.text).join('\n')));
+      }
+    } catch { /* fall back to no per-chapter counts */ }
+    return map;
+  }, [combinedMarkdown]);
+
+  // How many annotations land in each chapter — a quiet "N notes" marker per row.
+  const annsByChapter = useMemo(() => {
+    const map = new Map<number, number>();
+    for (const a of annotations) map.set(a.chapterIndex, (map.get(a.chapterIndex) ?? 0) + 1);
+    return map;
+  }, [annotations]);
+
+  // The chapter the reading position lands in — drives the Continue Reading band.
+  // Walks cumulative words so it tracks real position, not a naive index split.
+  const resumeChapter = useMemo(() => {
+    if (!chapters.length) return null;
+    const total = chapters.reduce((s, ch) => s + (wordsByChapter.get(ch.index) ?? 0), 0);
+    if (total === 0 || pct <= 0) return chapters[0];
+    const target = (pct / 100) * total;
+    let acc = 0;
+    for (const ch of chapters) { acc += wordsByChapter.get(ch.index) ?? 0; if (acc >= target) return ch; }
+    return chapters[chapters.length - 1];
+  }, [chapters, wordsByChapter, pct]);
+
+  // Enter the reader at a chapter, optionally in a posture (annotate / edit) — the
+  // contents-row hover actions. Plain Read passes no intent (just lands there).
+  const enterReader = useCallback((chapterIndex: number, intent?: 'annotate' | 'edit') => {
+    setPendingChapterIndex(chapterIndex);
+    setPendingReaderIntent(intent ?? null);
     onRead();
-  }, [setPendingChapterIndex, onRead]);
+  }, [setPendingChapterIndex, setPendingReaderIntent, onRead]);
+
+  // Report chips send the author into the prose at a chapter (read posture).
+  const jumpToChapter = useCallback((index: number) => enterReader(index), [enterReader]);
 
   const startOver = useCallback(() => {
     if (manuscript) updateProgress(manuscript.id, 0);
@@ -169,32 +200,20 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
   const { author, wordCount, chapterCount, status, uncached, publishing } = manuscript.metadata;
   const readerCount = new Set(annotations.map(a => a.readerId ?? a.readerName).filter(Boolean)).size;
 
+  // The quiet right rail — "This manuscript". Each item swaps the center pane;
+  // Contents (the manuscript itself) is the default and lives in the center, not here.
+  const tools: { id: HubPane; label: string; badge?: number }[] = [
+    { id: 'feedback', label: 'Annotations', badge: annotations.length },
+    { id: 'report', label: 'Report' },
+    { id: 'details', label: 'Publishing details' },
+    { id: 'exports', label: 'Exports' },
+    { id: 'share', label: 'Share' },
+    { id: 'versions', label: 'Versions' },
+  ];
+
   return (
     <div className="hub">
-      {/* ── Left rail ── */}
-      <aside className="hub-rail">
-        <button className="hub-rail-back" onClick={onExit}>‹ Library</button>
-        <div className="hub-rail-head">
-          <div className="hub-rail-headtext">
-            <div className="hub-rail-wordmark">Manuscript</div>
-            <div className="hub-rail-title">{title}</div>
-            <div className="hub-rail-sub">
-              {wordCount ? `${wordCount.toLocaleString()} words` : '—'} · {chapterCount ?? 0} ch
-            </div>
-          </div>
-          <button className="hub-rail-read" onClick={onRead}>{pct > 1 ? `Resume · ${pct}%` : 'Read'} →</button>
-        </div>
-
-        <nav className="hub-rail-nav">
-          {TABS.map(t => (
-            <button key={t.id} className={`hub-rail-item${tab === t.id ? ' active' : ''}`} onClick={() => setTab(t.id)}>
-              {t.label}
-            </button>
-          ))}
-        </nav>
-      </aside>
-
-      {/* ── Main panel ── */}
+      {/* ── Center column: the manuscript is the hero ── */}
       <main className="hub-main">
         {uncached && (
           <div className="hub-warn" role="alert">
@@ -203,111 +222,175 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
           </div>
         )}
 
-        {tab === 'overview' && (
+        {pane === 'contents' ? (
           <div className="hub-panel">
-            {/* Hero — the title page. Reflects the publishing metadata live. */}
-            <div className="hub-hero">
-              <div className="hub-hero-text">
-                {publishing?.series && <div className="hub-hero-series">{publishing.series}</div>}
-                <h1 className="hub-hero-title">{title}</h1>
-                {publishing?.subtitle && <div className="hub-hero-subtitle">{publishing.subtitle}</div>}
-                {author && <div className="hub-hero-byline">by {author}</div>}
-                <div className="hub-hero-meta">
-                  <span className={`ms-status ${statusClass(status ?? 'Draft')}`}>{status ?? 'Draft'}</span>
-                  <span>{wordCount ? wordCount.toLocaleString() : '—'} words</span>
-                  <span>{chapterCount ?? 0} chapters</span>
-                  <span>{pct > 0 ? `${pct}% read` : 'Unread'}</span>
+            <button className="hub-back" onClick={onExit}>‹ Library</button>
+
+            {/* Band 1 — manuscript hero (large, editorial; the title gains identity) */}
+            <header className="hub-hero">
+              {publishing?.series && <div className="hub-hero-series">{publishing.series}</div>}
+              <h1 className="hub-hero-title">{title}</h1>
+              {publishing?.subtitle && <div className="hub-hero-subtitle">{publishing.subtitle}</div>}
+              {author && <div className="hub-hero-byline">by {author}</div>}
+              <div className="hub-hero-stats">
+                <button className={`ms-status ${statusClass(status ?? 'Draft')}`} disabled>{status ?? 'Draft'}</button>
+                {wordCount ? <span>{wordCount.toLocaleString()} words</span> : null}
+                <span>{chapterCount ?? 0} chapters</span>
+                {annotations.length > 0 && <span>{annotations.length} annotation{annotations.length !== 1 ? 's' : ''}</span>}
+              </div>
+            </header>
+
+            {/* Band 2 — reading continuation (the dominant action) */}
+            <section className="hub-continue">
+              <div className="hub-continue-label">{pct > 1 ? 'Continue reading' : 'Start reading'}</div>
+              {resumeChapter && (
+                <div className="hub-continue-where">
+                  <span className="hub-continue-chapter">Chapter {resumeChapter.index}</span>
+                  {resumeChapter.title && <span className="hub-continue-title">· {resumeChapter.title}</span>}
+                </div>
+              )}
+              <div className="hub-continue-bar"><div className="hub-continue-fill" style={{ width: `${pct}%` }} /></div>
+              <div className="hub-continue-foot">
+                <span className="hub-continue-pct">{pct > 0 ? `${pct}% complete` : 'Not started'}</span>
+                <div className="hub-continue-actions">
+                  {pct > 1 && <button className="hub-play-secondary" onClick={startOver}>Start from the beginning</button>}
+                  <button className="hub-continue-btn" onClick={onRead} disabled={!manuscriptAvailable}>
+                    {pct > 1 ? 'Continue reading' : 'Start reading'}
+                  </button>
                 </div>
               </div>
-              <div className="hub-hero-actions">
-                <button className="hub-play" onClick={onRead}>{pct > 1 ? `Resume reading · ${pct}%` : 'Read'}</button>
-                {pct > 1 && <button className="hub-play-secondary" onClick={startOver}>Start from beginning</button>}
+            </section>
+
+            {/* Band 3 — contents (the center of the page) */}
+            <section className="hub-toc-section">
+              <div className="hub-toc-head">
+                <div className="hub-section-label hub-section-label--bare">Contents</div>
+                <button className="hub-toc-edit" onClick={() => setEditStructure(v => !v)}>
+                  {editStructure ? 'Done' : 'Reorder & rename'}
+                </button>
               </div>
-            </div>
 
-            <div className="hub-stats">
-              <div className="lib-stat"><span className="lib-stat-num">{annotations.length}</span><span className="lib-stat-label">Annotations</span></div>
-              <div className="lib-stat"><span className="lib-stat-num">{readerCount}</span><span className="lib-stat-label">Readers</span></div>
-              <div className="lib-stat"><span className="lib-stat-num">{edits.length}</span><span className="lib-stat-label">Edits</span></div>
-            </div>
-
-            <div className="hub-section-label">Chapters · drag to reorder, rename, or remove</div>
-            <div className="hub-form">
-              <ChapterTree key={combinedMarkdown} combinedMarkdown={combinedMarkdown} onChange={setChapterEdits} />
-              <button className="edit-save-btn" style={{ marginTop: '20px', alignSelf: 'flex-start' }} onClick={saveChapters}>Save chapter changes</button>
-            </div>
+              {editStructure ? (
+                <div className="hub-form">
+                  <ChapterTree key={combinedMarkdown} combinedMarkdown={combinedMarkdown} onChange={setChapterEdits} />
+                  <button className="edit-save-btn" style={{ marginTop: '20px', alignSelf: 'flex-start' }}
+                    onClick={() => { saveChapters(); setEditStructure(false); }}>Save chapter changes</button>
+                </div>
+              ) : (
+                <div className="hub-toc">
+                  {chapters.map(ch => {
+                    const w = wordsByChapter.get(ch.index);
+                    const n = annsByChapter.get(ch.index) ?? 0;
+                    return (
+                      <div key={ch.id} className="hub-toc-row" role="button" tabIndex={0}
+                        onClick={() => enterReader(ch.index)}
+                        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); enterReader(ch.index); } }}>
+                        <span className="hub-toc-num">{String(ch.index).padStart(2, '0')}</span>
+                        <span className="hub-toc-title">{ch.title}</span>
+                        <span className="hub-toc-meta">
+                          {w ? `${w.toLocaleString()} words` : ''}
+                          {n > 0 ? `${w ? ' · ' : ''}${n} note${n !== 1 ? 's' : ''}` : ''}
+                        </span>
+                        <span className="hub-toc-actions">
+                          <button onClick={e => { e.stopPropagation(); enterReader(ch.index); }}>Read</button>
+                          <button onClick={e => { e.stopPropagation(); enterReader(ch.index, 'annotate'); }}>Annotate</button>
+                          <button onClick={e => { e.stopPropagation(); enterReader(ch.index, 'edit'); }} disabled={!manuscriptAvailable}>Edit</button>
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
           </div>
-        )}
-
-        {tab === 'details' && (
-          <DetailsTab
-            key={manuscript.id}
-            title={title} author={author ?? ''} status={(status as ManuscriptStatus) ?? 'Draft'}
-            publishing={publishing ?? {}}
-            onSave={saveDetails}
-          />
-        )}
-
-        {tab === 'feedback' && <FeedbackTab annotations={annotations} readerCount={readerCount} onRead={onRead} />}
-
-        {tab === 'report' && (
+        ) : (
           <div className="hub-panel">
-            <h2 className="hub-panel-title">Manuscript Intelligence</h2>
-            <p className="hub-panel-lead">Where readers slowed, agreed, and reacted — every figure traces to a reader action.</p>
-            <div className="hub-report"><ReportView signals={signals} onJump={jumpToChapter} /></div>
-          </div>
-        )}
+            <button className="hub-back" onClick={() => setPane('contents')}>‹ {title}</button>
 
-        {tab === 'exports' && (
-          <ExportsTab
-            subject={title}
-            manuscriptAvailable={manuscriptAvailable}
-            annCount={annotations.length}
-            editCount={edits.length}
-            hasPublishing={!!publishing && Object.values(publishing).some(Boolean)}
-            onGoToDetails={() => setTab('details')}
-            onExportManuscript={handleExportManuscript}
-            onExportReportDocx={handleExportReportDocx}
-            onExportReportHtml={handleExportReportHtml}
-            onExportRevisionLog={handleExportRevisionLog}
-          />
-        )}
+            {pane === 'details' && (
+              <DetailsTab
+                key={manuscript.id}
+                title={title} author={author ?? ''} status={(status as ManuscriptStatus) ?? 'Draft'}
+                publishing={publishing ?? {}}
+                onSave={saveDetails}
+              />
+            )}
 
-        {tab === 'share' && (
-          <div className="hub-panel">
-            <h2 className="hub-panel-title">Share</h2>
-            <p className="hub-panel-lead">Send a clean, read-only reader to a beta reader — they annotate, you import their feedback back in.</p>
-            <div className="rp-export-group">
-              <div className="rp-export-group-label">Reader file</div>
-              <button className="rp-export-hero" onClick={() => setShareModalOpen(true)} disabled={!manuscriptAvailable}
-                title={manuscriptAvailable ? undefined : 'Re-import this manuscript to share it'}>
-                Create a reader file
-              </button>
-            </div>
-            <ShareModal
-              open={shareModalOpen}
-              title={title}
-              wordCount={wordCount}
-              chapterCount={chapterCount}
-              onClose={() => setShareModalOpen(false)}
-              onDownload={(withAnnotations) => { handleShareReader(withAnnotations); setShareModalOpen(false); }}
-            />
-          </div>
-        )}
+            {pane === 'feedback' && <FeedbackTab annotations={annotations} readerCount={readerCount} onRead={onRead} />}
 
-        {tab === 'versions' && (
-          <div className="hub-panel">
-            <h2 className="hub-panel-title">Versions</h2>
-            <div className="hub-empty">
-              <p>Revision Impact &amp; Stability live here.</p>
-              <p className="hub-empty-sub">
-                Once you snapshot a draft, this shows what changed between versions —
-                which reader questions you resolved, and which you introduced. Coming with draft snapshots.
-              </p>
-            </div>
+            {pane === 'report' && (
+              <>
+                <h2 className="hub-panel-title">Manuscript Intelligence</h2>
+                <p className="hub-panel-lead">Where readers slowed, agreed, and reacted — every figure traces to a reader action.</p>
+                <div className="hub-report"><ReportView signals={signals} onJump={jumpToChapter} /></div>
+              </>
+            )}
+
+            {pane === 'exports' && (
+              <ExportsTab
+                subject={title}
+                manuscriptAvailable={manuscriptAvailable}
+                annCount={annotations.length}
+                editCount={edits.length}
+                hasPublishing={!!publishing && Object.values(publishing).some(Boolean)}
+                onGoToDetails={() => setPane('details')}
+                onExportManuscript={handleExportManuscript}
+                onExportReportDocx={handleExportReportDocx}
+                onExportReportHtml={handleExportReportHtml}
+                onExportRevisionLog={handleExportRevisionLog}
+              />
+            )}
+
+            {pane === 'share' && (
+              <>
+                <h2 className="hub-panel-title">Share</h2>
+                <p className="hub-panel-lead">Send a clean, read-only reader to a beta reader — they annotate, you import their feedback back in.</p>
+                <div className="rp-export-group">
+                  <div className="rp-export-group-label">Reader file</div>
+                  <button className="rp-export-hero" onClick={() => setShareModalOpen(true)} disabled={!manuscriptAvailable}
+                    title={manuscriptAvailable ? undefined : 'Re-import this manuscript to share it'}>
+                    Create a reader file
+                  </button>
+                </div>
+                <ShareModal
+                  open={shareModalOpen}
+                  title={title}
+                  wordCount={wordCount}
+                  chapterCount={chapterCount}
+                  onClose={() => setShareModalOpen(false)}
+                  onDownload={(withAnnotations) => { handleShareReader(withAnnotations); setShareModalOpen(false); }}
+                />
+              </>
+            )}
+
+            {pane === 'versions' && (
+              <>
+                <h2 className="hub-panel-title">Versions</h2>
+                <div className="hub-empty">
+                  <p>Revision Impact &amp; Stability live here.</p>
+                  <p className="hub-empty-sub">
+                    Once you snapshot a draft, this shows what changed between versions —
+                    which reader questions you resolved, and which you introduced. Coming with draft snapshots.
+                  </p>
+                </div>
+              </>
+            )}
           </div>
         )}
       </main>
+
+      {/* ── Right rail: the software, kept quiet ── */}
+      <aside className="hub-tools">
+        <div className="hub-tools-label">This manuscript</div>
+        <nav className="hub-tools-nav">
+          {tools.map(t => (
+            <button key={t.id} className={`hub-tools-item${pane === t.id ? ' active' : ''}`} onClick={() => setPane(t.id)}>
+              <span className="hub-tools-item-label">{t.label}</span>
+              {t.badge != null && t.badge > 0 && <span className="hub-tools-badge">{t.badge}</span>}
+            </button>
+          ))}
+        </nav>
+      </aside>
     </div>
   );
 }

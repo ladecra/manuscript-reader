@@ -1,6 +1,7 @@
+import { useState } from 'react';
 import type { Manuscript } from '../engine/types';
 import { loadAnnotations, getAnnotationStats } from '../engine/storage';
-import { PlusIcon } from '../components/ui/Icons';
+import { PlusIcon, StarIcon } from '../components/ui/Icons';
 
 function timeAgo(ts: number | undefined): string {
   if (!ts) return '—';
@@ -25,14 +26,19 @@ interface LibraryScreenProps {
   onNew: () => void;
   onDelete: (id: string) => void;
   onCycleStatus: (id: string) => void;
+  onToggleFavorite: (id: string) => void;
   getReadingPosition: (id: string) => number;
 }
 
-export function LibraryScreen({ library, onOpen, onRead, onNew, onDelete, onCycleStatus, getReadingPosition }: LibraryScreenProps) {
+export function LibraryScreen({ library, onOpen, onRead, onNew, onDelete, onCycleStatus, onToggleFavorite, getReadingPosition }: LibraryScreenProps) {
+  const [filter, setFilter] = useState<'all' | 'favorites'>('all');
   const stored = library.map(ms => ({ id: ms.id, title: ms.metadata.title, wordCount: ms.metadata.wordCount, chapterCount: ms.metadata.chapterCount, lastOpened: ms.metadata.lastOpened, status: ms.metadata.status, uncached: ms.metadata.uncached }));
   const stats = getAnnotationStats(stored);
   const inProgress = library.filter(m => m.metadata.status === 'In Progress').length;
-  const sorted = [...library].sort((a, b) => (b.metadata.lastOpened ?? 0) - (a.metadata.lastOpened ?? 0));
+  const favCount = library.filter(m => m.metadata.favorite).length;
+  const sorted = [...library]
+    .filter(m => filter === 'all' || m.metadata.favorite)
+    .sort((a, b) => (b.metadata.lastOpened ?? 0) - (a.metadata.lastOpened ?? 0));
 
   return (
     <>
@@ -61,29 +67,43 @@ export function LibraryScreen({ library, onOpen, onRead, onNew, onDelete, onCycl
             <div className="lib-stat"><span className="lib-stat-num">{stats.total.toLocaleString()}</span><span className="lib-stat-label">Annotations</span></div>
           </div>
 
-          <div id="ms-list">
-            {sorted.map(ms => (
-              <ManuscriptRow
-                key={ms.id}
-                ms={ms}
-                onOpen={() => onOpen(ms)}
-                onRead={() => onRead(ms)}
-                onDelete={() => onDelete(ms.id)}
-                onCycleStatus={() => onCycleStatus(ms.id)}
-                progress={getReadingPosition(ms.id)}
-              />
-            ))}
-          </div>
+          {favCount > 0 && (
+            <div className="library-filters">
+              <button className={`lib-filter${filter === 'all' ? ' active' : ''}`} onClick={() => setFilter('all')}>All</button>
+              <button className={`lib-filter${filter === 'favorites' ? ' active' : ''}`} onClick={() => setFilter('favorites')}>
+                Favorites <span className="lib-filter-count">{favCount}</span>
+              </button>
+            </div>
+          )}
+
+          {sorted.length === 0 ? (
+            <div className="library-empty"><p>No favorites yet.<br />Star a manuscript to keep it close.</p></div>
+          ) : (
+            <div id="ms-list">
+              {sorted.map(ms => (
+                <ManuscriptRow
+                  key={ms.id}
+                  ms={ms}
+                  onOpen={() => onOpen(ms)}
+                  onRead={() => onRead(ms)}
+                  onDelete={() => onDelete(ms.id)}
+                  onCycleStatus={() => onCycleStatus(ms.id)}
+                  onToggleFavorite={() => onToggleFavorite(ms.id)}
+                  progress={getReadingPosition(ms.id)}
+                />
+              ))}
+            </div>
+          )}
         </>
       )}
     </>
   );
 }
 
-function ManuscriptRow({ ms, onOpen, onRead, onDelete, onCycleStatus, progress }: {
-  ms: Manuscript; onOpen: () => void; onRead: () => void; onDelete: () => void; onCycleStatus: () => void; progress: number;
+function ManuscriptRow({ ms, onOpen, onRead, onDelete, onCycleStatus, onToggleFavorite, progress }: {
+  ms: Manuscript; onOpen: () => void; onRead: () => void; onDelete: () => void; onCycleStatus: () => void; onToggleFavorite: () => void; progress: number;
 }) {
-  const { title, author, wordCount, chapterCount, status, lastOpened, uncached } = ms.metadata;
+  const { title, author, wordCount, chapterCount, status, lastOpened, uncached, favorite } = ms.metadata;
   const pct = Math.round(progress * 100);
   const canRead = !!ms.metadata.combinedMarkdown;
   const annList = loadAnnotations(ms.id);
@@ -101,6 +121,11 @@ function ManuscriptRow({ ms, onOpen, onRead, onDelete, onCycleStatus, progress }
           {author && <div style={{ fontFamily: "'Schibsted Grotesk', system-ui, sans-serif", fontSize: '11px', color: 'var(--dim)', marginTop: '3px', letterSpacing: '0.02em' }}>by {author}</div>}
         </div>
         <div className="ms-actions">
+          <button className={`ms-star-btn${favorite ? ' active' : ''}`} aria-pressed={!!favorite}
+            title={favorite ? 'Remove from favorites' : 'Add to favorites'}
+            onClick={(e) => { e.stopPropagation(); onToggleFavorite(); }}>
+            <StarIcon filled={!!favorite} />
+          </button>
           <button className="ms-read-btn" disabled={!canRead} onClick={(e) => { e.stopPropagation(); onRead(); }}
             title={canRead ? undefined : 'Re-import this file to read it'}>
             {pct > 1 ? 'Resume' : 'Read'}

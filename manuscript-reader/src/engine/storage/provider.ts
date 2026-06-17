@@ -32,6 +32,7 @@ export interface StoredManuscript {
   uncached?: boolean;
   progress?: number; // mirror of the position record; persisted via savePosition
   publishing?: PublishingMetadata; // author-supplied publishing data (optional; absent on legacy records)
+  favorite?: boolean; // starred in the library (optional; absent on legacy records)
 }
 
 export interface StorageProvider {

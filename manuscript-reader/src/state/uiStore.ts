@@ -18,6 +18,11 @@ interface UIStore {
   // The reader consumes and clears it, so it fires exactly once.
   pendingChapterIndex: number | null;
 
+  // A posture the reader should adopt on its next mount, set when the hub's
+  // chapter-list hover actions send the author in to *annotate* or *edit* a
+  // chapter rather than just read it. Consumed once, alongside pendingChapterIndex.
+  pendingReaderIntent: 'annotate' | 'edit' | null;
+
   // Actions
   setScreen: (s: Screen) => void;
   toggleTheme: () => void;
@@ -34,11 +39,13 @@ interface UIStore {
   toggleAnnSidebar: () => void;
 
   toggleEditMode: () => void;
+  enterEditMode: () => void;
   exitEditMode: () => void;
 
   closeAllPanels: () => void;
 
   setPendingChapterIndex: (n: number | null) => void;
+  setPendingReaderIntent: (i: 'annotate' | 'edit' | null) => void;
 }
 
 const FONT_MIN = 15;
@@ -52,6 +59,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   annSidebarOpen: false,
   editMode: false,
   pendingChapterIndex: null,
+  pendingReaderIntent: null,
 
   setScreen(s) {
     set({ screen: s, navOpen: false, annSidebarOpen: false, editMode: false });
@@ -89,9 +97,11 @@ export const useUIStore = create<UIStore>((set, get) => ({
 
   // Edit mode is exclusive with the side panels — editing is its own posture.
   toggleEditMode() { set(s => ({ editMode: !s.editMode, navOpen: false, annSidebarOpen: false })); },
+  enterEditMode()  { set({ editMode: true, navOpen: false, annSidebarOpen: false }); },
   exitEditMode()   { set({ editMode: false }); },
 
   closeAllPanels() { set({ navOpen: false, annSidebarOpen: false }); },
 
   setPendingChapterIndex(n) { set({ pendingChapterIndex: n }); },
+  setPendingReaderIntent(i) { set({ pendingReaderIntent: i }); },
 }));

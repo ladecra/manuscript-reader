@@ -202,6 +202,15 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
         if (el) el.scrollIntoView({ block: 'start' });
         else window.scrollTo(0, 0);
       }));
+      // The hub may have asked us to land in a particular posture (edit / annotate
+      // the chapter), not just read it. Apply it once; the editMode/sidebar effects
+      // pick up the store change and toggle the affordance.
+      const intent = useUIStore.getState().pendingReaderIntent;
+      if (intent) {
+        useUIStore.getState().setPendingReaderIntent(null);
+        if (intent === 'edit') useUIStore.getState().enterEditMode();
+        else useUIStore.getState().openAnnSidebar();
+      }
       return;
     }
 

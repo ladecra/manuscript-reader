@@ -134,6 +134,7 @@ function manuscriptChanged(a: StoredManuscript, b: StoredManuscript): boolean {
     || a.wordCount !== b.wordCount || a.chapterCount !== b.chapterCount
     || a.lastOpened !== b.lastOpened || a.uncached !== b.uncached
     || a.combinedMarkdown !== b.combinedMarkdown
+    || !!a.favorite !== !!b.favorite
     || JSON.stringify(a.publishing ?? null) !== JSON.stringify(b.publishing ?? null);
 }
 

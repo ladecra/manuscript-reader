@@ -18,6 +18,7 @@ function toManuscript(s: StoredManuscript): Manuscript {
       uncached: s.uncached,
       progress: s.progress,
       publishing: s.publishing,
+      favorite: s.favorite,
     },
     chapters: [],
     annotations: [],
@@ -33,6 +34,7 @@ interface LibraryStore {
   upsertManuscript: (md: string) => Manuscript;
   updateManuscript: (id: string, patch: { title?: string; author?: string; status?: ManuscriptStatus; chapterCount?: number; publishing?: PublishingMetadata }) => void;
   cycleStatus: (id: string) => void;
+  toggleFavorite: (id: string) => void;
   deleteManuscript: (id: string) => void;
   touchManuscript: (id: string) => void;
   updateProgress: (id: string, frac: number) => void;
@@ -89,6 +91,15 @@ export const useLibraryStore = create<LibraryStore>((_set, _get) => {
       if (idx < 0) return;
       const curr = MANUSCRIPT_STATUSES.indexOf((stored[idx].status as ManuscriptStatus) ?? 'Draft');
       stored[idx].status = MANUSCRIPT_STATUSES[(curr + 1) % MANUSCRIPT_STATUSES.length];
+      saveLibrary(stored);
+      set({ library: stored.map(toManuscript) });
+    },
+
+    toggleFavorite(id) {
+      const stored = loadLibrary();
+      const idx = stored.findIndex(m => m.id === id);
+      if (idx < 0) return;
+      stored[idx].favorite = !stored[idx].favorite;
       saveLibrary(stored);
       set({ library: stored.map(toManuscript) });
     },
