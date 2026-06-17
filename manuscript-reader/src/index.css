@@ -1228,10 +1228,17 @@ mark[data-ann]:hover { filter: brightness(1.2); }
 
 /* Right rail — attached instruments; manuscript column owns the drama. */
 .hub-tools {
-  position: sticky; top: var(--topbar-h); align-self: flex-start; height: calc(100dvh - var(--topbar-h));
   background: var(--surface);
   border-left: 1px solid var(--border); padding: 20px 14px 28px;
   display: flex; flex-direction: column;
+  z-index: 90;
+  width: 248px;
+  height: 100dvh;
+  padding-top: calc(var(--topbar-h) + 20px);
+  align-self: auto;
+  position: fixed;
+  top: 0;
+  right: 0;
 }
 .hub-tools-eyebrow { margin-bottom: 8px; padding-left: 12px; }
 .hub-tools-nav { flex: 1; min-height: 0; overflow-y: auto; }

@@ -1,7 +1,9 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
 import type { AnnotationType, TextAnchor, Chapter } from '../engine/types';
 import { buildAnchor, locateAnchor, anchorFromQuote } from '../engine/annotations/anchor';
-import { applyBlockEdit, htmlToMarkdownBlocks, sameProse } from '../engine/manuscript/blockEdit';
+import { applyBlockEdit, htmlToMarkdownBlocks, sameProse, serializeContentDomToMarkdown } from '../engine/manuscript/blockEdit';
+import { matchMarkdownBlockPrefix } from '../engine/manuscript/editMarkdownShortcut';
+import { applyMarkdownPromoteInBlock, lineTextBeforeCaretInChapterBlock } from '../lib/readerEditDom';
 import { useReaderStore } from '../state/readerStore';
 import { useUIStore } from '../state/uiStore';
 import { useLibraryStore } from '../state/libraryStore';
@@ -184,6 +186,7 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   const cancelEditRef = useRef(false);
   const commitRef = useRef<(p: HTMLElement) => void>(() => {});
   const activeEditBlockRef = useRef<HTMLElement | null>(null);
+  const pendingFullDomCommitRef = useRef(false);
   useEffect(() => { editModeRef.current = editMode; }, [editMode]);
 
   // Clock
@@ -304,12 +307,30 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   // structural edits work — split/merge/add/delete are just a different block
   // sequence. A body only focused-through (innerHTML unchanged) is left alone.
   const commitChapterEdit = useCallback((block: HTMLElement) => {
+    const c = contentRef.current;
+    const md = manuscript?.metadata.combinedMarkdown;
+    if (!md || !manuscript) return;
+
+    if (pendingFullDomCommitRef.current && c) {
+      pendingFullDomCommitRef.current = false;
+      editOriginalHtml.delete(block);
+      const norm = md.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+      const newMd = serializeContentDomToMarkdown(c);
+      if (!cancelEditRef.current && sameProse(newMd, norm)) return;
+      if (cancelEditRef.current) { cancelEditRef.current = false; if (!editModeRef.current) rerenderInPlace(); return; }
+      const updated = replaceMarkdown(manuscript.id, newMd);
+      if (updated) {
+        setEditReturnScroll(window.scrollY);
+        openManuscript(updated, parseMarkdown(newMd).chapters);
+        showToast('Edit saved.');
+      } else if (!editModeRef.current) rerenderInPlace();
+      return;
+    }
+
     const origHtml = editOriginalHtml.get(block);
     editOriginalHtml.delete(block);
     if (activeEditBlockRef.current === block) activeEditBlockRef.current = null;
     const cancelled = cancelEditRef.current; cancelEditRef.current = false;
-    const md = manuscript?.metadata.combinedMarkdown;
-    if (!md || !manuscript) return;
     if (!cancelled && origHtml !== undefined && block.innerHTML === origHtml) return; // untouched
 
     // The body spans from the end of this chapter's `# ` heading to the start of
@@ -434,6 +455,32 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
       if (!editModeRef.current) return;
       const block = (e.target as HTMLElement)?.closest?.('.chapter-block') as HTMLElement | null;
       if (!block) return;
+
+      if (e.key === ' ' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        const hit = lineTextBeforeCaretInChapterBlock(block);
+        if (hit) {
+          const promote = matchMarkdownBlockPrefix(hit.line);
+          if (promote) {
+            e.preventDefault();
+            const kind = applyMarkdownPromoteInBlock(block, hit.leaf, promote);
+            if (kind === 'chapter-split') {
+              pendingFullDomCommitRef.current = true;
+              editOriginalHtml.delete(block);
+              const container = contentRef.current;
+              if (container) setupEditable(container, true);
+              const newBlock = block.nextElementSibling?.nextElementSibling;
+              if (newBlock?.classList.contains('chapter-block')) {
+                activeEditBlockRef.current = newBlock as HTMLElement;
+                if (!editOriginalHtml.has(newBlock as HTMLElement)) {
+                  editOriginalHtml.set(newBlock as HTMLElement, (newBlock as HTMLElement).innerHTML);
+                }
+              }
+            }
+            return;
+          }
+        }
+      }
+
       // Enter splits a paragraph (default contentEditable behavior); Escape
       // abandons the chapter's edits and restores the rendered source.
       if (e.key === 'Escape') {

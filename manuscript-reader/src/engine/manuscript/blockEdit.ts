@@ -144,3 +144,34 @@ export function htmlToMarkdownBlocks(html: string): string {
 
   return out.join('\n\n');
 }
+
+/**
+ * Rebuild combined markdown from the reader's rendered DOM (#content). Walks
+ * chapter markers, h1 titles, and chapter bodies in document order. Used after
+ * structural edits (e.g. promoting `# Title` to a new chapter) that the
+ * per-chapter body splice cannot represent.
+ */
+export function serializeContentDomToMarkdown(container: HTMLElement): string {
+  const parts: string[] = [];
+  let el: Element | null = container.firstElementChild;
+  while (el) {
+    if (el.classList.contains('chapter-marker')) {
+      const h1 = el.nextElementSibling;
+      const block = h1?.nextElementSibling;
+      if (h1?.tagName === 'H1' && block?.classList.contains('chapter-block')) {
+        const title = (h1.textContent ?? '').trim();
+        if (title) parts.push(`# ${title}`);
+        const body = htmlToMarkdownBlocks((block as HTMLElement).innerHTML);
+        if (body) parts.push(body);
+        el = block.nextElementSibling;
+        continue;
+      }
+    }
+    if (el.classList.contains('chapter-block')) {
+      const body = htmlToMarkdownBlocks((el as HTMLElement).innerHTML);
+      if (body) parts.push(body);
+    }
+    el = el.nextElementSibling;
+  }
+  return parts.join('\n\n').trim() + '\n';
+}
