@@ -573,20 +573,29 @@ body {
 }
 
 .reader-workspace {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  display: block;
   margin-top: var(--topbar-h);
   min-height: calc(100dvh - var(--topbar-h));
   position: relative;
 }
-.reader-workspace--rail-open { grid-template-columns: minmax(0, 1fr) 248px; }
 .reader-workspace #screen-reader {
   padding-top: 44px;
   min-width: 0;
 }
-.reader-workspace .hub-tools {
-  top: 0;
-  height: calc(100dvh - var(--topbar-h));
+
+/* Reader: tools rail overlays prose — never steals column width. */
+@media (min-width: 861px) {
+  .reader-workspace .hub-tools {
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: 248px;
+    height: 100dvh;
+    z-index: 90;
+    align-self: auto;
+    padding-top: calc(var(--topbar-h) + 20px);
+    box-shadow: -8px 0 32px rgba(0, 0, 0, 0.22);
+  }
 }
 
 .workspace-rail-backdrop {
@@ -1422,7 +1431,6 @@ mark[data-ann]:hover { filter: brightness(1.2); }
     box-shadow: -12px 0 40px rgba(0, 0, 0, 0.35);
   }
   .hub.hub--rail-open { grid-template-columns: minmax(0, 1fr); }
-  .reader-workspace--rail-open { grid-template-columns: minmax(0, 1fr); }
   .hub-continue-grid { grid-template-columns: 1fr; }
   .hub-continue-aside { padding-top: 8px; min-width: 0; }
   .hub-hero { flex-direction: column; gap: 20px; }
