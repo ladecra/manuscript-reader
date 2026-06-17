@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { loadTheme, saveTheme, loadFontSize, saveFontSize } from '../engine/storage';
 import type { HubPane } from '../components/layout/ManuscriptWorkspaceRail';
-import { workspaceRailOpenByDefault } from '../engine/ui/workspaceRail';
+import { workspaceRailOpenByDefault, WORKSPACE_RAIL_MOBILE_MAX_PX } from '../engine/ui/workspaceRail';
 
 export type Screen = 'landing' | 'library' | 'load' | 'manuscript' | 'reader';
 
@@ -74,8 +74,8 @@ export const useUIStore = create<UIStore>((set, get) => ({
 
   setScreen(s) {
     let workspaceRailOpen = get().workspaceRailOpen;
-    if (s === 'manuscript') workspaceRailOpen = workspaceRailOpenByDefault('manuscript');
-    else if (s === 'reader') workspaceRailOpen = workspaceRailOpenByDefault('reader');
+    if (s === 'manuscript') workspaceRailOpen = workspaceRailOpenByDefault('manuscript', window.innerWidth <= WORKSPACE_RAIL_MOBILE_MAX_PX);
+    else if (s === 'reader') workspaceRailOpen = workspaceRailOpenByDefault('reader', false);
 
     set({
       screen: s,

@@ -3,14 +3,14 @@ import { useReaderStore } from '../state/readerStore';
 import { useLibraryStore } from '../state/libraryStore';
 import { useUIStore } from '../state/uiStore';
 import { computeEditorialSignals } from '../engine/editorialSignals';
-import { parseMarkdown, countWords } from '../engine/ingestion/parseMarkdown';
-import { buildManuscriptStructure } from '../engine/ingestion/manuscriptStructure';
-import { estimateReadingPagePosition } from '../engine/reading/manuscriptPages';
+import { parseMarkdown } from '../engine/ingestion/parseMarkdown';
+import { estimateReadingPagePosition, chapterWordCounts, resumeChapterByProgress } from '../engine/reading/manuscriptPages';
 import { MANUSCRIPT_STATUSES, PUBLISHING_FIELDS, ANNOTATION_LABELS, ANNOTATION_COLORS } from '../engine/types';
 import type { ManuscriptStatus, PublishingMetadata, Chapter } from '../engine/types';
 import { applyChapterEdits, type ChapterEdit } from '../engine/manuscript/chapterEdit';
 import type { ExportManuscriptMeta } from '../engine/exports/manuscriptMarkdown';
 import { ChapterTree } from '../components/library/ChapterTree';
+import { AddChaptersModal } from '../components/reader/AddChaptersModal';
 import { ReportView } from '../components/reports/ReportView';
 import { ExportChoiceModal } from '../components/reports/ExportChoiceModal';
 import { ShareModal } from '../components/reader/ShareModal';
@@ -32,11 +32,12 @@ interface ManuscriptHubScreenProps {
 
 export function ManuscriptHubScreen({ onRead, onExit, workspaceRailOpen }: ManuscriptHubScreenProps) {
   const { manuscript, chapters, annotations, edits, sessions, openManuscript } = useReaderStore();
-  const { library, updateManuscript, replaceMarkdown, getReadingPosition, updateProgress, cycleStatus } = useLibraryStore();
+  const { library, updateManuscript, replaceMarkdown, appendChapters, getReadingPosition, updateProgress, cycleStatus } = useLibraryStore();
   const { setPendingChapterIndex, setPendingReaderIntent, hubPane: pane, setHubPane } = useUIStore();
   const [shareModalOpen, setShareModalOpen] = useState(false);
   const [editStructure, setEditStructure] = useState(false);
   const [chapterEdits, setChapterEdits] = useState<ChapterEdit[]>([]);
+  const [addChaptersOpen, setAddChaptersOpen] = useState(false);
   const [tocQuery, setTocQuery] = useState('');
   const [tocCompact, setTocCompact] = useState(false);
   const [openChapterMenu, setOpenChapterMenu] = useState<number | null>(null);
@@ -66,28 +67,15 @@ export function ManuscriptHubScreen({ onRead, onExit, workspaceRailOpen }: Manus
     [manuscript, annotations, chapters, sessions, combinedMarkdown],
   );
 
-  // Per-chapter word counts, lifted from the structural model (the same parse the
-  // reader uses) — surfaced in the contents list. Empty map ⇒ list omits counts.
-  const wordsByChapter = useMemo(() => {
-    const map = new Map<number, number>();
-    if (!combinedMarkdown) return map;
-    try {
-      for (const sec of buildManuscriptStructure(combinedMarkdown).chapters) {
-        map.set(sec.index, countWords(sec.blocks.map(b => b.text).join('\n')));
-      }
-    } catch { /* fall back to no per-chapter counts */ }
-    return map;
-  }, [combinedMarkdown]);
+  const wordsByChapter = useMemo(
+    () => combinedMarkdown ? chapterWordCounts(combinedMarkdown) : new Map<number, number>(),
+    [combinedMarkdown],
+  );
 
-  const resumeChapter = useMemo(() => {
-    if (!chapters.length) return null;
-    const total = chapters.reduce((s, ch) => s + (wordsByChapter.get(ch.index) ?? 0), 0);
-    if (total === 0 || pct <= 0) return chapters[0];
-    const target = (pct / 100) * total;
-    let acc = 0;
-    for (const ch of chapters) { acc += wordsByChapter.get(ch.index) ?? 0; if (acc >= target) return ch; }
-    return chapters[chapters.length - 1];
-  }, [chapters, wordsByChapter, pct]);
+  const resumeChapter = useMemo(
+    () => resumeChapterByProgress(chapters, wordsByChapter, progressFrac) ?? null,
+    [chapters, wordsByChapter, progressFrac],
+  );
 
   // Enter the reader at a chapter, optionally in a posture (annotate / edit) — the
   // contents-row hover actions. Plain Read passes no intent (just lands there).
@@ -198,6 +186,17 @@ export function ManuscriptHubScreen({ onRead, onExit, workspaceRailOpen }: Manus
     }
     showToast('No chapter changes.');
   }, [manuscript, combinedMarkdown, chapterEdits, replaceMarkdown, openManuscript]);
+
+  const handleAppendChapters = useCallback((chunk: string) => {
+    if (!manuscript) return;
+    const updated = appendChapters(manuscript.id, chunk);
+    if (!updated) { showToast('Manuscript not cached — reload files first.'); setAddChaptersOpen(false); return; }
+    const { chapters: newChapters } = parseMarkdown(updated.metadata.combinedMarkdown!);
+    const added = newChapters.length - chapters.length;
+    openManuscript(updated, newChapters);
+    setAddChaptersOpen(false);
+    showToast(added > 0 ? `${added} chapter${added !== 1 ? 's' : ''} added — now ${newChapters.length} total` : 'Chapters appended.');
+  }, [manuscript, chapters, appendChapters, openManuscript]);
 
   const coverUrl = useMemo(
     () => coverSvgDataUrl({ title, author: manuscript?.metadata.author, series: manuscript?.metadata.publishing?.series }),
@@ -363,8 +362,12 @@ export function ManuscriptHubScreen({ onRead, onExit, workspaceRailOpen }: Manus
             {editStructure ? (
               <div className="hub-form">
                 <ChapterTree key={combinedMarkdown} combinedMarkdown={combinedMarkdown} onChange={setChapterEdits} />
-                <button className="edit-save-btn" style={{ marginTop: '20px', alignSelf: 'flex-start' }}
-                  onClick={() => { saveChapters(); setEditStructure(false); }}>Save chapter changes</button>
+                <div style={{ display: 'flex', gap: '8px', marginTop: '20px', flexWrap: 'wrap' }}>
+                  <button className="edit-save-btn" style={{ alignSelf: 'flex-start' }}
+                    onClick={() => { saveChapters(); setEditStructure(false); }}>Save chapter changes</button>
+                  <button className="hub-toc-action" style={{ alignSelf: 'flex-start' }}
+                    onClick={() => setAddChaptersOpen(true)}>+ Add chapters</button>
+                </div>
               </div>
             ) : (
               <nav className={`instrument-nav${tocCompact ? ' instrument-nav--compact' : ''}`} aria-label="Table of contents">
@@ -478,6 +481,12 @@ export function ManuscriptHubScreen({ onRead, onExit, workspaceRailOpen }: Manus
           onRead={onRead}
         />
       )}
+      <AddChaptersModal
+        open={addChaptersOpen}
+        manuscriptTitle={title}
+        onClose={() => setAddChaptersOpen(false)}
+        onAppend={handleAppendChapters}
+      />
     </div>
   );
 }

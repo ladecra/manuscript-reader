@@ -68,7 +68,8 @@ export function applyChapterEdits(combinedMarkdown: string, orderedEdits: Chapte
       if (newT) {
         const currentTitle = parseMarkdown(s).chapters[0]?.title;
         if (newT !== currentTitle) {
-          return s.replace(/^# .+/m, `# ${newT}`);
+          // If the slice has no ATX h1 (promoted-heading chapter), prepend one.
+          return /^# /m.test(s) ? s.replace(/^# .+/m, `# ${newT}`) : `# ${newT}\n\n${s}`;
         }
       }
       return s;

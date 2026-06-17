@@ -6,7 +6,7 @@ import {
   ShareIcon,
   ChevronRightIcon,
   CheckIcon,
-  LibraryIcon,
+  LayersIcon,
 } from '../ui/Icons';
 
 export type HubPane = 'contents' | 'details' | 'feedback' | 'report' | 'exports' | 'share' | 'versions';
@@ -34,7 +34,7 @@ interface ManuscriptWorkspaceRailProps {
   readerSubtext?: string;
   onTogglePane: (id: HubPane) => void;
   onRead?: () => void;
-  onLibrary?: () => void;
+  onManuscript?: () => void;
 }
 
 export function ManuscriptWorkspaceRail({
@@ -45,7 +45,7 @@ export function ManuscriptWorkspaceRail({
   readerSubtext = 'Resume in the reader',
   onTogglePane,
   onRead,
-  onLibrary,
+  onManuscript,
 }: ManuscriptWorkspaceRailProps) {
   const groups: ToolGroup[] = [
     {
@@ -117,12 +117,12 @@ export function ManuscriptWorkspaceRail({
                   <span className="instrument-item-chevron"><ChevronRightIcon size={10} /></span>
                 </button>
               )}
-              {groupIndex === 0 && context === 'reader' && onLibrary && (
-                <button type="button" className="instrument-item instrument-item--tool" onClick={onLibrary}>
-                  <span className="instrument-item-icon"><LibraryIcon size={15} /></span>
+              {groupIndex === 0 && context === 'reader' && onManuscript && (
+                <button type="button" className="instrument-item instrument-item--tool" onClick={onManuscript}>
+                  <span className="instrument-item-icon"><LayersIcon size={15} /></span>
                   <span className="instrument-item-stack">
-                    <span className="instrument-item-label">Library</span>
-                    <span className="instrument-item-sub">All manuscripts</span>
+                    <span className="instrument-item-label">Manuscript</span>
+                    <span className="instrument-item-sub">Title page &amp; workspace</span>
                   </span>
                   <span className="instrument-item-chevron"><ChevronRightIcon size={10} /></span>
                 </button>

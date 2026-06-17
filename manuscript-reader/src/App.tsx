@@ -34,7 +34,7 @@ function IconBtn({ onClick, active, title, label, disabled, children }: {
 
 export function App() {
   const {
-    screen, theme, fontSize, annSidebarOpen, editMode, workspaceRailOpen,
+    screen, theme, fontSize, annSidebarOpen, editMode, workspaceRailOpen, hubPane,
     setScreen, toggleNav, toggleAnnSidebar, toggleEditMode, toggleWorkspaceRail,
     setHubPane, openAnnSidebar, closeWorkspaceRail,
   } = useUIStore();
@@ -80,12 +80,22 @@ export function App() {
     handleOpenHub(ms);
   }
 
+  function resetShellScroll() {
+    window.scrollTo(0, 0);
+    document.querySelector<HTMLElement>('.app-shell-body')?.scrollTo(0, 0);
+  }
+
   function goLibrary(filter: LibraryNavFilter = libraryFilter) {
     setLibraryFilter(filter);
     setScreen('library');
     closeManuscript();
-    window.scrollTo(0, 0);
+    resetShellScroll();
   }
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('shell-scroll-lock', shellActive);
+    return () => document.documentElement.classList.remove('shell-scroll-lock');
+  }, [shellActive]);
 
   useEffect(() => {
     document.documentElement.classList.toggle('light', theme === 'light');
@@ -97,16 +107,17 @@ export function App() {
   // (setScreen already sets the default; this catches devtools resize and any drift).
   useLayoutEffect(() => {
     if (screen !== 'manuscript') return;
-    const want = workspaceRailOpenByDefault('manuscript');
+    const want = workspaceRailOpenByDefault('manuscript', window.innerWidth <= WORKSPACE_RAIL_MOBILE_MAX_PX);
     if (useUIStore.getState().workspaceRailOpen !== want) {
       useUIStore.setState({ workspaceRailOpen: want });
     }
-  }, [screen, manuscript?.id]);
+  }, [screen]);
 
   useEffect(() => {
     const mq = window.matchMedia(`(max-width: ${WORKSPACE_RAIL_MOBILE_MAX_PX}px)`);
     function onBreakpointChange() {
-      if (mq.matches && useUIStore.getState().screen === 'manuscript') {
+      const s = useUIStore.getState().screen;
+      if (mq.matches && (s === 'manuscript' || s === 'reader')) {
         useUIStore.getState().closeWorkspaceRail();
       }
     }
@@ -163,7 +174,7 @@ export function App() {
     openManuscript(ms, chapters);
     setHubPane('contents');
     setScreen('manuscript');
-    window.scrollTo(0, 0);
+    resetShellScroll();
   }
 
   // Read straight from the library card — enter the reader without the page stop.
@@ -204,7 +215,7 @@ export function App() {
     }
     setHubPane(id);
     setScreen('manuscript');
-    window.scrollTo(0, 0);
+    resetShellScroll();
   }, [closeWorkspaceRail, openAnnSidebar, setHubPane, setScreen]);
 
   // The marketing front door owns the full viewport — no app topbar.
@@ -261,8 +272,8 @@ export function App() {
             </>
           )}
           {toolsToggle}
-          {screen === 'load' && (
-            <IconBtn onClick={handleLibraryNav} title="Library" label="Library"><LibraryIcon /></IconBtn>
+          {(screen === 'reader' || screen === 'manuscript' || screen === 'load') && (
+            <IconBtn onClick={handleLibraryNav} title="Library"><LibraryIcon /></IconBtn>
           )}
           <SettingsMenu />
         </div>
@@ -333,11 +344,11 @@ export function App() {
           {workspaceRailOpen && (
             <ManuscriptWorkspaceRail
               context="reader"
-              pane="contents"
+              pane={hubPane}
               annotationCount={annotations.length}
               savedLabel={workspaceSavedLabel}
               onTogglePane={handleReaderRailPane}
-              onLibrary={handleLibraryNav}
+              onManuscript={() => setScreen('manuscript')}
             />
           )}
         </div>
