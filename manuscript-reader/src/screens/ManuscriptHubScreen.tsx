@@ -355,7 +355,7 @@ export function ManuscriptHubScreen({ onRead, onExit, workspaceRailOpen }: Manus
                   className={`hub-toc-action${editStructure ? ' active' : ''}`}
                   onClick={() => setEditStructure(v => !v)}
                 >
-                  {editStructure ? 'Done' : 'Structure'}
+                  {editStructure ? 'Done' : 'Edit'}
                 </button>
               </div>
             </div>

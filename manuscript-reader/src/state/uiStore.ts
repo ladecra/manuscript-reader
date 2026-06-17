@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { loadTheme, saveTheme, loadFontSize, saveFontSize } from '../engine/storage';
 import type { HubPane } from '../components/layout/ManuscriptWorkspaceRail';
+import { workspaceRailOpenByDefault } from '../engine/ui/workspaceRail';
 
 export type Screen = 'landing' | 'library' | 'load' | 'manuscript' | 'reader';
 
@@ -72,12 +73,16 @@ export const useUIStore = create<UIStore>((set, get) => ({
   pendingReaderIntent: null,
 
   setScreen(s) {
+    let workspaceRailOpen = get().workspaceRailOpen;
+    if (s === 'manuscript') workspaceRailOpen = workspaceRailOpenByDefault('manuscript');
+    else if (s === 'reader') workspaceRailOpen = workspaceRailOpenByDefault('reader');
+
     set({
       screen: s,
       navOpen: false,
       annSidebarOpen: false,
       editMode: false,
-      workspaceRailOpen: s === 'manuscript' ? true : s === 'reader' ? false : get().workspaceRailOpen,
+      workspaceRailOpen,
     });
     // Apply theme class whenever screen changes (safe to re-apply)
     document.documentElement.classList.toggle('light', get().theme === 'light');

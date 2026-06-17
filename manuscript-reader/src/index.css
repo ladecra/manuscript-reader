@@ -252,7 +252,7 @@ body {
   transition: transform 0.32s var(--ease-expo), background 0.35s, border-color 0.35s;
   -webkit-backface-visibility: hidden;
 }
-#ann-sidebar.open { transform: translateX(0); }
+#ann-sidebar.open { transform: translateX(0); z-index: 95; }
 .ann-sidebar-header { padding: 18px 20px 0; border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .ann-sidebar-title-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
 .ann-sidebar-title {
@@ -1416,19 +1416,31 @@ mark[data-ann]:hover { filter: brightness(1.2); }
 @media (max-width: 860px) {
   .workspace-rail-backdrop { display: block; }
   .hub-main { max-width: none; padding: 30px 22px 50px; }
-  .hub.hub--rail-open .hub-tools,
-  .reader-workspace--rail-open .hub-tools {
+  /* Slide-over drawer (rail mounts only when open on hub + reader). */
+  .hub .hub-tools,
+  .reader-workspace .hub-tools {
     position: fixed;
-    top: var(--topbar-h);
+    top: 0;
     right: 0;
+    left: auto;
     bottom: 0;
     width: min(288px, 92vw);
-    height: auto;
+    height: 100dvh;
+    max-height: 100dvh;
     z-index: 40;
+    align-self: auto;
     border-left: 1px solid var(--border);
     border-top: none;
-    padding: 20px 14px 28px;
+    padding: calc(var(--topbar-h) + 20px) 14px max(28px, env(safe-area-inset-bottom, 0px));
     box-shadow: -12px 0 40px rgba(0, 0, 0, 0.35);
+    overflow: hidden;
+  }
+  .hub .hub-tools .hub-tools-nav,
+  .reader-workspace .hub-tools .hub-tools-nav {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
   }
   .hub.hub--rail-open { grid-template-columns: minmax(0, 1fr); }
   .hub-continue-grid { grid-template-columns: 1fr; }

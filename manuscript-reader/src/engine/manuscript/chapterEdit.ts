@@ -5,10 +5,6 @@
 
 import { parseMarkdown } from '../ingestion/parseMarkdown';
 
-function escRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
 export interface ChapterEdit {
   /** Original chapter index (1-based, as produced by parseMarkdown). */
   index: number;
@@ -16,6 +12,26 @@ export interface ChapterEdit {
   newTitle?: string;
   /** Marked for deletion. */
   deleted?: boolean;
+}
+
+/** Chapter `# ` heading start offsets — same rules as parseMarkdown (ATX h1 only). */
+function chapterSliceBounds(md: string): { start: number; end: number }[] {
+  const normalized = md.replace(/\r\n/g, '\n');
+  const lines = normalized.split('\n');
+  const starts: number[] = [];
+  let offset = 0;
+  for (const line of lines) {
+    if (/^<!--[\s\S]*?-->\s*$/.test(line.trim())) {
+      offset += line.length + 1;
+      continue;
+    }
+    if (/^# /.test(line)) starts.push(offset);
+    offset += line.length + 1;
+  }
+  return starts.map((start, i) => ({
+    start,
+    end: starts[i + 1] ?? normalized.length,
+  }));
 }
 
 /**
@@ -29,22 +45,18 @@ export interface ChapterEdit {
  *          (e.g. no chapters, or every chapter deleted).
  */
 export function applyChapterEdits(combinedMarkdown: string, orderedEdits: ChapterEdit[]): string | null {
-  const { chapters } = parseMarkdown(combinedMarkdown);
+  const md = combinedMarkdown.replace(/\r\n/g, '\n');
+  const { chapters } = parseMarkdown(md);
   if (chapters.length === 0) return null;
 
-  const md = combinedMarkdown;
+  const bounds = chapterSliceBounds(md);
+  if (bounds.length !== chapters.length) return null;
 
-  // Build a slice of source markdown for each original chapter, spanning from
-  // its heading to the next chapter's heading.
-  const sliceMap = new Map<number, { index: number; title: string; md: string }>();
+  const sliceMap = new Map<number, string>();
   for (let ci = 0; ci < chapters.length; ci++) {
     const ch = chapters[ci];
-    const next = chapters[ci + 1];
-    const headingRe = new RegExp(`^# ${escRegex(ch.title)}`, 'm');
-    const start = md.search(headingRe);
-    if (start === -1) return null; // can't safely reslice; bail without mutating
-    const end = next ? md.search(new RegExp(`^# ${escRegex(next.title)}`, 'm')) : md.length;
-    sliceMap.set(ch.index, { index: ch.index, title: ch.title, md: md.slice(start, end).trimEnd() });
+    const { start, end } = bounds[ci];
+    sliceMap.set(ch.index, md.slice(start, end).trimEnd());
   }
 
   const kept = orderedEdits
@@ -53,10 +65,13 @@ export function applyChapterEdits(combinedMarkdown: string, orderedEdits: Chapte
       const s = sliceMap.get(e.index);
       if (!s) return null;
       const newT = e.newTitle?.trim();
-      if (newT && newT !== s.title) {
-        return s.md.replace(/^# .+/m, `# ${newT}`);
+      if (newT) {
+        const currentTitle = parseMarkdown(s).chapters[0]?.title;
+        if (newT !== currentTitle) {
+          return s.replace(/^# .+/m, `# ${newT}`);
+        }
       }
-      return s.md;
+      return s;
     })
     .filter((x): x is string => Boolean(x));
 
