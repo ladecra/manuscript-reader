@@ -103,6 +103,18 @@ const editOriginalHtml = new WeakMap<HTMLElement, string>();
 
 const EDITABLE_LEAF_SELECTOR = 'p, blockquote, h2, h3, h4, li';
 
+function stabilizeCaretInLeaf(leaf: HTMLElement) {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return;
+  const r = sel.getRangeAt(0);
+  if (!leaf.contains(r.commonAncestorContainer)) return;
+  if (!r.collapsed) {
+    r.collapse(false);
+    sel.removeAllRanges();
+    sel.addRange(r);
+  }
+}
+
 function stripAnnotationMarks(container: HTMLElement) {
   container.querySelectorAll('mark[data-ann]').forEach(mark => {
     const parent = mark.parentNode!;
@@ -112,22 +124,35 @@ function stripAnnotationMarks(container: HTMLElement) {
   });
 }
 
-// Toggle the prose-edit affordance. Desktop: the whole `.chapter-block` is
-// contentEditable. Touch devices use a paragraph sheet instead (see mobile edit
-// effect) — mobile contentEditable is too unreliable. The chapter `# ` heading
-// stays outside the block and read-only.
+// Desktop: whole `.chapter-block` is contentEditable (structural edits). Touch:
+// each prose block leaf is editable; chapter commit is deferred (see focus handlers).
 function setupEditable(container: HTMLElement, on: boolean) {
   const touch = on && usesTouchFriendlyEditing();
   container.classList.toggle('edit-mode', on);
   container.classList.toggle('edit-mode-touch', touch);
   container.querySelectorAll<HTMLElement>('.chapter-block').forEach(block => {
-    block.querySelectorAll<HTMLElement>(EDITABLE_LEAF_SELECTOR).forEach(el => el.removeAttribute('contenteditable'));
+    block.querySelectorAll<HTMLElement>(EDITABLE_LEAF_SELECTOR).forEach(el => {
+      el.removeAttribute('contenteditable');
+      el.removeAttribute('autocorrect');
+      el.removeAttribute('autocapitalize');
+      el.removeAttribute('spellcheck');
+    });
     if (!on) {
       block.removeAttribute('contenteditable');
       return;
     }
-    if (!touch) block.setAttribute('contenteditable', 'true');
-    else block.removeAttribute('contenteditable');
+    if (touch) {
+      block.removeAttribute('contenteditable');
+      block.querySelectorAll<HTMLElement>(EDITABLE_LEAF_SELECTOR).forEach(el => {
+        el.setAttribute('contenteditable', 'true');
+        // iOS often “replaces” when autocorrect fights a multi-block contentEditable tree.
+        el.setAttribute('autocorrect', 'off');
+        el.setAttribute('autocapitalize', 'sentences');
+        el.setAttribute('spellcheck', 'true');
+      });
+    } else {
+      block.setAttribute('contenteditable', 'true');
+    }
   });
 }
 
@@ -159,71 +184,7 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   const cancelEditRef = useRef(false);
   const commitRef = useRef<(p: HTMLElement) => void>(() => {});
   const activeEditBlockRef = useRef<HTMLElement | null>(null);
-  const touchDirtyBlockRef = useRef<HTMLElement | null>(null);
-  const mobileEditSessionRef = useRef<{
-    sheet: HTMLDivElement;
-    ta: HTMLTextAreaElement;
-    leaf: HTMLElement;
-    block: HTMLElement;
-  } | null>(null);
   useEffect(() => { editModeRef.current = editMode; }, [editMode]);
-
-  const closeMobileParagraphEdit = useCallback((save: boolean) => {
-    const sess = mobileEditSessionRef.current;
-    if (!sess) return;
-    sess.leaf.classList.remove('mobile-edit-target');
-    if (save) {
-      sess.leaf.textContent = sess.ta.value;
-      touchDirtyBlockRef.current = sess.block;
-    }
-    sess.sheet.remove();
-    mobileEditSessionRef.current = null;
-  }, []);
-
-  const openMobileParagraphEdit = useCallback((leaf: HTMLElement, block: HTMLElement) => {
-    closeMobileParagraphEdit(true);
-    if (touchDirtyBlockRef.current && touchDirtyBlockRef.current !== block) {
-      commitRef.current(touchDirtyBlockRef.current);
-      touchDirtyBlockRef.current = null;
-    }
-    if (!editOriginalHtml.has(block)) editOriginalHtml.set(block, block.innerHTML);
-
-    leaf.classList.add('mobile-edit-target');
-    const sheet = document.createElement('div');
-    sheet.className = 'mobile-edit-sheet';
-    sheet.setAttribute('role', 'dialog');
-    sheet.setAttribute('aria-label', 'Edit paragraph');
-
-    const label = document.createElement('div');
-    label.className = 'mobile-edit-sheet-label';
-    label.textContent = 'Edit paragraph';
-
-    const ta = document.createElement('textarea');
-    ta.className = 'mobile-edit-sheet-input';
-    ta.value = leaf.innerText;
-    ta.setAttribute('autocomplete', 'off');
-    ta.setAttribute('autocorrect', 'on');
-    ta.setAttribute('spellcheck', 'true');
-
-    const actions = document.createElement('div');
-    actions.className = 'mobile-edit-sheet-actions';
-    const done = document.createElement('button');
-    done.type = 'button';
-    done.className = 'mobile-edit-sheet-done';
-    done.textContent = 'Done';
-    done.addEventListener('click', () => closeMobileParagraphEdit(true));
-    ta.addEventListener('keydown', e => {
-      if (e.key === 'Escape') { e.preventDefault(); closeMobileParagraphEdit(false); }
-    });
-
-    actions.appendChild(done);
-    sheet.append(label, ta, actions);
-    document.body.appendChild(sheet);
-    mobileEditSessionRef.current = { sheet, ta, leaf, block };
-    ta.focus();
-    const end = ta.value.length;
-    ta.setSelectionRange(end, end);
-  }, [closeMobileParagraphEdit]);
 
   // Clock
   useEffect(() => {
@@ -346,7 +307,6 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     const origHtml = editOriginalHtml.get(block);
     editOriginalHtml.delete(block);
     if (activeEditBlockRef.current === block) activeEditBlockRef.current = null;
-    if (touchDirtyBlockRef.current === block) touchDirtyBlockRef.current = null;
     const cancelled = cancelEditRef.current; cancelEditRef.current = false;
     const md = manuscript?.metadata.combinedMarkdown;
     if (!md || !manuscript) return;
@@ -358,7 +318,10 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     let heading = block.previousElementSibling;
     while (heading && heading.tagName !== 'H1') heading = heading.previousElementSibling;
     const headingEnd = heading ? Number((heading as HTMLElement).dataset.mdEnd) : NaN;
-    if (!heading || Number.isNaN(headingEnd)) { rerenderInPlace(); return; }
+    if (!heading || Number.isNaN(headingEnd)) {
+      if (!editModeRef.current) rerenderInPlace();
+      return;
+    }
 
     let nextH1 = block.nextElementSibling;
     while (nextH1 && nextH1.tagName !== 'H1') nextH1 = nextH1.nextElementSibling;
@@ -370,13 +333,16 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     const newBody = htmlToMarkdownBlocks(block.innerHTML);
 
     if (cancelled || !newBody || sameProse(newBody, original)) {
-      rerenderInPlace(); // nothing to save — restore clean rendered HTML
+      if (!editModeRef.current) rerenderInPlace();
       return;
     }
     // Re-pad with surrounding blank lines so the body stays a well-formed block
     // run; the reparse normalizes any extra blank lines.
     const res = applyBlockEdit(norm, bodyStart, bodyEnd, `\n\n${newBody}\n\n`);
-    if (!res) { rerenderInPlace(); return; }
+    if (!res) {
+      if (!editModeRef.current) rerenderInPlace();
+      return;
+    }
     const updated = replaceMarkdown(manuscript.id, res.markdown);
     if (updated) {
       // Record the author's decision as a durable Edit (distinct from a reader
@@ -404,7 +370,7 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
       if (edit) pushEditTransition(norm, res.markdown, edit);
       showToast('Edit saved.');
     } else {
-      rerenderInPlace();
+      if (!editModeRef.current) rerenderInPlace();
       showToast('Could not save — manuscript not cached.');
     }
   }, [manuscript, chapters, replaceMarkdown, openManuscript, rerenderInPlace, recordEdit, pushEditTransition, setEditReturnScroll]);
@@ -415,13 +381,7 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   useEffect(() => {
     const c = contentRef.current; if (!c) return;
     if (!editMode) {
-      closeMobileParagraphEdit(true);
-      if (usesTouchFriendlyEditing()) {
-        if (touchDirtyBlockRef.current) {
-          commitRef.current(touchDirtyBlockRef.current);
-          touchDirtyBlockRef.current = null;
-        }
-      } else if (activeEditBlockRef.current) {
+      if (activeEditBlockRef.current) {
         commitRef.current(activeEditBlockRef.current);
         activeEditBlockRef.current = null;
       }
@@ -435,37 +395,29 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     if (editMode) stripAnnotationMarks(c);
     setupEditable(c, editMode);
     if (!editMode) reapplyHighlights();
-  }, [editMode, reapplyHighlights, closeMobileParagraphEdit]);
+  }, [editMode, reapplyHighlights]);
 
-  // Touch: tap a paragraph to edit in a sheet — no contentEditable in the prose.
-  useEffect(() => {
-    const c = contentRef.current;
-    if (!c || !editMode || !usesTouchFriendlyEditing()) return;
-    const onTap = (e: Event) => {
-      if (!editModeRef.current) return;
-      const leaf = (e.target as HTMLElement).closest?.(EDITABLE_LEAF_SELECTOR);
-      const block = leaf?.closest?.('.chapter-block') as HTMLElement | null;
-      if (!leaf || !block || !c.contains(leaf)) return;
-      e.preventDefault();
-      openMobileParagraphEdit(leaf as HTMLElement, block);
-    };
-    c.addEventListener('click', onTap, true);
-    return () => c.removeEventListener('click', onTap, true);
-  }, [editMode, openMobileParagraphEdit]);
-
-  // Delegated commit-on-blur + Enter/Escape (desktop contentEditable only).
+  // Commit-on-blur (desktop), deferred commit (touch), Enter/Escape.
   useEffect(() => {
     const c = contentRef.current; if (!c) return;
     const onFocusIn = (e: FocusEvent) => {
-      if (usesTouchFriendlyEditing()) return;
+      if (!editModeRef.current) return;
       const block = (e.target as HTMLElement)?.closest?.('.chapter-block') as HTMLElement | null;
-      if (!block || !editModeRef.current) return;
+      if (!block) return;
       const prev = activeEditBlockRef.current;
       if (prev && prev !== block) commitRef.current(prev);
       activeEditBlockRef.current = block;
       if (!editOriginalHtml.has(block)) editOriginalHtml.set(block, block.innerHTML);
+      if (usesTouchFriendlyEditing()) {
+        const leaf = (e.target as HTMLElement)?.closest?.(EDITABLE_LEAF_SELECTOR) as HTMLElement | null;
+        if (leaf && block.contains(leaf)) {
+          leaf.normalize();
+          requestAnimationFrame(() => stabilizeCaretInLeaf(leaf));
+        }
+      }
     };
     const onFocusOut = (e: FocusEvent) => {
+      // Touch browsers fire spurious blur while the keyboard is open; never commit here.
       if (usesTouchFriendlyEditing()) return;
       const block = (e.target as HTMLElement)?.closest?.('.chapter-block') as HTMLElement | null;
       if (!block) return;

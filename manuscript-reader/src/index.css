@@ -867,69 +867,16 @@ html.shell-scroll-lock body {
   -webkit-touch-callout: default;
   caret-color: var(--primary);
 }
-#content.edit-mode-touch .chapter-block p,
-#content.edit-mode-touch .chapter-block blockquote,
-#content.edit-mode-touch .chapter-block h2,
-#content.edit-mode-touch .chapter-block h3,
-#content.edit-mode-touch .chapter-block h4,
-#content.edit-mode-touch .chapter-block li {
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
+/* Drop cap fights caret placement while editing — suppress on all paragraphs. */
+#content.edit-mode .chapter-block p::first-letter,
+#content.edit-mode-touch .chapter-block p::first-letter {
+  float: none;
+  font-size: inherit;
+  line-height: inherit;
+  margin: 0;
+  font-weight: inherit;
+  color: inherit;
 }
-#content.edit-mode-touch .mobile-edit-target {
-  outline: 1px solid var(--brand);
-  outline-offset: 4px;
-}
-.mobile-edit-sheet {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 260;
-  padding: 14px var(--margin) calc(14px + var(--safe-bottom));
-  background: var(--surface);
-  border-top: 1px solid var(--border);
-  box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.35);
-}
-.mobile-edit-sheet-label {
-  font-family: 'Schibsted Grotesk', system-ui, sans-serif;
-  font-size: 10px;
-  font-weight: 500;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--dim);
-  margin-bottom: 10px;
-}
-.mobile-edit-sheet-input {
-  width: 100%;
-  min-height: 120px;
-  max-height: 40vh;
-  resize: vertical;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  color: var(--on-surface);
-  font-family: 'EB Garamond', Georgia, serif;
-  font-size: var(--body-size);
-  line-height: 1.78;
-  padding: 12px;
-  outline: none;
-  margin-bottom: 12px;
-}
-.mobile-edit-sheet-input:focus { border-color: var(--brand); }
-.mobile-edit-sheet-actions { display: flex; justify-content: flex-end; }
-.mobile-edit-sheet-done {
-  background: none;
-  border: 1px solid var(--primary);
-  font-family: 'Schibsted Grotesk', system-ui, sans-serif;
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--primary);
-  padding: 10px 20px;
-  cursor: pointer;
-}
-/* Drop cap fights caret placement while editing — suppress it in edit mode. */
 #content.edit-mode .chapter-block > p:first-of-type::first-letter {
   font-size: inherit; line-height: inherit; float: none; margin: 0; font-weight: inherit;
 }
