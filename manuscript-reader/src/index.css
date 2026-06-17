@@ -861,10 +861,28 @@ html.shell-scroll-lock body {
 #content.edit-mode .chapter-block[contenteditable] {
   cursor: text;
   outline: none;
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+  caret-color: var(--primary);
 }
 /* Drop cap fights caret placement while editing — suppress it in edit mode. */
 #content.edit-mode .chapter-block > p:first-of-type::first-letter {
   font-size: inherit; line-height: inherit; float: none; margin: 0; font-weight: inherit;
+}
+/* Mobile Safari is fragile around contentEditable descendants that still carry
+   transforms/transitions from the reading-view entrance animation. Flatten them
+   while editing so typing inserts at the caret instead of replacing nearby text. */
+#content.edit-mode .chapter-block,
+#content.edit-mode .chapter-block p,
+#content.edit-mode .chapter-block blockquote,
+#content.edit-mode .chapter-block ul,
+#content.edit-mode .chapter-block ol,
+#content.edit-mode .chapter-block li {
+  opacity: 1;
+  transform: none;
+  transition: none;
+  animation: none;
 }
 #content blockquote {
   border-left: 1px solid var(--border); margin: 36px 0; padding: 0 0 0 24px;
