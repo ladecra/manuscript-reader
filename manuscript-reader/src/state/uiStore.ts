@@ -72,13 +72,12 @@ export const useUIStore = create<UIStore>((set, get) => ({
   pendingReaderIntent: null,
 
   setScreen(s) {
-    const closeRail = s === 'reader';
     set({
       screen: s,
       navOpen: false,
       annSidebarOpen: false,
       editMode: false,
-      ...(closeRail ? { workspaceRailOpen: false } : {}),
+      workspaceRailOpen: s === 'manuscript' ? true : s === 'reader' ? false : get().workspaceRailOpen,
     });
     // Apply theme class whenever screen changes (safe to re-apply)
     document.documentElement.classList.toggle('light', get().theme === 'light');
