@@ -122,7 +122,7 @@ export function ManuscriptHubScreen({ onRead, onExit, workspaceRailOpen }: Manus
     }).catch(e => { console.error('HTML export error:', e); showToast('Export failed — see console.'); });
   }, [manuscript, annotations, chapters, sessions, exportMeta]);
 
-  const handleExportManuscript = useCallback(async (format: 'docx' | 'md') => {
+  const handleExportManuscript = useCallback(async (format: 'epub' | 'docx' | 'md') => {
     if (!manuscript) return;
     const md = manuscript.metadata.combinedMarkdown;
     if (!md) { showToast('Manuscript not cached — re-import the file to export it.'); return; }
@@ -130,6 +130,9 @@ export function ManuscriptHubScreen({ onRead, onExit, workspaceRailOpen }: Manus
       if (format === 'md') {
         const { exportManuscriptMarkdown } = await import('../engine/exports/manuscriptMarkdown');
         exportManuscriptMarkdown(exportMeta(), manuscript.id, md);
+      } else if (format === 'epub') {
+        const { exportManuscriptEpub } = await import('../engine/exports/manuscriptEpub');
+        exportManuscriptEpub(exportMeta(), manuscript.id, md);
       } else {
         showToast('Building manuscript…');
         const { exportManuscriptDocx } = await import('../engine/exports/manuscriptDocx');
@@ -695,7 +698,7 @@ function ExportsTab({
   subject: string;
   manuscriptAvailable: boolean; annCount: number; editCount: number;
   hasPublishing: boolean; onGoToDetails: () => void;
-  onExportManuscript: (format: 'docx' | 'md') => void | Promise<void>;
+  onExportManuscript: (format: 'epub' | 'docx' | 'md') => void | Promise<void>;
   onExportReportDocx: () => void | Promise<void>;
   onExportReportHtml: () => void;
   onExportRevisionLog: () => void;
@@ -741,11 +744,12 @@ function ExportsTab({
         subject={subject}
         primaryLabel="Download manuscript"
         formats={[
+          { key: 'epub', label: 'EPUB (.epub)', desc: 'A standard reflowable ebook for Kindle, Apple Books, and Kobo — with a title page, copyright page, dedication, and contents built from your Details. The format retailers ingest.' },
           { key: 'docx', label: 'Word (.docx)', desc: 'A formatted Word document with a title page, copyright page, and dedication built from your Details — chapters, headings, and scene breaks preserved.' },
           { key: 'md', label: 'Markdown (.md)', desc: 'Plain-text Markdown with a YAML front-matter block carrying your publishing metadata. Portable into Pandoc and most ebook toolchains.' },
         ]}
         onClose={() => setManuscriptOpen(false)}
-        onExport={(format) => onExportManuscript(format as 'docx' | 'md')}
+        onExport={(format) => onExportManuscript(format as 'epub' | 'docx' | 'md')}
       />
 
       <ExportChoiceModal

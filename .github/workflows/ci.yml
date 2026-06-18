@@ -27,6 +27,34 @@ jobs:
       # and runs. It prints results; no assertions (golden-file by inspection).
       - run: npm run check-fixtures
 
+  epub:
+    name: EPUB validity (epubcheck)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: manuscript-reader
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: manuscript-reader/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - run: npm ci
+      # Generate a representative .epub through the real engine + assert structure.
+      - run: npm run check-epub
+      # Full validation with the official epubcheck (fails on any ERROR/FATAL).
+      - name: Download epubcheck
+        run: |
+          curl -fsSL -o /tmp/epubcheck.zip https://github.com/w3c/epubcheck/releases/download/v5.1.0/epubcheck-5.1.0.zip
+          unzip -q /tmp/epubcheck.zip -d /tmp
+      - name: Validate sample.epub
+        run: java -jar /tmp/epubcheck-5.1.0/epubcheck.jar sample.epub
+
   secret-scan:
     name: Secret scan (gitleaks)
     runs-on: ubuntu-latest

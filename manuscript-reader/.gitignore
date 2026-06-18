@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Generated export artifacts (check-epub writes a sample)
+*.epub
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
