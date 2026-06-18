@@ -150,7 +150,8 @@ export const useLibraryStore = create<LibraryStore>((_set, _get) => {
       if (idx < 0) return null;
       const combined = newMarkdown.trim();
       const { chapters } = parseMarkdown(combined);
-      stored[idx] = { ...stored[idx], combinedMarkdown: combined, chapterCount: chapters.length, wordCount: countWords(combined), lastOpened: Date.now() };
+      const revision = (stored[idx].revision ?? 0) + 1;
+      stored[idx] = { ...stored[idx], combinedMarkdown: combined, chapterCount: chapters.length, wordCount: countWords(combined), lastOpened: Date.now(), revision };
       saveLibrary(stored);
       const converted = stored.map(toManuscript);
       set({ library: converted });

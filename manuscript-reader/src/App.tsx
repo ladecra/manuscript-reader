@@ -14,6 +14,7 @@ import { AppShell, type LibraryNavFilter } from './components/layout/AppShell';
 import { QuillIcon, MenuIcon, AnnotateIcon, LibraryIcon, PencilIcon, UndoIcon, RedoIcon, PanelIcon } from './components/ui/Icons';
 import { parseMarkdown } from './engine/ingestion/parseMarkdown';
 import { workspaceRailOpenByDefault, WORKSPACE_RAIL_MOBILE_MAX_PX } from './engine/ui/workspaceRail';
+import { usesTouchFriendlyEditing } from './lib/touchEditing';
 import type { Manuscript } from './engine/types';
 
 function IconBtn({ onClick, active, title, label, disabled, children }: {
@@ -41,6 +42,7 @@ export function App() {
   const { library, upsertManuscript, cycleStatus, toggleFavorite, deleteManuscript, replaceMarkdown, getReadingPosition } = useLibraryStore();
   const { manuscript, annotations, openManuscript, closeManuscript, undoEdit, redoEdit, setEditReturnScroll, undoStack, redoStack } = useReaderStore();
   const { toastState, showToast } = useToast();
+  const isTouchDevice = usesTouchFriendlyEditing();
 
   // Undo/redo a committed prose edit: restore the snapshot markdown the store
   // returns, re-store it, and reopen (same id → history + scroll are preserved).
@@ -261,7 +263,7 @@ export function App() {
                 <IconBtn onClick={toggleAnnSidebar} active={annSidebarOpen} title="Annotations (⌘E)" label="Annotations"><AnnotateIcon /></IconBtn>
                 {hasAnnotations && <span id="revision-mode-badge" className="visible" />}
               </div>
-              <IconBtn onClick={toggleEditMode} active={editMode} title="Edit prose" label="Edit"><PencilIcon /></IconBtn>
+              {!isTouchDevice && <IconBtn onClick={toggleEditMode} active={editMode} title="Edit prose" label="Edit"><PencilIcon /></IconBtn>}
               {editMode && (
                 <>
                   <IconBtn onClick={handleUndo} disabled={undoStack.length === 0} title="Undo edit (⌘Z)"><UndoIcon /></IconBtn>

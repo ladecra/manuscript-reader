@@ -33,6 +33,10 @@ export interface StoredManuscript {
   progress?: number; // mirror of the position record; persisted via savePosition
   publishing?: PublishingMetadata; // author-supplied publishing data (optional; absent on legacy records)
   favorite?: boolean; // starred in the library (optional; absent on legacy records)
+  /** Monotonically incrementing counter bumped on every author edit (replaceMarkdown).
+   *  Absent on legacy records — treat as 0. The seed for cross-device sync: two
+   *  devices can tell which copy is newer without a server clock. */
+  revision?: number;
 }
 
 export interface StorageProvider {

@@ -13,6 +13,7 @@ import { ChapterNav } from '../components/reader/ChapterNav';
 import { AnnotationSidebar } from '../components/reader/AnnotationSidebar';
 import { SelectionPopup } from '../components/reader/SelectionPopup';
 import { AddChaptersModal } from '../components/reader/AddChaptersModal';
+import { ChapterEditor } from '../components/reader/ChapterEditor';
 import { showToast } from '../components/ui/Toast';
 import { usesTouchFriendlyEditing } from '../lib/touchEditing';
 
@@ -179,6 +180,7 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   const [editingAnn, setEditingAnn] = useState<{ id: string; note: string } | null>(null);
   const [topbarHidden, setTopbarHidden] = useState(false);
   const [addChaptersOpen, setAddChaptersOpen] = useState(false);
+  const [editingChapter, setEditingChapter] = useState<{ id: string; title: string; initialHtml: string } | null>(null);
   const totalWords = useRef(0);
   const lastScrollY = useRef(0);
   const topbarVisible = useRef(true);
@@ -226,12 +228,12 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     totalWords.current = manuscript.metadata.combinedMarkdown.trim().split(/\s+/).filter(Boolean).length;
 
     // An edit re-render: keep the reading posture — no fade-in, no resume toast,
-    // restore the exact scroll, re-apply edit affordance and re-anchor marks.
+    // restore the exact scroll, re-apply edit-mode class and re-anchor marks.
     const editScroll = useReaderStore.getState().editReturnScroll;
     if (editScroll != null) {
       setEditReturnScroll(null);
       c.querySelectorAll('p, blockquote, ul, ol').forEach(el => el.classList.add('visible'));
-      setupEditable(c, editModeRef.current);
+      c.classList.toggle('edit-mode', editModeRef.current);
       syncAnnotationDOM();
       window.scrollTo(0, editScroll);
       return;
@@ -243,7 +245,7 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     if (pendingIdx != null) {
       useUIStore.getState().setPendingChapterIndex(null);
       c.querySelectorAll('p, blockquote, ul, ol').forEach(el => el.classList.add('visible'));
-      if (editModeRef.current) setupEditable(c, true);
+      if (editModeRef.current) c.classList.add('edit-mode');
       syncAnnotationDOM();
       const target = chapters.find(ch => ch.index === pendingIdx);
       requestAnimationFrame(() => requestAnimationFrame(() => {
@@ -268,7 +270,7 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
       entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('visible'); entranceObs.current?.unobserve(e.target); } });
     }, { threshold: 0.08, rootMargin: '0px 0px -40px 0px' });
     c.querySelectorAll('p, blockquote, ul, ol').forEach(el => entranceObs.current?.observe(el));
-    if (editModeRef.current) setupEditable(c, true);
+    if (editModeRef.current) c.classList.add('edit-mode');
 
     window.scrollTo(0, 0);
     if (manuscript.id) {
@@ -296,7 +298,7 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     const sy = window.scrollY;
     c.innerHTML = parseMarkdown(md).html;
     c.querySelectorAll('p, blockquote, ul, ol').forEach(el => el.classList.add('visible'));
-    setupEditable(c, editModeRef.current);
+    c.classList.toggle('edit-mode', editModeRef.current);
     syncAnnotationDOM();
     window.scrollTo(0, sy);
   }, [manuscript, syncAnnotationDOM]);
@@ -397,26 +399,90 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   }, [manuscript, chapters, replaceMarkdown, openManuscript, rerenderInPlace, recordEdit, pushEditTransition, setEditReturnScroll]);
   useEffect(() => { commitRef.current = commitChapterEdit; }, [commitChapterEdit]);
 
-  // Apply/remove the editable affordance when the toggle flips. Leaving edit
-  // mode commits any block still focused.
+  // TipTap save: take markdown the editor serialized, find the chapter body span
+  // in the source, splice in the new body, persist, and re-render in place.
+  const handleTipTapSave = useCallback((bodyMarkdown: string) => {
+    const c = contentRef.current;
+    const md = manuscript?.metadata.combinedMarkdown;
+    if (!c || !md || !manuscript || !editingChapter) { setEditingChapter(null); return; }
+
+    const marker = c.querySelector(`#${CSS.escape(editingChapter.id)}`);
+    let h1el: HTMLElement | null = null;
+    let sib: Element | null = marker?.nextElementSibling ?? null;
+    while (sib) {
+      if (sib.tagName === 'H1') { h1el = sib as HTMLElement; break; }
+      sib = sib.nextElementSibling;
+    }
+    if (!h1el) { setEditingChapter(null); return; }
+
+    const headingEnd = Number(h1el.dataset.mdEnd);
+    if (Number.isNaN(headingEnd)) { setEditingChapter(null); return; }
+
+    let nextH1: Element | null = h1el.nextElementSibling;
+    while (nextH1 && nextH1.tagName !== 'H1') nextH1 = nextH1.nextElementSibling;
+
+    const norm = md.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    const bodyStart = headingEnd;
+    const bodyEnd = nextH1 ? Number((nextH1 as HTMLElement).dataset.mdStart) : norm.length;
+    const original = norm.slice(bodyStart, bodyEnd);
+
+    if (sameProse(bodyMarkdown, original)) { setEditingChapter(null); return; }
+
+    const res = applyBlockEdit(norm, bodyStart, bodyEnd, `\n\n${bodyMarkdown}\n\n`);
+    if (!res) { setEditingChapter(null); return; }
+
+    const updated = replaceMarkdown(manuscript.id, res.markdown);
+    if (updated) {
+      setEditReturnScroll(window.scrollY);
+      openManuscript(updated, parseMarkdown(res.markdown).chapters);
+      setEditingChapter(null);
+      showToast('Chapter saved.');
+    } else {
+      setEditingChapter(null);
+      showToast('Could not save — manuscript not cached.');
+    }
+  }, [manuscript, editingChapter, replaceMarkdown, openManuscript, setEditReturnScroll]);
+
+  // Apply/remove the edit-mode visual class when the toggle flips.
+  // TipTap owns the editing surface; we no longer make chapters contenteditable.
   useEffect(() => {
     const c = contentRef.current; if (!c) return;
     if (!editMode) {
-      if (activeEditBlockRef.current) {
-        commitRef.current(activeEditBlockRef.current);
-        activeEditBlockRef.current = null;
-      }
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- clear editor when leaving edit mode
+      setEditingChapter(null);
       const active = document.activeElement as HTMLElement | null;
       if (active && c.contains(active)) active.blur();
     } else {
-      try { document.execCommand('defaultParagraphSeparator', false, 'p'); } catch { /* unsupported */ }
       c.querySelectorAll('p, blockquote, ul, ol').forEach(el => el.classList.add('visible'));
       entranceObs.current?.disconnect();
     }
+    c.classList.toggle('edit-mode', editMode);
     if (editMode) stripAnnotationMarks(c);
-    setupEditable(c, editMode);
     if (!editMode) reapplyHighlights();
   }, [editMode, reapplyHighlights]);
+
+  // In edit mode, clicking a chapter body opens the TipTap editor for it.
+  useEffect(() => {
+    const c = contentRef.current; if (!c) return;
+    function onContentClick(e: MouseEvent) {
+      if (!editModeRef.current) return;
+      const block = (e.target as HTMLElement)?.closest?.('.chapter-block') as HTMLElement | null;
+      if (!block) return;
+      // Walk back from the block to find the chapter span (id="ch-N")
+      let prev: Element | null = block.previousElementSibling;
+      while (prev) {
+        if (prev.id && prev.id.startsWith('ch-')) break;
+        prev = prev.previousElementSibling;
+      }
+      if (!prev) return;
+      const ch = chapters.find(ch => ch.id === prev!.id);
+      if (!ch) return;
+      const html = block.innerHTML.replace(/<mark\b[^>]*>([\s\S]*?)<\/mark>/gi, '$1');
+      setEditingChapter({ id: ch.id, title: ch.title, initialHtml: html });
+    }
+    c.addEventListener('click', onContentClick as EventListener);
+    return () => c.removeEventListener('click', onContentClick as EventListener);
+  }, [chapters]);
 
   // Commit-on-blur (desktop), deferred commit (touch), Enter/Escape.
   useEffect(() => {
@@ -707,7 +773,15 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
           onClose={() => setEditingAnn(null)}
         />
       )}
-      <div id="content" ref={contentRef} />
+      <div id="content" ref={contentRef} style={editingChapter ? { display: 'none' } : undefined} />
+      {editingChapter && (
+        <ChapterEditor
+          chapterTitle={editingChapter.title}
+          initialHtml={editingChapter.initialHtml}
+          onSave={handleTipTapSave}
+          onCancel={() => { setEditingChapter(null); }}
+        />
+      )}
       <div id="end-mark">End of manuscript</div>
       <div id="bottom-strip" className={scrollPct > 5 ? 'visible' : ''}>
         <span id="pct-read">{scrollPct}% read</span>

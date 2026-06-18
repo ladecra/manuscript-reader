@@ -118,10 +118,17 @@ export function saveLibrary(library: StoredManuscript[]): void {
   const nextIds = new Set(library.map(m => m.id));
   for (const m of library) {
     const old = prev.get(m.id);
-    if (!old || manuscriptChanged(m, old)) { const rec = { ...m }; persist(() => provider.saveManuscript(rec)); }
+    if (!old || manuscriptChanged(m, old)) {
+      const rec = { ...m };
+      persist(() => provider.saveManuscript(rec));
+      syncPushManuscript(rec);
+    }
   }
   for (const m of cache.library) {
-    if (!nextIds.has(m.id)) persist(() => provider.deleteManuscript(m.id));
+    if (!nextIds.has(m.id)) {
+      persist(() => provider.deleteManuscript(m.id));
+      syncDeleteManuscript(m.id);
+    }
   }
   cache.library = library.map(copyMs);
 }
@@ -151,6 +158,7 @@ export function loadAnnotations(id: string): Annotation[] {
 export function saveAnnotations(id: string, annotations: Annotation[]): void {
   cache.annotations.set(id, annotations.map(copyAnn));
   persist(() => provider.saveAnnotations(id, annotations));
+  syncPushAnnotations(id, annotations);
 }
 
 export function getAnnotationStats(library: StoredManuscript[]): { total: number; readers: Set<string> } {
@@ -173,6 +181,7 @@ export function loadEdits(id: string): Edit[] {
 export function saveEdits(id: string, edits: Edit[]): void {
   cache.edits.set(id, edits.map(copyEdit));
   persist(() => provider.saveEdits(id, edits));
+  syncPushEdits(id, edits);
 }
 
 // ── Reader sessions ────────────────────────────────────────────────────────────
@@ -184,6 +193,7 @@ export function loadSessions(id: string): ReaderSession[] {
 export function saveSessions(id: string, sessions: ReaderSession[]): void {
   cache.sessions.set(id, sessions.map(copySession));
   persist(() => provider.saveSessions(id, sessions));
+  syncPushSessions(id, sessions);
 }
 
 // ── Reading position ────────────────────────────────────────────────────────────
@@ -197,6 +207,7 @@ export function savePosition(id: string, frac: number): void {
   const m = cache.library.find(x => x.id === id);
   if (m) m.progress = frac; // keep the library UI in sync without a manuscript rewrite
   persist(() => provider.savePosition(id, frac));
+  syncPushPosition(id, frac);
 }
 
 // ── Preferences (theme / font) ───────────────────────────────────────────────
@@ -217,4 +228,143 @@ export function loadFontSize(): number {
 }
 export function saveFontSize(n: number): void {
   try { localStorage.setItem(FONT_KEY, String(n)); } catch { /**/ }
+}
+
+// ── Supabase sync ─────────────────────────────────────────────────────────────
+// Optional. When configured, writes fan out to Supabase in the background and
+// performSync() merges remote state into the local cache (last-write-wins by
+// revision). The local IndexedDB layer remains the working store — Supabase is
+// purely additive and its failures never block local operation.
+
+import type { SupabaseSync } from './supabaseSync';
+
+let syncClient: SupabaseSync | null = null;
+let onSyncComplete: (() => void) | null = null;
+
+export function configureSync(client: SupabaseSync): void {
+  syncClient = client;
+}
+
+/** Called by main.tsx after the library store is alive so it can refresh UI. */
+export function setSyncCompleteHandler(fn: () => void): void {
+  onSyncComplete = fn;
+}
+
+/** Push any single entity to Supabase in the background (fire-and-forget). */
+export function syncPushManuscript(ms: StoredManuscript): void {
+  if (!syncClient) return;
+  const sc = syncClient;
+  writeChain = writeChain
+    .then(() => sc.pushManuscript(ms))
+    .catch(e => console.warn('[sync] push manuscript', e));
+}
+
+export function syncPushAnnotations(id: string, annotations: Annotation[]): void {
+  if (!syncClient) return;
+  const sc = syncClient;
+  writeChain = writeChain
+    .then(() => sc.pushAnnotations(id, annotations))
+    .catch(e => console.warn('[sync] push annotations', e));
+}
+
+export function syncPushEdits(id: string, edits: Edit[]): void {
+  if (!syncClient) return;
+  const sc = syncClient;
+  writeChain = writeChain
+    .then(() => sc.pushEdits(id, edits))
+    .catch(e => console.warn('[sync] push edits', e));
+}
+
+export function syncPushSessions(id: string, sessions: ReaderSession[]): void {
+  if (!syncClient) return;
+  const sc = syncClient;
+  writeChain = writeChain
+    .then(() => sc.pushSessions(id, sessions))
+    .catch(e => console.warn('[sync] push sessions', e));
+}
+
+export function syncPushPosition(id: string, frac: number): void {
+  if (!syncClient) return;
+  const sc = syncClient;
+  writeChain = writeChain
+    .then(() => sc.pushPosition(id, frac))
+    .catch(e => console.warn('[sync] push position', e));
+}
+
+export function syncDeleteManuscript(id: string): void {
+  if (!syncClient) return;
+  const sc = syncClient;
+  writeChain = writeChain
+    .then(() => sc.deleteManuscript(id))
+    .catch(e => console.warn('[sync] delete manuscript', e));
+}
+
+/**
+ * Full sync pass. Fetches all manuscript metadata from Supabase, then:
+ * - For each remote that is newer than local (higher revision): pulls the full
+ *   state (markdown from Storage + child entities) into the local cache and
+ *   persists to IndexedDB.
+ * - For each local that is newer than or missing from remote: pushes to Supabase.
+ * Calls the sync-complete handler when done so the library store can refresh.
+ */
+export async function performSync(): Promise<void> {
+  if (!syncClient) return;
+  const sc = syncClient;
+
+  let remoteAll: StoredManuscript[];
+  try { remoteAll = await sc.fetchAllMetadata(); }
+  catch (e) { console.warn('[sync] fetchAllMetadata failed', e); return; }
+
+  const remoteMap = new Map(remoteAll.map(m => [m.id, m]));
+  const localMap  = new Map(cache.library.map(m => [m.id, m]));
+
+  // Pull: remote is strictly newer
+  for (const remote of remoteAll) {
+    const local = localMap.get(remote.id);
+    if (local && (local.revision ?? 0) >= (remote.revision ?? 0)) continue;
+
+    try {
+      const [markdown, annotations, edits, sessions, position] = await Promise.all([
+        sc.fetchMarkdown(remote.id),
+        sc.fetchAnnotations(remote.id),
+        sc.fetchEdits(remote.id),
+        sc.fetchSessions(remote.id),
+        sc.fetchPosition(remote.id),
+      ]);
+      const updated: StoredManuscript = { ...remote, combinedMarkdown: markdown ?? undefined };
+      const idx = cache.library.findIndex(m => m.id === remote.id);
+      if (idx >= 0) cache.library[idx] = updated; else cache.library.unshift(updated);
+      cache.annotations.set(remote.id, annotations);
+      cache.edits.set(remote.id, edits);
+      cache.sessions.set(remote.id, sessions);
+      cache.positions.set(remote.id, position);
+      persist(async () => {
+        await provider.saveManuscript(updated);
+        await provider.saveAnnotations(remote.id, annotations);
+        await provider.saveEdits(remote.id, edits);
+        await provider.saveSessions(remote.id, sessions);
+        await provider.savePosition(remote.id, position);
+      });
+    } catch (e) {
+      console.warn('[sync] pull manuscript failed', remote.id, e);
+    }
+  }
+
+  // Push: local is newer than or absent from remote
+  for (const local of cache.library) {
+    const remote = remoteMap.get(local.id);
+    if (remote && (local.revision ?? 0) < (remote.revision ?? 0)) continue;
+
+    try {
+      await sc.pushManuscript(local);
+      await sc.pushAnnotations(local.id, cache.annotations.get(local.id) ?? []);
+      await sc.pushEdits(local.id, cache.edits.get(local.id) ?? []);
+      await sc.pushSessions(local.id, cache.sessions.get(local.id) ?? []);
+      await sc.pushPosition(local.id, cache.positions.get(local.id) ?? 0);
+    } catch (e) {
+      console.warn('[sync] push manuscript failed', local.id, e);
+    }
+  }
+
+  onSyncComplete?.();
 }
