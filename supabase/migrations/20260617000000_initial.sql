@@ -12,7 +12,7 @@
 
 -- ── Tables ────────────────────────────────────────────────────────────────────
 
-create table manuscripts (
+create table if not exists manuscripts (
   user_id       uuid        references auth.users on delete cascade not null,
   manuscript_id text        not null,
   revision      int         not null default 0,
@@ -21,7 +21,7 @@ create table manuscripts (
   primary key (user_id, manuscript_id)
 );
 
-create table manuscript_annotations (
+create table if not exists manuscript_annotations (
   user_id       uuid        references auth.users on delete cascade not null,
   manuscript_id text        not null,
   data          jsonb       not null default '[]',
@@ -29,7 +29,7 @@ create table manuscript_annotations (
   primary key (user_id, manuscript_id)
 );
 
-create table manuscript_edits (
+create table if not exists manuscript_edits (
   user_id       uuid        references auth.users on delete cascade not null,
   manuscript_id text        not null,
   data          jsonb       not null default '[]',
@@ -37,7 +37,7 @@ create table manuscript_edits (
   primary key (user_id, manuscript_id)
 );
 
-create table manuscript_sessions (
+create table if not exists manuscript_sessions (
   user_id       uuid        references auth.users on delete cascade not null,
   manuscript_id text        not null,
   data          jsonb       not null default '[]',
@@ -45,7 +45,7 @@ create table manuscript_sessions (
   primary key (user_id, manuscript_id)
 );
 
-create table manuscript_positions (
+create table if not exists manuscript_positions (
   user_id       uuid        references auth.users on delete cascade not null,
   manuscript_id text        not null,
   position      float       not null default 0,
@@ -60,7 +60,13 @@ returns trigger language plpgsql as $$
 begin new.updated_at = now(); return new; end;
 $$;
 
-create trigger manuscripts_updated_at           before update on manuscripts           for each row execute function _set_updated_at();
+drop trigger if exists manuscripts_updated_at            on manuscripts;
+drop trigger if exists manuscript_annotations_updated_at on manuscript_annotations;
+drop trigger if exists manuscript_edits_updated_at       on manuscript_edits;
+drop trigger if exists manuscript_sessions_updated_at    on manuscript_sessions;
+drop trigger if exists manuscript_positions_updated_at   on manuscript_positions;
+
+create trigger manuscripts_updated_at            before update on manuscripts            for each row execute function _set_updated_at();
 create trigger manuscript_annotations_updated_at before update on manuscript_annotations for each row execute function _set_updated_at();
 create trigger manuscript_edits_updated_at       before update on manuscript_edits       for each row execute function _set_updated_at();
 create trigger manuscript_sessions_updated_at    before update on manuscript_sessions    for each row execute function _set_updated_at();
@@ -74,6 +80,12 @@ alter table manuscript_edits       enable row level security;
 alter table manuscript_sessions    enable row level security;
 alter table manuscript_positions   enable row level security;
 
+drop policy if exists "own rows" on manuscripts;
+drop policy if exists "own rows" on manuscript_annotations;
+drop policy if exists "own rows" on manuscript_edits;
+drop policy if exists "own rows" on manuscript_sessions;
+drop policy if exists "own rows" on manuscript_positions;
+
 create policy "own rows" on manuscripts            for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "own rows" on manuscript_annotations for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "own rows" on manuscript_edits       for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
@@ -83,7 +95,10 @@ create policy "own rows" on manuscript_positions   for all using (auth.uid() = u
 -- ── Storage bucket ────────────────────────────────────────────────────────────
 -- Manuscript markdown files live at {user_id}/{manuscript_id}.md
 
-insert into storage.buckets (id, name, public) values ('manuscripts', 'manuscripts', false);
+insert into storage.buckets (id, name, public) values ('manuscripts', 'manuscripts', false)
+  on conflict (id) do nothing;
+
+drop policy if exists "own files" on storage.objects;
 
 create policy "own files" on storage.objects
   for all using (
