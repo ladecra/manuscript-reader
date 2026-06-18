@@ -26,7 +26,7 @@ interface AppShellProps {
 
 function getInitials(email: string): string {
   const [local] = email.split('@');
-  const parts = local.split(/[._+\-]/);
+  const parts = local.split(/[._+-]/);
   if (parts.length >= 2 && parts[0] && parts[1]) {
     return (parts[0][0] + parts[1][0]).toUpperCase();
   }
@@ -35,7 +35,7 @@ function getInitials(email: string): string {
 
 function getDisplayName(email: string): string {
   const [local] = email.split('@');
-  return local.replace(/[._+\-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  return local.replace(/[._+-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
 export function AppShell({
