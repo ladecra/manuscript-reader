@@ -4,13 +4,17 @@ import { GearIcon } from './Icons';
 import { AuthPanel } from '../auth/AuthPanel';
 import { supabaseConfigured, getSupabaseClient } from '../../engine/storage/supabaseClient';
 
-/** Topbar settings popover — collapses theme + text-size controls behind one gear. */
-export function SettingsMenu() {
+interface SettingsMenuProps {
+  /** Open the popover above the button instead of below (for rail footer placement). */
+  upward?: boolean;
+}
+
+/** Settings popover — theme + text-size controls. On mobile (≤860px) also shows auth. */
+export function SettingsMenu({ upward = false }: SettingsMenuProps) {
   const { theme, fontSize, toggleTheme, increaseFontSize, decreaseFontSize } = useUIStore();
   const [open, setOpen] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
 
-  // Resolve initial auth state and keep it current.
   useEffect(() => {
     if (!supabaseConfigured()) return;
     const sb = getSupabaseClient();
@@ -52,7 +56,11 @@ export function SettingsMenu() {
             role="menu"
             onMouseDown={e => e.stopPropagation()}
             style={{
-              position: 'absolute', top: 'calc(100% + 8px)', right: 0, zIndex: 199,
+              position: 'absolute',
+              ...(upward
+                ? { bottom: 'calc(100% + 8px)', top: 'auto' }
+                : { top: 'calc(100% + 8px)' }),
+              right: 0, zIndex: 199,
               minWidth: '190px', padding: '14px',
               background: 'var(--surface-high)', border: '1px solid var(--border)',
               display: 'flex', flexDirection: 'column', gap: '14px',
@@ -74,12 +82,14 @@ export function SettingsMenu() {
             </Section>
 
             {supabaseConfigured() && (
-              <Section label="Sync">
-                <AuthPanel
-                  userEmail={userEmail}
-                  onSignedOut={() => setUserEmail(null)}
-                />
-              </Section>
+              <div className="settings-sync-section">
+                <Section label="Sync">
+                  <AuthPanel
+                    userEmail={userEmail}
+                    onSignedOut={() => setUserEmail(null)}
+                  />
+                </Section>
+              </div>
             )}
           </div>
         </>

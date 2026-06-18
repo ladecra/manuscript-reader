@@ -1,5 +1,7 @@
-import { useMemo, useState, type ReactNode } from 'react';
-import { ChevronLeftIcon, LibraryIcon, StarIcon, ClockIcon, PlusIcon } from '../ui/Icons';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { ChevronLeftIcon, ChevronDownIcon, LibraryIcon, StarIcon, ClockIcon, PlusIcon } from '../ui/Icons';
+import { AuthPanel } from '../auth/AuthPanel';
+import { supabaseConfigured, getSupabaseClient } from '../../engine/storage/supabaseClient';
 
 export type LibraryNavFilter = 'all' | 'recent' | 'favorites';
 
@@ -22,6 +24,20 @@ interface AppShellProps {
   onNewManuscript?: () => void;
 }
 
+function getInitials(email: string): string {
+  const [local] = email.split('@');
+  const parts = local.split(/[._+\-]/);
+  if (parts.length >= 2 && parts[0] && parts[1]) {
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+  return local.slice(0, 2).toUpperCase();
+}
+
+function getDisplayName(email: string): string {
+  const [local] = email.split('@');
+  return local.replace(/[._+\-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
 export function AppShell({
   children,
   variant,
@@ -35,6 +51,20 @@ export function AppShell({
   onNewManuscript,
 }: AppShellProps) {
   const [collapsed, setCollapsed] = useState(false);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [authOpen, setAuthOpen] = useState(false);
+
+  useEffect(() => {
+    if (!supabaseConfigured()) return;
+    const sb = getSupabaseClient();
+    sb.auth.getSession().then(({ data: { session } }) => {
+      setUserEmail(session?.user.email ?? null);
+    });
+    const { data: { subscription } } = sb.auth.onAuthStateChange((_e, session) => {
+      setUserEmail(session?.user.email ?? null);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
 
   const showWorkspace = true;
 
@@ -131,10 +161,45 @@ export function AppShell({
         </div>
 
         <div className="app-shell-footer">
+          {supabaseConfigured() && (
+            <div className="app-shell-user-section">
+              {authOpen && (
+                <div className="app-shell-auth-flyout">
+                  <AuthPanel
+                    userEmail={userEmail}
+                    onSignedOut={() => { setUserEmail(null); setAuthOpen(false); }}
+                  />
+                </div>
+              )}
+              <button
+                type="button"
+                className="app-shell-user-chip"
+                onClick={() => setAuthOpen(o => !o)}
+                title={userEmail ? `Signed in as ${userEmail}` : 'Sign in to sync'}
+                aria-expanded={authOpen}
+              >
+                <span className="app-shell-user-avatar">
+                  {userEmail ? getInitials(userEmail) : '?'}
+                </span>
+                {!collapsed && (
+                  <>
+                    <span className="app-shell-user-name">
+                      {userEmail ? getDisplayName(userEmail) : 'Sign in'}
+                    </span>
+                    <ChevronDownIcon
+                      size={10}
+                      className={authOpen ? 'app-shell-chevron-flip' : undefined}
+                    />
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+
           <button
             type="button"
             className="app-shell-util-btn"
-            title="Collapse sidebar"
+            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             onClick={() => setCollapsed(c => !c)}
           >

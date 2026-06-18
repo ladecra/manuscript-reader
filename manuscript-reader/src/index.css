@@ -590,7 +590,14 @@ html.shell-scroll-lock body {
   flex-shrink: 0;
   padding-top: 12px;
   border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
+/* Sync/auth section in the settings gear — visible on mobile only (desktop uses the rail chip). */
+.settings-sync-section { display: block; }
+@media (min-width: 861px) { .settings-sync-section { display: none; } }
+
 .app-shell-util-btn {
   background: none; border: none; cursor: pointer; color: var(--dim);
   padding: 8px; display: flex; align-items: center; justify-content: center;
@@ -598,6 +605,61 @@ html.shell-scroll-lock body {
 }
 .app-shell-util-btn:hover { color: var(--muted); background: rgba(255, 255, 255, 0.03); }
 .app-shell-collapse-flip { transform: rotate(180deg); }
+
+/* User identity chip */
+.app-shell-user-section {
+  position: relative;
+}
+.app-shell-user-chip {
+  width: 100%; background: none; border: none; cursor: pointer;
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px; border-radius: var(--radius-sm, 4px);
+  color: var(--on-surface);
+}
+.app-shell-user-chip:hover { background: rgba(255, 255, 255, 0.04); }
+.app-shell-user-avatar {
+  flex-shrink: 0;
+  width: 28px; height: 28px; border-radius: 50%;
+  background: var(--muted); color: var(--surface);
+  display: flex; align-items: center; justify-content: center;
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.04em;
+  line-height: 1;
+}
+.app-shell-user-name {
+  flex: 1; min-width: 0;
+  font-family: 'Schibsted Grotesk', system-ui, sans-serif;
+  font-size: 12px; font-weight: 500;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  text-align: left;
+}
+.app-shell-chevron-flip { transform: rotate(180deg); }
+
+/* Auth flyout — anchored above the user chip */
+.app-shell-auth-flyout {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0; right: 0;
+  background: var(--surface-high);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 4px);
+  padding: 12px;
+  z-index: 199;
+}
+
+/* In collapsed state, hide text-only elements */
+.app-shell--collapsed .app-shell-user-name,
+.app-shell--collapsed .app-shell-user-chip > svg { display: none; }
+.app-shell--collapsed .app-shell-user-chip {
+  justify-content: center;
+  padding: 6px;
+}
+.app-shell--collapsed .app-shell-auth-flyout {
+  left: calc(100% + 8px);
+  bottom: 0;
+  right: auto;
+  min-width: 220px;
+}
 .app-shell--collapsed .app-shell-item-label,
 .app-shell--collapsed .app-shell-item-meta { display: none; }
 .app-shell--collapsed .app-shell-group-label { text-align: center; padding-left: 0; padding-right: 0; }

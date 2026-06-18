@@ -272,3 +272,23 @@ export function ClockIcon({ size = 15 }: IconProps) {
     </svg>
   );
 }
+
+export function HelpIcon({ size = 15 }: IconProps) {
+  return (
+    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.2"
+      strokeLinecap="round" strokeLinejoin="round" width={size} height={size}>
+      <circle cx="9" cy="9" r="6.5"/>
+      <path d="M7 7.2a2.1 2.1 0 0 1 4 .7c0 1.4-2 2-2 2"/>
+      <circle cx="9" cy="13" r=".4" fill="currentColor" stroke="none"/>
+    </svg>
+  );
+}
+
+export function ChevronDownIcon({ size = 10, className }: IconProps) {
+  return (
+    <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.4"
+      strokeLinecap="round" strokeLinejoin="round" width={size} height={size} className={className}>
+      <polyline points="2,3.5 5,6.5 8,3.5"/>
+    </svg>
+  );
+}
