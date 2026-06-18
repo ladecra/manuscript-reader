@@ -59,11 +59,14 @@ export const useLibraryStore = create<LibraryStore>((_set, _get) => {
       const { chapters } = parseMarkdown(md);
       const wordCount = countWords(md);
       const existing = stored.findIndex(m => m.id === id);
+      const prev = existing >= 0 ? stored[existing] : null;
+      const contentChanged = prev ? prev.combinedMarkdown !== md : true;
       const flat: StoredManuscript = {
         id, title, wordCount, chapterCount: chapters.length, lastOpened: Date.now(),
-        status: existing >= 0 ? stored[existing].status : 'Draft',
-        author: existing >= 0 ? stored[existing].author : undefined,
+        status: prev ? prev.status : 'Draft',
+        author: prev ? prev.author : undefined,
         combinedMarkdown: md,
+        revision: contentChanged ? (prev?.revision ?? 0) + 1 : (prev?.revision ?? 1),
       };
       if (existing >= 0) stored[existing] = flat; else stored.unshift(flat);
       saveLibrary(stored);

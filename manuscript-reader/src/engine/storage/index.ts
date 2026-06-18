@@ -299,6 +299,12 @@ export function syncDeleteManuscript(id: string): void {
     .catch(e => console.warn('[sync] delete manuscript', e));
 }
 
+export interface SyncResult {
+  pulled: number;
+  pushed: number;
+  failed: boolean;
+}
+
 /**
  * Full sync pass. Fetches all manuscript metadata from Supabase, then:
  * - For each remote that is newer than local (higher revision): pulls the full
@@ -306,14 +312,16 @@ export function syncDeleteManuscript(id: string): void {
  *   persists to IndexedDB.
  * - For each local that is newer than or missing from remote: pushes to Supabase.
  * Calls the sync-complete handler when done so the library store can refresh.
+ * Returns a summary of what changed (used by the caller to show feedback).
  */
-export async function performSync(): Promise<void> {
-  if (!syncClient) return;
+export async function performSync(): Promise<SyncResult> {
+  if (!syncClient) return { pulled: 0, pushed: 0, failed: false };
   const sc = syncClient;
+  const result: SyncResult = { pulled: 0, pushed: 0, failed: false };
 
   let remoteAll: StoredManuscript[];
   try { remoteAll = await sc.fetchAllMetadata(); }
-  catch (e) { console.warn('[sync] fetchAllMetadata failed', e); return; }
+  catch (e) { console.warn('[sync] fetchAllMetadata failed', e); return { ...result, failed: true }; }
 
   const remoteMap = new Map(remoteAll.map(m => [m.id, m]));
   const localMap  = new Map(cache.library.map(m => [m.id, m]));
@@ -345,15 +353,17 @@ export async function performSync(): Promise<void> {
         await provider.saveSessions(remote.id, sessions);
         await provider.savePosition(remote.id, position);
       });
+      result.pulled++;
     } catch (e) {
       console.warn('[sync] pull manuscript failed', remote.id, e);
+      result.failed = true;
     }
   }
 
-  // Push: local is newer than or absent from remote
+  // Push: local is strictly newer than remote, or remote doesn't exist yet
   for (const local of cache.library) {
     const remote = remoteMap.get(local.id);
-    if (remote && (local.revision ?? 0) < (remote.revision ?? 0)) continue;
+    if (remote && (local.revision ?? 0) <= (remote.revision ?? 0)) continue;
 
     try {
       await sc.pushManuscript(local);
@@ -361,10 +371,13 @@ export async function performSync(): Promise<void> {
       await sc.pushEdits(local.id, cache.edits.get(local.id) ?? []);
       await sc.pushSessions(local.id, cache.sessions.get(local.id) ?? []);
       await sc.pushPosition(local.id, cache.positions.get(local.id) ?? 0);
+      result.pushed++;
     } catch (e) {
       console.warn('[sync] push manuscript failed', local.id, e);
+      result.failed = true;
     }
   }
 
   onSyncComplete?.();
+  return result;
 }

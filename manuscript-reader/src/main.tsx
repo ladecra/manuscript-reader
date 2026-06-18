@@ -2,7 +2,7 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { App } from './App'
 import './index.css'
-import { hydrateStorage, setPersistErrorHandler, configureSync, setSyncCompleteHandler, performSync } from './engine/storage'
+import { hydrateStorage, setPersistErrorHandler, configureSync, setSyncCompleteHandler, performSync, type SyncResult } from './engine/storage'
 import { useLibraryStore } from './state/libraryStore'
 import { showToast } from './components/ui/Toast'
 import { supabaseConfigured, getSupabaseClient } from './engine/storage/supabaseClient'
@@ -11,6 +11,21 @@ import { SupabaseSync } from './engine/storage/supabaseSync'
 setPersistErrorHandler(() =>
   showToast('Could not save — your device may be out of storage space.', 6000),
 )
+
+function showSyncToast(r: SyncResult) {
+  if (r.failed) {
+    showToast('Sync error — changes may not have saved to the cloud.', 6000);
+  } else if (r.pulled > 0 && r.pushed > 0) {
+    showToast(`Library synced — ${r.pulled} pulled, ${r.pushed} pushed.`);
+  } else if (r.pulled > 0) {
+    const label = r.pulled === 1 ? '1 manuscript' : `${r.pulled} manuscripts`;
+    showToast(`${label} synced from your account.`);
+  } else if (r.pushed > 0) {
+    const label = r.pushed === 1 ? '1 manuscript' : `${r.pushed} manuscripts`;
+    showToast(`${label} saved to your account.`);
+  }
+  // No toast when already in sync — would fire on every page load.
+}
 
 setSyncCompleteHandler(() => useLibraryStore.getState().refresh())
 
@@ -39,7 +54,7 @@ async function init() {
     const { data: { session } } = await sb.auth.getSession();
     if (session) {
       configureSync(new SupabaseSync(sb, session.user.id));
-      performSync().catch(e => console.warn('[sync] background sync failed', e));
+      performSync().then(showSyncToast).catch(e => console.warn('[sync] background sync failed', e));
     }
 
     // Keep sync configured for the lifetime of the session (handles magic-link
@@ -47,7 +62,7 @@ async function init() {
     sb.auth.onAuthStateChange((_event, newSession) => {
       if (newSession) {
         configureSync(new SupabaseSync(sb, newSession.user.id));
-        performSync().catch(e => console.warn('[sync] post-auth sync failed', e));
+        performSync().then(showSyncToast).catch(e => console.warn('[sync] post-auth sync failed', e));
       } else {
         configureSync(null as unknown as SupabaseSync); // clear sync client on sign-out
       }
