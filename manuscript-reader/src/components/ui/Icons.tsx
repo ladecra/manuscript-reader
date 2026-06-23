@@ -215,6 +215,17 @@ export function ExportTrayIcon({ size = 17 }: IconProps) {
   );
 }
 
+export function DownloadIcon({ size = 15, className }: IconProps) {
+  return (
+    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.2"
+      strokeLinecap="square" width={size} height={size} className={className}>
+      <line x1="9" y1="3" x2="9" y2="11"/>
+      <polyline points="5.5,8 9,11.5 12.5,8"/>
+      <path d="M3.5 14.5h11"/>
+    </svg>
+  );
+}
+
 export function LayersIcon({ size = 17 }: IconProps) {
   return (
     <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.2"
@@ -289,6 +300,27 @@ export function ChevronDownIcon({ size = 10, className }: IconProps) {
     <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.4"
       strokeLinecap="round" strokeLinejoin="round" width={size} height={size} className={className}>
       <polyline points="2,3.5 5,6.5 8,3.5"/>
+    </svg>
+  );
+}
+
+export function ListLayoutIcon({ size = 14 }: IconProps) {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2"
+      strokeLinecap="round" width={size} height={size}>
+      <path d="M3 4.5h10M3 8h10M3 11.5h10"/>
+    </svg>
+  );
+}
+
+export function GridLayoutIcon({ size = 14 }: IconProps) {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2"
+      strokeLinecap="round" strokeLinejoin="round" width={size} height={size}>
+      <rect x="3" y="3" width="4.5" height="4.5" rx="0.5"/>
+      <rect x="8.5" y="3" width="4.5" height="4.5" rx="0.5"/>
+      <rect x="3" y="8.5" width="4.5" height="4.5" rx="0.5"/>
+      <rect x="8.5" y="8.5" width="4.5" height="4.5" rx="0.5"/>
     </svg>
   );
 }

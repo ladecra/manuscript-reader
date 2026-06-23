@@ -50,10 +50,10 @@ export function AnnotationSidebar({
   };
 
   return (
-    <div id="ann-sidebar" className={open ? 'open' : ''}>
-      <div className="ann-sidebar-header">
+    <div id="ann-sidebar" className={`panel panel--right${open ? ' open' : ''}`}>
+      <div className="ann-sidebar-header panel-header">
         <div className="ann-sidebar-title-row">
-          <span className="ann-sidebar-title">Annotations</span>
+          <span className="panel-title">Annotations</span>
           <button id="ann-close" onClick={onClose} aria-label="Close">
             <XIcon size={14} />
           </button>
@@ -63,7 +63,7 @@ export function AnnotationSidebar({
           {(['all', ...ANNOTATION_TYPES] as const).map(t => (
             <button
               key={t}
-              className={`ann-tab${activeFilter === t ? ' active' : ''}`}
+              className={`tab${activeFilter === t ? ' active' : ''}`}
               data-filter={t}
               onClick={() => setActiveFilter(t)}
             >
@@ -92,10 +92,10 @@ export function AnnotationSidebar({
         )}
       </div>
 
-      <div className="ann-sidebar-footer">
+      <div className="panel-footer">
         <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', marginBottom: '10px' }}>
           <button
-            className="text-btn"
+            className="btn-ghost"
             style={{ fontSize: '10px', padding: '6px 0' }}
             onClick={() => importRef.current?.click()}
           >

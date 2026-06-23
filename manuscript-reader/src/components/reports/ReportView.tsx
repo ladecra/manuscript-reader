@@ -1,4 +1,4 @@
-import type { EditorialSignals, ChapterStat } from '../../engine/types';
+import type { EditorialSignals, ChapterStat, ProseAnalysis, ChapterProse } from '../../engine/types';
 import { ANNOTATION_TYPES, ANNOTATION_LABELS, ANNOTATION_COLORS } from '../../engine/types';
 
 // The Manuscript Intelligence content, rendered inline on the manuscript hub's
@@ -7,7 +7,11 @@ import { ANNOTATION_TYPES, ANNOTATION_LABELS, ANNOTATION_COLORS } from '../../en
 // precomputed EditorialSignals; jumping a chapter is delegated to the host.
 export function ReportView({ signals, onJump }: { signals: EditorialSignals | null; onJump: (index: number) => void }) {
   const report = signals?.report ?? null;
-  if (!report || report.totalAnns === 0) {
+  const prose = signals?.prose ?? null;
+  const hasAnnotations = !!report && report.totalAnns > 0;
+  const hasProse = !!prose && prose.chapters.some(c => c.words > 0);
+
+  if (!hasAnnotations && !hasProse) {
     return (
       <div className="rp-empty">
         <p>No annotations yet.</p>
@@ -17,7 +21,23 @@ export function ReportView({ signals, onJump }: { signals: EditorialSignals | nu
       </div>
     );
   }
-  return <ReportBody signals={signals!} onJump={onJump} />;
+
+  // Prose analysis is text-derived, so it's present the moment a manuscript loads —
+  // it leads, before any annotation-derived findings. The annotation sections only
+  // render once there's at least one annotation.
+  return (
+    <>
+      {hasProse && <ProseSection prose={prose!} onJump={onJump} />}
+      {hasAnnotations && <ReportBody signals={signals!} onJump={onJump} />}
+      {!hasAnnotations && hasProse && (
+        <Section title="Reader feedback">
+          <div className="rp-finding-desc">
+            No annotations yet. Open the reader and select text to begin — your marks, and any imported editor or beta-reader feedback, fill in here.
+          </div>
+        </Section>
+      )}
+    </>
+  );
 }
 
 function ReportBody({ signals, onJump }: { signals: EditorialSignals; onJump: (i: number) => void }) {
@@ -122,6 +142,79 @@ function ReportBody({ signals, onJump }: { signals: EditorialSignals; onJump: (i
   );
 }
 
+// ── Prose (text-derived, Tier 1) ──────────────────────────────────────────────
+// Factual measurements of the prose itself, framed only against this manuscript's
+// own averages — never an external "correct" style, never a judgment. Leads with
+// the glanceable signals: chapter length (with self-relative outliers), dialogue
+// balance, and sentence rhythm.
+
+// A chapter is a "length outlier" when it's notably longer/shorter than the
+// manuscript's mean. Neutral threshold — flag the genuinely off, stay quiet otherwise.
+const LONG = 1.4, SHORT = 0.6;
+
+function ProseSection({ prose, onJump }: { prose: ProseAnalysis; onJump: (i: number) => void }) {
+  const { baselines: b, chapters } = prose;
+
+  return (
+    <Section title="Prose">
+      <div className="rp-overview-grid">
+        <div className="rp-stat">
+          <span className="rp-stat-num">{b.totalWords.toLocaleString()}</span>
+          <span className="rp-stat-label">Words</span>
+        </div>
+        <div className="rp-stat">
+          <span className="rp-stat-num">{Math.round(b.meanChapterWords).toLocaleString()}</span>
+          <span className="rp-stat-label">Avg chapter</span>
+        </div>
+        <div className="rp-stat">
+          <span className="rp-stat-num">{Math.round(b.dialogueRatio * 100)}%</span>
+          <span className="rp-stat-label">Dialogue</span>
+        </div>
+        <div className="rp-stat">
+          <span className="rp-stat-num">{b.meanSentenceWords}</span>
+          <span className="rp-stat-label">Avg sentence</span>
+        </div>
+      </div>
+
+      <div className="rp-finding-desc" style={{ marginTop: '14px' }}>
+        Measured from the text itself — every figure is a count, compared only to this manuscript's own average. Nothing here is a judgment.
+      </div>
+
+      <div className="rp-prose-table">
+        <div className="rp-prose-row rp-prose-head">
+          <span>Chapter</span>
+          <span>Length</span>
+          <span>Dialogue</span>
+          <span>Sentence</span>
+        </div>
+        {chapters.filter(c => c.words > 0).map(c => (
+          <ProseRow key={c.index} c={c} meanChapterWords={b.meanChapterWords} onJump={onJump} />
+        ))}
+      </div>
+    </Section>
+  );
+}
+
+function ProseRow({ c, meanChapterWords, onJump }: { c: ChapterProse; meanChapterWords: number; onJump: (i: number) => void }) {
+  const ratio = meanChapterWords > 0 ? c.words / meanChapterWords : 1;
+  const outlier = ratio >= LONG || ratio <= SHORT;
+  return (
+    <button
+      className="rp-prose-row rp-prose-rowbtn"
+      onClick={() => onJump(c.index)}
+      title={`Jump to ${c.title || `Ch. ${c.index}`} · ${c.paragraphs} paragraphs · ${c.scenes} scene${c.scenes !== 1 ? 's' : ''} · sentence-length variance ${c.sentenceLengthVariance}`}
+    >
+      <span className="rp-prose-name">{c.title ? c.title.slice(0, 22) : `Ch. ${c.index}`}</span>
+      <span className="rp-prose-cell">
+        {c.words.toLocaleString()}
+        {outlier && <span className="rp-prose-rel"> · {ratio.toFixed(1)}×</span>}
+      </span>
+      <span className="rp-prose-cell">{Math.round(c.dialogueRatio * 100)}%</span>
+      <span className="rp-prose-cell">{c.meanSentenceWords}w</span>
+    </button>
+  );
+}
+
 function ReaderConsensus({ signals, onJump }: { signals: EditorialSignals; onJump: (i: number) => void }) {
   const { readerCount, completionRate, versionsRead, readerAgreement } = signals;
   const finishedPct = Math.round(completionRate * 100);
@@ -149,7 +242,7 @@ function ReaderConsensus({ signals, onJump }: { signals: EditorialSignals; onJum
 
       <div className="rp-finding" style={{ marginTop: '16px' }}>
         <div className="rp-finding-head">
-          <span className="rp-finding-dot" style={{ background: 'var(--primary)' }} />
+          <span className="rp-finding-dot" style={{ background: 'var(--ink)' }} />
           <span className="rp-finding-title">Where readers agree</span>
         </div>
         <div className="rp-finding-desc">
@@ -175,7 +268,7 @@ function ReaderConsensus({ signals, onJump }: { signals: EditorialSignals; onJum
             })}
           </div>
         ) : (
-          <div style={{ color: 'var(--dim)', fontFamily: "'Schibsted Grotesk', system-ui, sans-serif", fontSize: '12px', fontStyle: 'italic', padding: '6px 0' }}>
+          <div style={{ color: 'var(--dim)', fontFamily: "'Hanken Grotesk', system-ui, sans-serif", fontSize: '12px', fontStyle: 'italic', padding: '6px 0' }}>
             No overlapping reactions yet.
           </div>
         )}
@@ -228,7 +321,7 @@ function Finding({
           ))}
         </div>
       ) : (
-        <div style={{ color: 'var(--dim)', fontFamily: "'Schibsted Grotesk', system-ui, sans-serif", fontSize: '12px', fontStyle: 'italic', padding: '6px 0' }}>
+        <div style={{ color: 'var(--dim)', fontFamily: "'Hanken Grotesk', system-ui, sans-serif", fontSize: '12px', fontStyle: 'italic', padding: '6px 0' }}>
           None yet.
         </div>
       )}

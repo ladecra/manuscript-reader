@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { ChevronLeftIcon, ChevronDownIcon, LibraryIcon, StarIcon, ClockIcon, PlusIcon } from '../ui/Icons';
+import { ChevronLeftIcon, ChevronDownIcon, LibraryIcon, StarIcon, PlusIcon, BookIcon, QuillIcon } from '../ui/Icons';
+
+/** How many manuscripts to surface in the rail's Recent Files shelf. */
+const RECENT_FILES_LIMIT = 4;
 import { AuthPanel } from '../auth/AuthPanel';
 import { supabaseConfigured, getSupabaseClient } from '../../engine/storage/supabaseClient';
+import { getInitials, getDisplayName } from '../../lib/userDisplay';
 
 export type LibraryNavFilter = 'all' | 'recent' | 'favorites';
 
@@ -22,20 +26,11 @@ interface AppShellProps {
   workspaceManuscripts?: WorkspaceManuscriptRow[];
   onSwitchManuscript?: (id: string) => void;
   onNewManuscript?: () => void;
-}
-
-function getInitials(email: string): string {
-  const [local] = email.split('@');
-  const parts = local.split(/[._+-]/);
-  if (parts.length >= 2 && parts[0] && parts[1]) {
-    return (parts[0][0] + parts[1][0]).toUpperCase();
-  }
-  return local.slice(0, 2).toUpperCase();
-}
-
-function getDisplayName(email: string): string {
-  const [local] = email.split('@');
-  return local.replace(/[._+-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  /** Wordmark is the "home" affordance — back out to the marketing landing. */
+  onHome?: () => void;
+  /** When the global topbar is hidden (library), the rail carries the wordmark
+   *  and the shell fills from the top of the viewport. */
+  bareTop?: boolean;
 }
 
 export function AppShell({
@@ -49,6 +44,8 @@ export function AppShell({
   workspaceManuscripts = [],
   onSwitchManuscript,
   onNewManuscript,
+  onHome,
+  bareTop = false,
 }: AppShellProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
@@ -66,7 +63,9 @@ export function AppShell({
     return () => subscription.unsubscribe();
   }, []);
 
-  const showWorkspace = true;
+  // The v3 rail is a stable Library + Collections nav on every shell screen
+  // (library + hub); the per-manuscript switcher is retired from the rail.
+  const showWorkspace = false;
 
   const workspaceRows = useMemo(() => {
     if (!activeManuscriptId) return workspaceManuscripts;
@@ -75,9 +74,33 @@ export function AppShell({
     return active ? [active, ...rest] : workspaceManuscripts;
   }, [workspaceManuscripts, activeManuscriptId]);
 
+  // Recent Files shelf — most-recently-opened first (workspaceManuscripts is
+  // already sorted by lastOpened upstream), capped at RECENT_FILES_LIMIT.
+  const recentFiles = useMemo(
+    () => workspaceManuscripts.slice(0, RECENT_FILES_LIMIT),
+    [workspaceManuscripts],
+  );
+
   return (
-    <div className={`app-shell${collapsed ? ' app-shell--collapsed' : ''}`}>
+    <div className={`app-shell${collapsed ? ' app-shell--collapsed' : ''}${bareTop ? ' app-shell--bare' : ''}`}>
       <aside className="app-shell-rail" aria-label="Application">
+        {bareTop && (
+          <button
+            type="button"
+            className="app-shell-brand"
+            onClick={onHome}
+            title="Home"
+            aria-label="Vellibris — home"
+          >
+            <QuillIcon size={16} />
+            {!collapsed && (
+              <span className="app-shell-brand-text">
+                <span className="app-shell-brand-word">Vellibris</span>
+                <span className="app-shell-brand-sub">Manuscript Reader</span>
+              </span>
+            )}
+          </button>
+        )}
         <div className="app-shell-scroll">
           {showWorkspace && (
             <div className="app-shell-workspace">
@@ -138,15 +161,6 @@ export function AppShell({
             </button>
             <button
               type="button"
-              className={`app-shell-item${libraryFilter === 'recent' && variant === 'library' ? ' active' : ''}`}
-              onClick={() => onLibraryFilter('recent')}
-              title="Recent"
-            >
-              <span className="app-shell-item-icon"><ClockIcon size={14} /></span>
-              {!collapsed && <span className="app-shell-item-label">Recent</span>}
-            </button>
-            <button
-              type="button"
               className={`app-shell-item${libraryFilter === 'favorites' && variant === 'library' ? ' active' : ''}`}
               onClick={() => onLibraryFilter('favorites')}
               title="Favorites"
@@ -158,6 +172,28 @@ export function AppShell({
               )}
             </button>
           </nav>
+
+          {variant !== 'reader' && recentFiles.length > 0 && (
+            <>
+              <div className="app-shell-group-label app-shell-group-label--collections">
+                {collapsed ? '·' : 'Recent Files'}
+              </div>
+              <nav className="app-shell-nav" aria-label="Recent files">
+                {recentFiles.map(m => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    className={`app-shell-item app-shell-item--collection${m.id === activeManuscriptId ? ' active' : ''}`}
+                    onClick={() => onSwitchManuscript?.(m.id)}
+                    title={m.title}
+                  >
+                    <span className="app-shell-item-icon"><BookIcon size={14} /></span>
+                    {!collapsed && <span className="app-shell-item-label">{m.title}</span>}
+                  </button>
+                ))}
+              </nav>
+            </>
+          )}
         </div>
 
         <div className="app-shell-footer">
@@ -198,7 +234,7 @@ export function AppShell({
 
           <button
             type="button"
-            className="app-shell-util-btn"
+            className="btn-icon"
             title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             onClick={() => setCollapsed(c => !c)}

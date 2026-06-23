@@ -98,4 +98,15 @@ export class IndexedDbProvider implements StorageProvider {
     const db = await this.db();
     await db.put(STORE, frac, key.position(id));
   }
+
+  async loadCover(id: string): Promise<string | null> {
+    const db = await this.db();
+    return ((await db.get(STORE, key.cover(id))) as string) ?? null;
+  }
+
+  async saveCover(id: string, dataUrl: string | null): Promise<void> {
+    const db = await this.db();
+    if (dataUrl === null) await db.delete(STORE, key.cover(id));
+    else await db.put(STORE, dataUrl, key.cover(id));
+  }
 }

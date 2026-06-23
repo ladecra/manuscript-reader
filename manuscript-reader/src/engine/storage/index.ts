@@ -126,7 +126,10 @@ export function saveLibrary(library: StoredManuscript[]): void {
   }
   for (const m of cache.library) {
     if (!nextIds.has(m.id)) {
-      persist(() => provider.deleteManuscript(m.id));
+      persist(async () => {
+        await provider.deleteManuscript(m.id);
+        await provider.saveCover(m.id, null);
+      });
       syncDeleteManuscript(m.id);
     }
   }
@@ -208,6 +211,19 @@ export function savePosition(id: string, frac: number): void {
   if (m) m.progress = frac; // keep the library UI in sync without a manuscript rewrite
   persist(() => provider.savePosition(id, frac));
   syncPushPosition(id, frac);
+}
+
+// ── Cover images ───────────────────────────────────────────────────────────────
+// Stored separately from the manuscript record (images are large; keeping them
+// off StoredManuscript means the library list load stays fast). Covers are NOT
+// cached in memory — they're loaded on demand per component.
+
+export async function loadCover(id: string): Promise<string | null> {
+  return provider.loadCover(id);
+}
+
+export function saveCover(id: string, dataUrl: string | null): void {
+  persist(() => provider.saveCover(id, dataUrl));
 }
 
 // ── Preferences (theme / font) ───────────────────────────────────────────────

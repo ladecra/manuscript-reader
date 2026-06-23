@@ -41,14 +41,18 @@ export function ChapterEditor({ chapterTitle, initialHtml, onSave, onCancel }: C
   return (
     <div className="chapter-editor">
       <div className="chapter-editor-header">
+        <span className="chapter-editor-eyebrow">Manuscript view · editing</span>
         <span className="chapter-editor-title">{chapterTitle}</span>
-        <div className="chapter-editor-actions">
-          <button className="chapter-editor-cancel" onClick={onCancel} type="button">Cancel</button>
-          <button className="chapter-editor-save" onClick={handleSave} type="button">Save</button>
-        </div>
       </div>
       <EditorContent editor={editor} className="chapter-editor-content" />
       <div className="chapter-editor-hint">⌘S to save · Esc to cancel · ⌘B bold · ⌘I italic</div>
+
+      {/* Fixed action bar — always reachable without scrolling back to the top
+          (the old top-only Save was a real pain on long chapters / mobile). */}
+      <div className="chapter-editor-bar" role="toolbar" aria-label="Editing actions">
+        <button className="chapter-editor-cancel" onClick={onCancel} type="button">Cancel</button>
+        <button className="chapter-editor-save" onClick={handleSave} type="button">Save &amp; close</button>
+      </div>
     </div>
   );
 }

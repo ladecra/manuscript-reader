@@ -5,6 +5,19 @@ import { workspaceRailOpenByDefault, WORKSPACE_RAIL_MOBILE_MAX_PX } from '../eng
 
 export type Screen = 'landing' | 'library' | 'load' | 'manuscript' | 'reader';
 
+/** The reader's three postures (Vellibris model). Derived from the existing
+ *  editMode / annSidebarOpen booleans so all legacy effects keep working:
+ *    reading      → clean immersive prose (annotation column faded out)
+ *    manuscript   → the editing surface (was: editMode)
+ *    annotations  → annotation column active (was: annSidebarOpen) */
+export type ReaderMode = 'reading' | 'manuscript' | 'annotations';
+
+export function readerModeOf(s: { editMode: boolean; annSidebarOpen: boolean }): ReaderMode {
+  if (s.editMode) return 'manuscript';
+  if (s.annSidebarOpen) return 'annotations';
+  return 'reading';
+}
+
 interface UIStore {
   screen: Screen;
   theme: 'light' | 'dark';
@@ -13,6 +26,7 @@ interface UIStore {
   // Panel state (reader)
   navOpen: boolean;
   annSidebarOpen: boolean;
+  annSidebarCollapsed: boolean;
   editMode: boolean;
   workspaceRailOpen: boolean;
   hubPane: HubPane;
@@ -40,11 +54,13 @@ interface UIStore {
 
   openAnnSidebar: () => void;
   closeAnnSidebar: () => void;
+  collapseAnnSidebar: () => void;
   toggleAnnSidebar: () => void;
 
   toggleEditMode: () => void;
   enterEditMode: () => void;
   exitEditMode: () => void;
+  setReaderMode: (m: ReaderMode) => void;
 
   toggleWorkspaceRail: () => void;
   openWorkspaceRail: () => void;
@@ -66,6 +82,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   fontSize: loadFontSize(),
   navOpen: false,
   annSidebarOpen: false,
+  annSidebarCollapsed: false,
   editMode: false,
   workspaceRailOpen: false,
   hubPane: 'contents',
@@ -109,8 +126,9 @@ export const useUIStore = create<UIStore>((set, get) => ({
   closeNav:  () => set({ navOpen: false }),
   toggleNav: () => set(s => ({ navOpen: !s.navOpen })),
 
-  openAnnSidebar()   { set({ annSidebarOpen: true }); },
-  closeAnnSidebar()  { set({ annSidebarOpen: false }); },
+  openAnnSidebar()     { set({ annSidebarOpen: true, annSidebarCollapsed: false }); },
+  closeAnnSidebar()    { set({ annSidebarOpen: false, annSidebarCollapsed: false }); },
+  collapseAnnSidebar() { set({ annSidebarCollapsed: true }); },
   toggleAnnSidebar() {
     if (get().annSidebarOpen) get().closeAnnSidebar();
     else get().openAnnSidebar();
@@ -120,6 +138,15 @@ export const useUIStore = create<UIStore>((set, get) => ({
   toggleEditMode() { set(s => ({ editMode: !s.editMode, navOpen: false, annSidebarOpen: false })); },
   enterEditMode()  { set({ editMode: true, navOpen: false, annSidebarOpen: false }); },
   exitEditMode()   { set({ editMode: false }); },
+
+  // The single entry point for the 3-mode switch. Maps each posture onto the
+  // existing booleans so legacy reader effects (DOM edit-mode class, mark
+  // stripping, sidebar) continue to drive off the same state.
+  setReaderMode(m) {
+    if (m === 'manuscript')       set({ editMode: true,  annSidebarOpen: false, annSidebarCollapsed: false, navOpen: false });
+    else if (m === 'annotations') set({ editMode: false, annSidebarOpen: true,  annSidebarCollapsed: false, navOpen: false });
+    else                          set({ editMode: false, annSidebarOpen: false, annSidebarCollapsed: false });
+  },
 
   toggleWorkspaceRail() { set(s => ({ workspaceRailOpen: !s.workspaceRailOpen })); },
   openWorkspaceRail()   { set({ workspaceRailOpen: true }); },

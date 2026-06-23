@@ -1,6 +1,7 @@
-import React, { useEffect, useRef, useCallback, useState } from 'react';
+import React, { useEffect, useRef, useCallback, useState, useMemo } from 'react';
 import type { AnnotationType, TextAnchor, Chapter } from '../engine/types';
 import { buildAnchor, locateAnchor, anchorFromQuote } from '../engine/annotations/anchor';
+import { resolveAnnotationChapters } from '../engine/annotations/chapterResolve';
 import { applyBlockEdit, htmlToMarkdownBlocks, sameProse, serializeContentDomToMarkdown } from '../engine/manuscript/blockEdit';
 import { matchMarkdownBlockPrefix } from '../engine/manuscript/editMarkdownShortcut';
 import { applyMarkdownPromoteInBlock, lineTextBeforeCaretInChapterBlock } from '../lib/readerEditDom';
@@ -14,6 +15,7 @@ import { AnnotationSidebar } from '../components/reader/AnnotationSidebar';
 import { SelectionPopup } from '../components/reader/SelectionPopup';
 import { AddChaptersModal } from '../components/reader/AddChaptersModal';
 import { ChapterEditor } from '../components/reader/ChapterEditor';
+import { AnnMarginColumn } from '../components/reader/AnnMarginColumn';
 import { showToast } from '../components/ui/Toast';
 import { usesTouchFriendlyEditing } from '../lib/touchEditing';
 
@@ -70,11 +72,7 @@ function chapterBlockFor(container: HTMLElement, chapterId: string): HTMLElement
   return (el as HTMLElement) ?? null;
 }
 
-function markByAnchor(container: HTMLElement, anchor: TextAnchor, id: string, type: AnnotationType): HTMLElement | null {
-  // Scope resolution to the anchored chapter when the anchor carries one (and it
-  // still exists); otherwise resolve against the whole manuscript (legacy anchors).
-  const scope = anchor.chapterId ? chapterBlockFor(container, anchor.chapterId) : null;
-  const root = scope ?? container;
+function markInRoot(root: HTMLElement, anchor: TextAnchor, id: string, type: AnnotationType): HTMLElement | null {
   const full = root.textContent ?? '';
   const loc = locateAnchor(full, anchor);
   if (loc && loc.end > loc.start) {
@@ -90,6 +88,21 @@ function markByAnchor(container: HTMLElement, anchor: TextAnchor, id: string, ty
     }
   }
   return wrapTextInMark(root, anchor.quote, id, type);
+}
+
+function markByAnchor(container: HTMLElement, anchor: TextAnchor, id: string, type: AnnotationType): HTMLElement | null {
+  // Resolve within the anchored chapter first (precise, disambiguates duplicate
+  // quotes). But a chapter can be split or renumbered by an edit — promoting body
+  // text to a new `# ` heading moves the quoted passage into a *different* chapter
+  // block while the annotation still points at the old chapterId. So when the
+  // scoped search comes up empty, fall back to the whole manuscript rather than
+  // orphaning the mark (which would pile every stale annotation at the column top).
+  const scope = anchor.chapterId ? chapterBlockFor(container, anchor.chapterId) : null;
+  if (scope) {
+    const inScope = markInRoot(scope, anchor, id, type);
+    if (inScope) return inScope;
+  }
+  return markInRoot(container, anchor, id, type);
 }
 
 // Character offset of a Range's start within a container's rendered text.
@@ -168,8 +181,18 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   const scrollSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const entranceObs = useRef<IntersectionObserver | null>(null);
 
-  const { manuscript, chapters, annotations, addAnnotation, updateAnnotation, deleteAnnotation, importSession, openManuscript, recordEdit, pushEditTransition, setEditReturnScroll } = useReaderStore();
-  const { navOpen, annSidebarOpen, editMode, closeNav, closeAnnSidebar, toggleAnnSidebar, closeAllPanels } = useUIStore();
+  const { manuscript, chapters, annotations: rawAnnotations, addAnnotation, updateAnnotation, deleteAnnotation, importSession, openManuscript, recordEdit, pushEditTransition, setEditReturnScroll } = useReaderStore();
+  // Re-home annotations to their live chapter (positional ids drift on edits), so
+  // the mobile sidebar's labels/sort and the reader's mark-scoping all read the
+  // current chapter — not a creation-time snapshot. Identity is stable until an
+  // edit actually moves an annotation, so the highlight/sync effects below only
+  // re-run when that genuinely happens. The margin column additionally derives
+  // each chapter live from the DOM. See engine/annotations/chapterResolve.
+  const annotations = useMemo(
+    () => resolveAnnotationChapters(rawAnnotations, manuscript?.metadata.combinedMarkdown),
+    [rawAnnotations, manuscript?.metadata.combinedMarkdown],
+  );
+  const { navOpen, annSidebarOpen, annSidebarCollapsed, editMode, closeNav, closeAnnSidebar, collapseAnnSidebar, toggleAnnSidebar, closeAllPanels } = useUIStore();
   const { updateProgress, getReadingPosition, appendChapters, replaceMarkdown } = useLibraryStore();
 
   const [activeChapterIdx, setActiveChapterIdx] = useState(0);
@@ -178,24 +201,34 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   const [clockTime, setClockTime] = useState('');
   const [selection, setSelection] = useState<{ visible: boolean; position: { left: number; top: number }; range: Range | null; text: string }>({ visible: false, position: { left: 0, top: 0 }, range: null, text: '' });
   const [editingAnn, setEditingAnn] = useState<{ id: string; note: string } | null>(null);
-  const [topbarHidden, setTopbarHidden] = useState(false);
   const [addChaptersOpen, setAddChaptersOpen] = useState(false);
   const [editingChapter, setEditingChapter] = useState<{ id: string; title: string; initialHtml: string } | null>(null);
+  // Desktop: the margin column's "browse" state — turns the anchored gutter into
+  // a navigable index of every annotation. Collapses back to anchored on demand.
+  const [annBrowse, setAnnBrowse] = useState(false);
+  // The selected annotation — its card gets gold emphasis, its mark a gold underline.
+  const [selectedAnnId, setSelectedAnnId] = useState<string | null>(null);
   const totalWords = useRef(0);
-  const lastScrollY = useRef(0);
-  const topbarVisible = useRef(true);
   const editModeRef = useRef(false);
+  const annSidebarOpenRef = useRef(false);
   const cancelEditRef = useRef(false);
   const commitRef = useRef<(p: HTMLElement) => void>(() => {});
   const activeEditBlockRef = useRef<HTMLElement | null>(null);
   const pendingFullDomCommitRef = useRef(false);
   useEffect(() => { editModeRef.current = editMode; }, [editMode]);
+  useEffect(() => { annSidebarOpenRef.current = annSidebarOpen; }, [annSidebarOpen]);
 
   // Clock
   useEffect(() => {
     const tick = () => setClockTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
     tick(); const id = setInterval(tick, 30000); return () => clearInterval(id);
   }, []);
+
+  // Seed the topbar chapter label before the first scroll fires (we open at the
+  // top, so the first chapter is active); scroll updates it from there.
+  useEffect(() => {
+    if (chapters.length > 0) onChapterLabelChange(`Chapter ${chapters[0].index}`);
+  }, [chapters, onChapterLabelChange]);
 
   // Re-apply highlights (declared before the effects that call it, to avoid a
   // use-before-declaration in the render/edit re-render paths).
@@ -444,7 +477,8 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   }, [manuscript, editingChapter, replaceMarkdown, openManuscript, setEditReturnScroll]);
 
   // Apply/remove the edit-mode visual class when the toggle flips.
-  // TipTap owns the editing surface; we no longer make chapters contenteditable.
+  // Desktop: inline contentEditable editing on the real prose (whisper-quiet, no reformat).
+  // Mobile/touch: TipTap owns the surface (iOS Safari composition bugs make raw contentEditable unreliable there).
   useEffect(() => {
     const c = contentRef.current; if (!c) return;
     if (!editMode) {
@@ -452,20 +486,38 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
       setEditingChapter(null);
       const active = document.activeElement as HTMLElement | null;
       if (active && c.contains(active)) active.blur();
+      setupEditable(c, false);
     } else {
       c.querySelectorAll('p, blockquote, ul, ol').forEach(el => el.classList.add('visible'));
       entranceObs.current?.disconnect();
+      if (!usesTouchFriendlyEditing()) setupEditable(c, true);
     }
     c.classList.toggle('edit-mode', editMode);
     if (editMode) stripAnnotationMarks(c);
     if (!editMode) reapplyHighlights();
   }, [editMode, reapplyHighlights]);
 
-  // In edit mode, clicking a chapter body opens the TipTap editor for it.
+  // Switching reader mode (Manuscript / Annotations) dismisses the floating
+  // annotate command menu — it belongs to a live selection in Reading.
+  useEffect(() => {
+    if (editMode || annSidebarOpen) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- collapse the popup on mode change
+      setSelection(s => (s.visible ? { ...s, visible: false, range: null } : s));
+    }
+    // Leaving Annotations mode collapses the browse index and clears selection.
+    if (!annSidebarOpen) {
+      if (annBrowse) setAnnBrowse(false);
+      if (selectedAnnId) setSelectedAnnId(null);
+    }
+  }, [editMode, annSidebarOpen, annBrowse, selectedAnnId]);
+
+  // On touch: clicking a chapter body opens the TipTap editor for it.
+  // On desktop: the chapter-block is contentEditable so a click just places the caret — no popup needed.
   useEffect(() => {
     const c = contentRef.current; if (!c) return;
     function onContentClick(e: MouseEvent) {
       if (!editModeRef.current) return;
+      if (!usesTouchFriendlyEditing()) return; // desktop: caret already placed by browser
       const block = (e.target as HTMLElement)?.closest?.('.chapter-block') as HTMLElement | null;
       if (!block) return;
       // Walk back from the block to find the chapter span (id="ch-N")
@@ -564,6 +616,9 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
       c.removeEventListener('focusin', onFocusIn as EventListener);
       c.removeEventListener('focusout', onFocusOut as EventListener);
       c.removeEventListener('keydown', onKeyDown as EventListener);
+      // Flush any in-flight edit on unmount so leaving the reader never drops it.
+      const pending = activeEditBlockRef.current;
+      if (pending && !usesTouchFriendlyEditing()) { activeEditBlockRef.current = null; commitRef.current(pending); }
     };
   }, []);
 
@@ -575,13 +630,6 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
       const pct = docH > 0 ? sy / docH : 0;
       const fill = document.getElementById('progress-fill');
       if (fill) fill.style.width = `${(pct * 100).toFixed(2)}%`;
-
-      const goingDown = sy > lastScrollY.current;
-      if (sy > 60) {
-        if (goingDown && topbarVisible.current) { topbarVisible.current = false; setTopbarHidden(true); }
-        else if (!goingDown && !topbarVisible.current) { topbarVisible.current = true; setTopbarHidden(false); }
-      } else if (sy < 10) { topbarVisible.current = true; setTopbarHidden(false); }
-      lastScrollY.current = sy;
 
       setScrollPct(Math.round(pct * 100));
       setMinsLeft(Math.ceil((1 - pct) * totalWords.current / 238));
@@ -595,7 +643,7 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
       );
       if (activeChapter && activeChapter.index !== activeChapterIdx) {
         setActiveChapterIdx(activeChapter.index);
-        const label = `Ch. ${String(activeChapter.index).padStart(2, '0')}`;
+        const label = `Chapter ${activeChapter.index}`;
         onChapterLabelChange(label);
         document.querySelectorAll('.chapter-link').forEach(btn =>
           btn.classList.toggle('active', (btn as HTMLElement).dataset.id === activeChapter!.id));
@@ -611,19 +659,12 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- updateProgress is a stable store action
   }, [chapters, activeChapterIdx, manuscript?.id, onChapterLabelChange]);
 
-  // Apply topbar hidden to real DOM element
-  useEffect(() => {
-    const tb = document.getElementById('topbar');
-    if (tb) tb.classList.toggle('hidden', topbarHidden);
-    const pt = document.getElementById('progress-track');
-    if (pt) pt.classList.toggle('topbar-hidden', topbarHidden);
-  }, [topbarHidden]);
-
   // Selection
   useEffect(() => {
     function onSelectionEnd(e: MouseEvent | TouchEvent) {
       if (!contentRef.current) return;
       if (editModeRef.current) return; // no annotate popup while editing prose
+      if (!annSidebarOpenRef.current) return; // annotations popup only active in Annotations mode
       const popup = document.getElementById('selection-popup');
       if (popup?.contains(e.target as Node)) return;
       setTimeout(() => {
@@ -722,7 +763,18 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
 
   const jumpToAnnotation = useCallback((id: string) => {
     const mark = contentRef.current?.querySelector(`mark[data-ann="${id}"]`);
-    if (mark) { closeAnnSidebar(); setTimeout(() => mark.scrollIntoView({ behavior: 'smooth', block: 'center' }), 300); }
+    if (!mark) return;
+    setSelectedAnnId(id); // emphasize the card
+    // On desktop the cards live in the right margin and don't cover the prose,
+    // so stay in Annotations and just scroll. On the narrow/mobile overlay
+    // sidebar (which covers the text), close it first so the jump is visible.
+    const marginColumn = window.matchMedia('(min-width: 1200px)').matches;
+    if (marginColumn) {
+      mark.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    } else {
+      closeAnnSidebar();
+      setTimeout(() => mark.scrollIntoView({ behavior: 'smooth', block: 'center' }), 300);
+    }
   }, [closeAnnSidebar]);
 
   const removeMark = useCallback((id: string) => {
@@ -748,8 +800,9 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   return (
     <div id="screen-reader" className="active">
       <ChapterNav open={navOpen} chapters={chapters} activeChapterIndex={activeChapterIdx} onClose={closeNav} onJump={jumpToChapter} onAddChapters={() => setAddChaptersOpen(true)} />
+      {/* Narrow / touch only — desktop (≥1200px) uses the margin column instead. */}
       <AnnotationSidebar
-        open={annSidebarOpen} annotations={annotations} onClose={closeAnnSidebar}
+        open={annSidebarOpen && !annSidebarCollapsed} annotations={annotations} onClose={collapseAnnSidebar}
         onDelete={id => { deleteAnnotation(id); removeMark(id); showToast('Annotation removed.'); }}
         onJumpTo={jumpToAnnotation}
         onImport={(payload) => {
@@ -759,7 +812,9 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
           showToast(`${imported} annotation${imported !== 1 ? 's' : ''} imported${who}${far}.`);
         }}
       />
-      <SelectionPopup visible={selection.visible} position={selection.position} onSave={handleSaveAnnotation} onClose={() => setSelection(s => ({ ...s, visible: false, range: null }))} />
+      {/* The annotate command menu is a Reading-mode affordance only — never over
+          Manuscript (editing) or Annotations (review) modes. */}
+      <SelectionPopup visible={selection.visible && annSidebarOpen && !editMode} position={selection.position} onSave={handleSaveAnnotation} onClose={() => setSelection(s => ({ ...s, visible: false, range: null }))} />
       <AddChaptersModal
         open={addChaptersOpen}
         manuscriptTitle={manuscript.metadata.title}
@@ -773,17 +828,32 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
           onClose={() => setEditingAnn(null)}
         />
       )}
-      <div id="content" ref={contentRef} style={editingChapter ? { display: 'none' } : undefined} />
-      {editingChapter && (
-        <ChapterEditor
-          chapterTitle={editingChapter.title}
-          initialHtml={editingChapter.initialHtml}
-          onSave={handleTipTapSave}
-          onCancel={() => { setEditingChapter(null); }}
+      {/* reader-body: on desktop in Annotations mode this becomes a flex row
+          (prose left, margin annotation column right). On mobile it's transparent. */}
+      <div id="reader-body" className={annSidebarOpen && !usesTouchFriendlyEditing() ? 'ann-open' : ''}>
+        {/* On touch the TipTap editor replaces #content for the active chapter.
+            On desktop #content stays visible — it IS the inline editing surface. */}
+        <div id="content" ref={contentRef} style={editingChapter && usesTouchFriendlyEditing() ? { display: 'none' } : undefined} />
+        {editingChapter && usesTouchFriendlyEditing() && (
+          <ChapterEditor
+            chapterTitle={editingChapter.title}
+            initialHtml={editingChapter.initialHtml}
+            onSave={handleTipTapSave}
+            onCancel={() => { setEditingChapter(null); }}
+          />
+        )}
+        <AnnMarginColumn
+          annotations={annotations}
+          open={annSidebarOpen}
+          browse={annBrowse}
+          selectedId={selectedAnnId}
+          onJumpTo={jumpToAnnotation}
+          onOpenBrowse={() => setAnnBrowse(true)}
+          onCloseBrowse={() => setAnnBrowse(false)}
         />
-      )}
+      </div>
       <div id="end-mark">End of manuscript</div>
-      <div id="bottom-strip" className={scrollPct > 5 ? 'visible' : ''}>
+      <div id="bottom-strip" className={scrollPct > 5 && !editMode && !editingChapter ? 'visible' : ''}>
         <span id="pct-read">{scrollPct}% read</span>
         <span className="sep" />
         <span id="time-left">{minsDisplay}</span>
@@ -813,14 +883,14 @@ function AnnotationEditPopup({ annId, note, onSave, onDelete, onClose }: { annId
     <>
       <div style={{ position: 'fixed', inset: 0, zIndex: 199 }} onMouseDown={onClose} />
       <div id="ann-edit-popup" className="visible" style={{ left: pos.left, top: pos.top }} onMouseDown={e => e.stopPropagation()}>
-        <div style={{ fontFamily: "'Schibsted Grotesk', system-ui, sans-serif", fontSize: '9px', letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--dim)', marginBottom: '8px' }}>Edit note</div>
+        <div style={{ fontFamily: "'Hanken Grotesk', system-ui, sans-serif", fontSize: '9px', letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--dim)', marginBottom: '8px' }}>Edit note</div>
         <textarea ref={ref} value={text} onChange={e => setText(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); onSave(text.trim()); } if (e.key === 'Escape') onClose(); }}
-          style={{ width: '100%', minHeight: '64px', background: 'none', border: 'none', borderBottom: '1px solid var(--border)', color: 'var(--primary)', fontFamily: "'EB Garamond', Georgia, serif", fontSize: '15px', lineHeight: '1.5', outline: 'none', resize: 'none', padding: '0 0 8px' }}
+          style={{ width: '100%', minHeight: '64px', background: 'none', border: 'none', borderBottom: '1px solid var(--border)', color: 'var(--ink)', fontFamily: "'EB Garamond', Georgia, serif", fontSize: '15px', lineHeight: '1.5', outline: 'none', resize: 'none', padding: '0 0 8px' }}
         />
         <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '10px' }}>
-          <button style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: "'Schibsted Grotesk', system-ui, sans-serif", fontSize: '10px', letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--border)' }} onClick={onDelete}>Delete</button>
-          <button style={{ background: 'none', border: '1px solid var(--primary)', fontFamily: "'Schibsted Grotesk', system-ui, sans-serif", fontSize: '10px', fontWeight: 500, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--primary)', padding: '5px 14px', cursor: 'pointer' }} onClick={() => onSave(text.trim())}>Save</button>
+          <button style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: "'Hanken Grotesk', system-ui, sans-serif", fontSize: '10px', letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--border)' }} onClick={onDelete}>Delete</button>
+          <button style={{ background: 'none', border: '1px solid var(--ink)', fontFamily: "'Hanken Grotesk', system-ui, sans-serif", fontSize: '10px', fontWeight: 500, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--ink)', padding: '5px 14px', cursor: 'pointer' }} onClick={() => onSave(text.trim())}>Save</button>
         </div>
       </div>
     </>

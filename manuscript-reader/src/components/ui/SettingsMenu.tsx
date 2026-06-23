@@ -39,7 +39,7 @@ export function SettingsMenu({ upward = false }: SettingsMenuProps) {
   return (
     <div style={{ position: 'relative', display: 'inline-flex' }}>
       <button
-        className={`icon-btn${open ? ' active-btn' : ''}`}
+        className={`btn-icon${open ? ' active' : ''}`}
         onClick={() => setOpen(o => !o)}
         title="Settings"
         aria-label="Settings"
@@ -75,9 +75,9 @@ export function SettingsMenu({ upward = false }: SettingsMenuProps) {
 
             <Section label="Text size">
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <button className="text-btn" onClick={decreaseFontSize} title="Decrease font" aria-label="Decrease text size">A−</button>
-                <span style={{ fontFamily: "'Schibsted Grotesk', system-ui, sans-serif", fontSize: '12px', color: 'var(--on-surface)', minWidth: '20px', textAlign: 'center' }}>{fontSize}</span>
-                <button className="text-btn" onClick={increaseFontSize} title="Increase font" aria-label="Increase text size">A+</button>
+                <button className="btn-ghost" onClick={decreaseFontSize} title="Decrease font" aria-label="Decrease text size">A−</button>
+                <span style={{ fontFamily: "'Hanken Grotesk', system-ui, sans-serif", fontSize: '12px', color: 'var(--ink)', minWidth: '20px', textAlign: 'center' }}>{fontSize}</span>
+                <button className="btn-ghost" onClick={increaseFontSize} title="Increase font" aria-label="Increase text size">A+</button>
               </div>
             </Section>
 
@@ -101,7 +101,7 @@ export function SettingsMenu({ upward = false }: SettingsMenuProps) {
 function Section({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div>
-      <div style={{ fontFamily: "'Schibsted Grotesk', system-ui, sans-serif", fontSize: '9px', letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--dim)', marginBottom: '8px' }}>
+      <div style={{ fontFamily: "'Hanken Grotesk', system-ui, sans-serif", fontSize: '9px', letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--dim)', marginBottom: '8px' }}>
         {label}
       </div>
       {children}

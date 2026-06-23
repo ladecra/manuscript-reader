@@ -59,6 +59,10 @@ export interface StorageProvider {
 
   loadPosition(id: string): Promise<number>;
   savePosition(id: string, frac: number): Promise<void>;
+
+  /** Cover image stored as a data URL. Returns null if none is set. */
+  loadCover(id: string): Promise<string | null>;
+  saveCover(id: string, dataUrl: string | null): Promise<void>;
 }
 
 // ─── Key scheme (used by the IndexedDB provider's single key-value store) ──────
@@ -69,4 +73,5 @@ export const key = {
   edits: (id: string) => `edits:${id}`,
   sessions: (id: string) => `sessions:${id}`,
   position: (id: string) => `position:${id}`,
+  cover: (id: string) => `cover:${id}`,
 };

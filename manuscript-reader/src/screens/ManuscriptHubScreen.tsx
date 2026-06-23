@@ -3,21 +3,20 @@ import { useReaderStore } from '../state/readerStore';
 import { useLibraryStore } from '../state/libraryStore';
 import { useUIStore } from '../state/uiStore';
 import { computeEditorialSignals } from '../engine/editorialSignals';
+import { resolveAnnotationChapters } from '../engine/annotations/chapterResolve';
 import { parseMarkdown } from '../engine/ingestion/parseMarkdown';
 import { estimateReadingPagePosition, chapterWordCounts, resumeChapterByProgress } from '../engine/reading/manuscriptPages';
-import { MANUSCRIPT_STATUSES, PUBLISHING_FIELDS, ANNOTATION_LABELS, ANNOTATION_COLORS } from '../engine/types';
+import { ANNOTATION_LABELS, ANNOTATION_COLORS } from '../engine/types';
 import type { ManuscriptStatus, PublishingMetadata, Chapter } from '../engine/types';
 import { applyChapterEdits, type ChapterEdit } from '../engine/manuscript/chapterEdit';
 import type { ExportManuscriptMeta } from '../engine/exports/manuscriptMarkdown';
 import { ChapterTree } from '../components/library/ChapterTree';
 import { AddChaptersModal } from '../components/reader/AddChaptersModal';
 import { ReportView } from '../components/reports/ReportView';
-import { ExportChoiceModal } from '../components/reports/ExportChoiceModal';
-import { ShareModal } from '../components/reader/ShareModal';
 import { exportShareableReader, ShareReaderBuildError } from '../engine/exports/shareableReader';
 import { showToast } from '../components/ui/Toast';
-import { PencilIcon, BookIcon, ChevronLeftIcon, DotsIcon } from '../components/ui/Icons';
-import { coverSvgDataUrl } from '../engine/cover';
+import { PencilIcon, ChevronLeftIcon, DotsIcon, DownloadIcon } from '../components/ui/Icons';
+import { CoverImage } from '../components/ui/CoverImage';
 import { ManuscriptWorkspaceRail, type HubPane } from '../components/layout/ManuscriptWorkspaceRail';
 
 // The manuscript page: a book's antechamber. Shared `.instrument-*` list styling
@@ -27,14 +26,12 @@ import { ManuscriptWorkspaceRail, type HubPane } from '../components/layout/Manu
 interface ManuscriptHubScreenProps {
   onRead: () => void;   // enter the immersive reader at the resume position
   onExit: () => void;   // back to the library
-  workspaceRailOpen: boolean;
 }
 
-export function ManuscriptHubScreen({ onRead, onExit, workspaceRailOpen }: ManuscriptHubScreenProps) {
-  const { manuscript, chapters, annotations, edits, sessions, openManuscript } = useReaderStore();
+export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps) {
+  const { manuscript, chapters, annotations: rawAnnotations, edits, sessions, openManuscript } = useReaderStore();
   const { library, updateManuscript, replaceMarkdown, appendChapters, getReadingPosition, updateProgress, cycleStatus } = useLibraryStore();
   const { setPendingChapterIndex, setPendingReaderIntent, hubPane: pane, setHubPane } = useUIStore();
-  const [shareModalOpen, setShareModalOpen] = useState(false);
   const [editStructure, setEditStructure] = useState(false);
   const [chapterEdits, setChapterEdits] = useState<ChapterEdit[]>([]);
   const [addChaptersOpen, setAddChaptersOpen] = useState(false);
@@ -45,6 +42,16 @@ export function ManuscriptHubScreen({ onRead, onExit, workspaceRailOpen }: Manus
   const title = manuscript?.metadata.title ?? '';
   const combinedMarkdown = manuscript?.metadata.combinedMarkdown;
   const manuscriptAvailable = !!combinedMarkdown;
+
+  // Re-home every annotation to its CURRENT chapter before it reaches Feedback,
+  // EditorialSignals, the report, or any export. Positional chapter ids drift on
+  // structural edits; the stored chapterIndex/chapterTitle are a stale cache, so
+  // we refresh them in-memory (non-destructive) from each anchor. One boundary,
+  // every downstream consumer corrected. See engine/annotations/chapterResolve.
+  const annotations = useMemo(
+    () => resolveAnnotationChapters(rawAnnotations, combinedMarkdown),
+    [rawAnnotations, combinedMarkdown],
+  );
   const pct = manuscript ? Math.round(getReadingPosition(manuscript.id) * 100) : 0;
   const progressFrac = manuscript ? getReadingPosition(manuscript.id) : 0;
   const pageEstimate = useMemo(() => {
@@ -120,6 +127,15 @@ export function ManuscriptHubScreen({ onRead, onExit, workspaceRailOpen }: Manus
       exportReportHtml(exportMeta().title, manuscript.id, annotations, chapters, sig);
       showToast('Intelligence report exported.');
     }).catch(e => { console.error('HTML export error:', e); showToast('Export failed — see console.'); });
+  }, [manuscript, annotations, chapters, sessions, exportMeta]);
+
+  const handleExportReportJson = useCallback(() => {
+    if (!manuscript || !annotations.length) { showToast('No annotations yet.'); return; }
+    const sig = computeEditorialSignals({ manuscriptId: manuscript.id, annotations, chapters, sessions, combinedMarkdown: manuscript.metadata.combinedMarkdown });
+    import('../engine/exports/reportJson').then(({ exportReportJson }) => {
+      exportReportJson(exportMeta().title, manuscript.id, sig);
+      showToast('Report data exported.');
+    }).catch(e => { console.error('JSON export error:', e); showToast('Export failed — see console.'); });
   }, [manuscript, annotations, chapters, sessions, exportMeta]);
 
   const handleExportManuscript = useCallback(async (format: 'epub' | 'docx' | 'md') => {
@@ -201,14 +217,17 @@ export function ManuscriptHubScreen({ onRead, onExit, workspaceRailOpen }: Manus
     showToast(added > 0 ? `${added} chapter${added !== 1 ? 's' : ''} added — now ${newChapters.length} total` : 'Chapters appended.');
   }, [manuscript, chapters, appendChapters, openManuscript]);
 
-  const coverUrl = useMemo(
-    () => coverSvgDataUrl({ title, author: manuscript?.metadata.author, series: manuscript?.metadata.publishing?.series }),
-    [title, manuscript?.metadata.author, manuscript?.metadata.publishing?.series],
-  );
-
   const toggleToolPane = useCallback((id: HubPane) => {
     setHubPane(pane === id ? 'contents' : id);
   }, [pane, setHubPane]);
+
+  // The rail's "Recent annotations" section — the latest few, newest first.
+  const recentAnnotations = useMemo(
+    () => [...annotations].slice(-4).reverse().map(a => ({
+      id: a.id, type: a.type, quote: a.quote ?? '', chapterTitle: a.chapterTitle ?? '',
+    })),
+    [annotations],
+  );
 
   if (!manuscript) return null;
 
@@ -219,7 +238,7 @@ export function ManuscriptHubScreen({ onRead, onExit, workspaceRailOpen }: Manus
     : 'Auto-saved';
 
   return (
-    <div className={`hub${workspaceRailOpen ? ' hub--rail-open' : ''}`}>
+    <div className="hub hub--3col">
       <main className="hub-main">
         {uncached && (
           <div className="hub-warn" role="alert">
@@ -230,108 +249,119 @@ export function ManuscriptHubScreen({ onRead, onExit, workspaceRailOpen }: Manus
 
         {pane === 'contents' ? (
           <div className="hub-panel">
-            <button type="button" className="hub-breadcrumb" onClick={onExit}>
-              <ChevronLeftIcon size={10} />
-              Back to library
-            </button>
+            <div className="hub-page-top">
+              <button type="button" className="hub-back" onClick={onExit}>
+                <ChevronLeftIcon size={10} />
+                Back to Library
+              </button>
+              <button type="button" className="hub-open-reader" onClick={onRead} disabled={!manuscriptAvailable}>
+                Open in reader <span aria-hidden="true">→</span>
+              </button>
+            </div>
             <header className="hub-hero">
-            <div className="hub-hero-cover" aria-hidden="true">
-              <img src={coverUrl} alt="" />
+            <div className="hub-hero-cover-wrap">
+              <div className="hub-hero-cover">
+                <CoverImage manuscriptId={manuscript.id} title={title} editable />
+              </div>
             </div>
             <div className="hub-hero-text">
               {publishing?.series && <div className="hub-hero-series">{publishing.series}</div>}
               <h1 className="hub-hero-title">{title}</h1>
-              {publishing?.genre?.trim() && (
+              {author && <div className="hub-hero-byline">{author}</div>}
+              {publishing?.genre?.trim() ? (
                 <div className="hub-hero-genre">
                   <span>{publishing.genre.trim()}</span>
                   <button type="button" className="hub-hero-genre-edit" onClick={() => setHubPane('details')} aria-label="Edit genre and synopsis">
                     <PencilIcon size={14} />
                   </button>
                 </div>
+              ) : (
+                <button type="button" className="hub-hero-genre-add" onClick={() => setHubPane('details')}>
+                  Add genre &amp; synopsis
+                </button>
               )}
               {publishing?.subtitle && <div className="hub-hero-subtitle">{publishing.subtitle}</div>}
-              {author && <div className="hub-hero-byline">by {author}</div>}
               {publishing?.synopsis?.trim() && (
                 <p className="hub-hero-synopsis">{publishing.synopsis.trim()}</p>
               )}
-              <div className="ms-meta hub-hero-meta">
-                {wordCount != null && wordCount > 0 ? <span>{wordCount.toLocaleString()} words</span> : null}
-                {wordCount != null && wordCount > 0 ? <span className="dot" /> : null}
-                <span>{chapterCount ?? 0} chapter{(chapterCount ?? 0) !== 1 ? 's' : ''}</span>
-                <span className="dot" />
-                <button
-                  type="button"
-                  className={`ms-status ${hubStatusClass(status ?? 'Draft')}`}
-                  onClick={() => {
-                    if (!manuscript) return;
-                    cycleStatus(manuscript.id);
-                    const refreshed = useLibraryStore.getState().library.find(m => m.id === manuscript.id);
-                    if (refreshed) openManuscript(refreshed, chapters);
-                  }}
-                >
-                  {status ?? 'Draft'}
-                </button>
-                <span className="dot" />
-                <span>{pct > 0 ? `${pct}% read` : 'Unread'}</span>
-                {annotations.length > 0 && (
-                  <>
-                    <span className="dot" />
-                    <span>{annotations.length} annotation{annotations.length !== 1 ? 's' : ''}</span>
-                  </>
+              <button
+                type="button"
+                className={`hub-hero-status ms-status ${hubStatusClass(status ?? 'Draft')}`}
+                onClick={() => {
+                  if (!manuscript) return;
+                  cycleStatus(manuscript.id);
+                  const refreshed = useLibraryStore.getState().library.find(m => m.id === manuscript.id);
+                  if (refreshed) openManuscript(refreshed, chapters);
+                }}
+              >
+                {status ?? 'Draft'}
+              </button>
+              <div className="hub-hero-stats" aria-label="Manuscript summary">
+                {wordCount != null && wordCount > 0 && (
+                  <div className="hub-stat">
+                    <span className="hub-stat-value">{wordCount.toLocaleString()}</span>
+                    <span className="hub-stat-label">Words</span>
+                  </div>
                 )}
-                {readerCount > 0 && (
-                  <>
-                    <span className="dot" />
-                    <span>{readerCount} reader{readerCount !== 1 ? 's' : ''}</span>
-                  </>
-                )}
-                <span className="dot" />
-                <span>{hubTimeAgo(manuscript.metadata.lastOpened)}</span>
+                <div className="hub-stat">
+                  <span className="hub-stat-value">{chapterCount ?? 0}</span>
+                  <span className="hub-stat-label">Chapters</span>
+                </div>
+                <div className="hub-stat">
+                  <span className="hub-stat-value">{annotations.length > 0 ? annotations.length : '—'}</span>
+                  <span className="hub-stat-label">Annotations</span>
+                </div>
+                <div className="hub-stat">
+                  <span className="hub-stat-value hub-stat-value--meta">{hubLastOpenedLabel(manuscript.metadata.lastOpened)}</span>
+                  <span className="hub-stat-label">Last opened</span>
+                </div>
               </div>
             </div>
           </header>
 
           <section className="hub-continue">
-            <div className="hub-continue-grid">
-              <div className="hub-continue-copy">
-                <div className="hub-continue-eyebrow">
-                  <span className="hub-continue-icon" aria-hidden="true"><BookIcon size={14} /></span>
-                  {pct > 1 ? 'Continue reading' : 'Start reading'}
-                </div>
-                {resumeChapter && (
-                  <p className="hub-continue-place">
-                    Chapter {resumeChapter.index}
-                    {resumeChapter.title ? ` · ${resumeChapter.title}` : ''}
-                  </p>
-                )}
-                <div className="hub-continue-bar" aria-hidden="true">
-                  <div className="hub-continue-fill" style={{ width: `${pct}%` }} />
-                </div>
-                <p className="hub-continue-pct">
-                  {pct > 0 ? (
-                    <>
-                      {pct}% complete
-                      {wordCount != null && wordCount > 0 && (
-                        <> · ~ page {pageEstimate.current} of {pageEstimate.total}</>
-                      )}
-                    </>
-                  ) : (
-                    'Not yet opened in the reader'
-                  )}
+            <div className="hub-continue-main">
+              <div className="hub-continue-eyebrow">
+                {pct > 1 ? 'Continue reading' : 'Start reading'}
+              </div>
+              {resumeChapter && (
+                <p className="hub-continue-place">
+                  Chapter {resumeChapter.index}
+                  {resumeChapter.title ? ` · ${resumeChapter.title}` : ''}
                 </p>
+              )}
+              <div className="hub-continue-bar" aria-hidden="true">
+                <div className="hub-continue-fill" style={{ width: `${pct}%` }} />
               </div>
-              <div className="hub-continue-aside">
-                <button type="button" className="hub-continue-btn btn-accent" onClick={onRead} disabled={!manuscriptAvailable}>
-                  {pct > 1 ? 'Continue reading' : 'Start reading'}
+              <p className="hub-continue-pct">
+                {pct > 0 ? (
+                  <>
+                    {pct}% complete
+                    {wordCount != null && wordCount > 0 && (
+                      <> · Page {pageEstimate.current} of {pageEstimate.total}</>
+                    )}
+                  </>
+                ) : (
+                  'Not yet opened in the reader'
+                )}
+              </p>
+            </div>
+            <div className="hub-continue-aside">
+              <button type="button" className="hub-continue-btn btn-fill" onClick={onRead} disabled={!manuscriptAvailable}>
+                {pct > 1 ? 'Continue reading' : 'Start reading'}
+              </button>
+              <button type="button" className="hub-continue-open" onClick={onRead} disabled={!manuscriptAvailable}>
+                Open in reader <span aria-hidden="true">→</span>
+              </button>
+              {pct > 1 && (
+                <button type="button" className="hub-continue-restart" onClick={startOver} disabled={!manuscriptAvailable}>
+                  Start from the beginning
                 </button>
-                <button type="button" className="hub-continue-open" onClick={onRead} disabled={!manuscriptAvailable}>
-                  Open in reader →
-                </button>
-              </div>
+              )}
             </div>
           </section>
 
-          <section className="hub-toc-section">
+          <section className="hub-toc-section hub-surface-card">
             <div className="hub-toc-head">
               <div className="instrument-group-label hub-section-label--bare">Contents</div>
               <div className="hub-toc-actions">
@@ -347,14 +377,14 @@ export function ManuscriptHubScreen({ onRead, onExit, workspaceRailOpen }: Manus
                 </label>
                 <button
                   type="button"
-                  className={`hub-toc-action${tocCompact ? ' active' : ''}`}
+                  className={`btn-ghost${tocCompact ? ' active' : ''}`}
                   onClick={() => setTocCompact(v => !v)}
                 >
                   View
                 </button>
                 <button
                   type="button"
-                  className={`hub-toc-action${editStructure ? ' active' : ''}`}
+                  className={`btn-ghost${editStructure ? ' active' : ''}`}
                   onClick={() => setEditStructure(v => !v)}
                 >
                   {editStructure ? 'Done' : 'Edit'}
@@ -368,7 +398,7 @@ export function ManuscriptHubScreen({ onRead, onExit, workspaceRailOpen }: Manus
                 <div style={{ display: 'flex', gap: '8px', marginTop: '20px', flexWrap: 'wrap' }}>
                   <button className="edit-save-btn" style={{ alignSelf: 'flex-start' }}
                     onClick={() => { saveChapters(); setEditStructure(false); }}>Save chapter changes</button>
-                  <button className="hub-toc-action" style={{ alignSelf: 'flex-start' }}
+                  <button className="btn-ghost" style={{ alignSelf: 'flex-start' }}
                     onClick={() => setAddChaptersOpen(true)}>+ Add chapters</button>
                 </div>
               </div>
@@ -399,7 +429,7 @@ export function ManuscriptHubScreen({ onRead, onExit, workspaceRailOpen }: Manus
           </div>
         ) : (
           <div className="hub-panel hub-tool-pane">
-            <button type="button" className="hub-back" onClick={() => setHubPane('contents')}>‹ Contents</button>
+            <button type="button" className="btn-ghost" style={{ marginBottom: '30px' }} onClick={() => setHubPane('contents')}>‹ Contents</button>
 
             {pane === 'details' && (
               <DetailsTab
@@ -422,7 +452,6 @@ export function ManuscriptHubScreen({ onRead, onExit, workspaceRailOpen }: Manus
 
             {pane === 'exports' && (
               <ExportsTab
-                subject={title}
                 manuscriptAvailable={manuscriptAvailable}
                 annCount={annotations.length}
                 editCount={edits.length}
@@ -431,59 +460,25 @@ export function ManuscriptHubScreen({ onRead, onExit, workspaceRailOpen }: Manus
                 onExportManuscript={handleExportManuscript}
                 onExportReportDocx={handleExportReportDocx}
                 onExportReportHtml={handleExportReportHtml}
+                onExportReportJson={handleExportReportJson}
                 onExportRevisionLog={handleExportRevisionLog}
+                onShareReader={handleShareReader}
               />
-            )}
-
-            {pane === 'share' && (
-              <>
-                <h2 className="hub-panel-title">Share</h2>
-                <p className="hub-panel-lead">Send a clean, read-only reader to a beta reader — they annotate, you import their feedback back in.</p>
-                <div className="rp-export-group">
-                  <div className="rp-export-group-label">Reader file</div>
-                  <button className="rp-export-hero" onClick={() => setShareModalOpen(true)} disabled={!manuscriptAvailable}
-                    title={manuscriptAvailable ? undefined : 'Re-import this manuscript to share it'}>
-                    Create a reader file
-                  </button>
-                </div>
-                <ShareModal
-                  open={shareModalOpen}
-                  title={title}
-                  wordCount={wordCount}
-                  chapterCount={chapterCount}
-                  onClose={() => setShareModalOpen(false)}
-                  onDownload={(withAnnotations) => { handleShareReader(withAnnotations); setShareModalOpen(false); }}
-                />
-              </>
-            )}
-
-            {pane === 'versions' && (
-              <>
-                <h2 className="hub-panel-title">Versions</h2>
-                <div className="hub-empty">
-                  <p>Revision Impact &amp; Stability live here.</p>
-                  <p className="hub-empty-sub">
-                    Once you snapshot a draft, this shows what changed between versions —
-                    which reader questions you resolved, and which you introduced. Coming with draft snapshots.
-                  </p>
-                </div>
-              </>
             )}
           </div>
         )}
       </main>
 
-      {workspaceRailOpen && (
-        <ManuscriptWorkspaceRail
-          context="hub"
-          pane={pane}
-          annotationCount={annotations.length}
-          savedLabel={savedLabel}
-          readerSubtext={pct > 1 ? 'Resume where you left off' : 'Open in the reader'}
-          onTogglePane={toggleToolPane}
-          onRead={onRead}
-        />
-      )}
+      <ManuscriptWorkspaceRail
+        context="hub"
+        pane={pane}
+        annotationCount={annotations.length}
+        savedLabel={savedLabel}
+        recentAnnotations={recentAnnotations}
+        onTogglePane={toggleToolPane}
+        onRead={onRead}
+        onOpenAnnotations={() => setHubPane('feedback')}
+      />
       <AddChaptersModal
         open={addChaptersOpen}
         manuscriptTitle={title}
@@ -498,16 +493,20 @@ function hubStatusClass(status: string): string {
   return 'status--' + status.toLowerCase().replace(/[^a-z]+/g, '-');
 }
 
-function hubTimeAgo(ts: number | undefined): string {
+function hubLastOpenedLabel(ts: number | undefined): string {
   if (!ts) return '—';
-  const m = Math.floor((Date.now() - ts) / 60000);
-  if (m < 2) return 'Just now';
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  const d = Math.floor(h / 24);
-  if (d < 7) return `${d}d ago`;
-  return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  const opened = new Date(ts);
+  const now = new Date();
+  const sameDay = opened.toDateString() === now.toDateString();
+  if (sameDay) {
+    return `Today, ${opened.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
+  }
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (opened.toDateString() === yesterday.toDateString()) {
+    return `Yesterday, ${opened.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
+  }
+  return opened.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 function HubTocRow({
@@ -561,7 +560,7 @@ function HubTocRow({
       <div className="hub-toc-menu-wrap" ref={menuRef}>
         <button
           type="button"
-          className="hub-toc-menu-btn"
+          className="btn-icon"
           aria-label={`Chapter ${ch.index} actions`}
           aria-expanded={menuOpen}
           onClick={e => { e.stopPropagation(); onToggleMenu(); }}
@@ -583,6 +582,44 @@ function HubTocRow({
 
 // ── Details: title page + publishing metadata. Every field here flows into the
 // manuscript's DOCX/Markdown exports (front matter, copyright page, dedication). ──
+
+const STATUS_META: { s: ManuscriptStatus; icon: string }[] = [
+  { s: 'Draft',        icon: '○' },
+  { s: 'In Progress',  icon: '◑' },
+  { s: 'Final Polish', icon: '✦' },
+  { s: 'Complete',     icon: '✓' },
+  { s: 'Archived',     icon: '⊡' },
+];
+
+function PubField({ label, id, value, onChange, placeholder = '', max, wide = false }: {
+  label: string; id: string; value: string; onChange: (v: string) => void;
+  placeholder?: string; max: number; wide?: boolean;
+}) {
+  return (
+    <div className={`pub-field${wide ? ' pub-field--wide' : ''}`}>
+      <label className="instrument-field-label" htmlFor={id}>{label}</label>
+      <input id={id} className="pub-field-input" type="text" value={value}
+        placeholder={placeholder} maxLength={max} onChange={e => onChange(e.target.value)} />
+      <span className="pub-field-counter">{value.length} / {max}</span>
+    </div>
+  );
+}
+
+function PubTextarea({ label, id, value, onChange, placeholder = '', max, wide = false }: {
+  label: string; id: string; value: string; onChange: (v: string) => void;
+  placeholder?: string; max: number; wide?: boolean;
+}) {
+  return (
+    <div className={`pub-field${wide ? ' pub-field--wide' : ''}`}>
+      <label className="instrument-field-label" htmlFor={id}>{label}</label>
+      <textarea id={id} className="pub-field-input pub-field-textarea" value={value}
+        placeholder={placeholder} maxLength={max} rows={4}
+        onChange={e => onChange(e.target.value)} />
+      <span className="pub-field-counter">{value.length} / {max}</span>
+    </div>
+  );
+}
+
 function DetailsTab({
   title, author, status, publishing, onSave,
 }: {
@@ -594,55 +631,71 @@ function DetailsTab({
   const [selectedStatus, setSelectedStatus] = useState<ManuscriptStatus>(status);
   const [pub, setPub] = useState<PublishingMetadata>(publishing);
 
-  const setField = (key: keyof PublishingMetadata, value: string) =>
-    setPub(p => ({ ...p, [key]: value }));
-
-  const save = () => onSave(
-    { title: titleInput.trim() || 'Untitled', author: authorInput.trim(), status: selectedStatus, publishing: pub },
-  );
+  const sf = (key: keyof PublishingMetadata) => (v: string) => setPub(p => ({ ...p, [key]: v }));
+  const save = () => onSave({ title: titleInput.trim() || 'Untitled', author: authorInput.trim(), status: selectedStatus, publishing: pub });
+  const reset = () => { setTitleInput(title); setAuthorInput(author); setSelectedStatus(status); setPub(publishing); };
 
   return (
-    <div className="hub-panel">
-      <h2 className="hub-panel-title">Details</h2>
-      <p className="hub-panel-lead">The title page and publishing data — applied to every artifact you export.</p>
-
-      <div className="instrument-group-label">Title page</div>
-      <div className="instrument-nav">
-        <div className="instrument-field">
-          <label className="instrument-field-label" htmlFor="hub-detail-title">Title</label>
-          <input id="hub-detail-title" className="instrument-field-input" type="text" value={titleInput} onChange={e => setTitleInput(e.target.value)} />
+    <div className="hub-panel hub-details-form">
+      <div className="pub-form-header">
+        <div>
+          <h2 className="hub-panel-title">Publishing Details</h2>
+          <p className="hub-panel-lead">Title page and publishing data — applied to every artifact you export.</p>
         </div>
-        <div className="instrument-field">
-          <label className="instrument-field-label" htmlFor="hub-detail-author">Author</label>
-          <input id="hub-detail-author" className="instrument-field-input" type="text" value={authorInput} placeholder="Author (optional)" onChange={e => setAuthorInput(e.target.value)} />
-        </div>
-        <div className="instrument-field">
-          <span className="instrument-field-label">Status</span>
-          <div className="status-options">
-            {MANUSCRIPT_STATUSES.map(s => (
-              <button key={s} type="button" className={`status-opt${selectedStatus === s ? ' selected' : ''}`} onClick={() => setSelectedStatus(s)}>{s}</button>
-            ))}
-          </div>
-        </div>
+        <button type="button" className="pub-save-btn" onClick={save}>Save changes</button>
       </div>
 
-      <div className="instrument-group-label" style={{ marginTop: '36px' }}>Publishing</div>
-      <div className="instrument-nav">
-        {PUBLISHING_FIELDS.map(f => (
-          <div key={f.key} className={`instrument-field${f.long ? ' instrument-field--wide' : ''}`}>
-            <label className="instrument-field-label" htmlFor={`hub-pub-${f.key}`}>{f.label}</label>
-            {f.long ? (
-              <textarea id={`hub-pub-${f.key}`} className="instrument-field-input" value={pub[f.key] ?? ''} placeholder={f.placeholder}
-                onChange={e => setField(f.key, e.target.value)} rows={3} />
-            ) : (
-              <input id={`hub-pub-${f.key}`} className="instrument-field-input" type="text" value={pub[f.key] ?? ''} placeholder={f.placeholder}
-                onChange={e => setField(f.key, e.target.value)} />
-            )}
-          </div>
+      <div className="instrument-group-label">Work identification</div>
+      <div className="pub-form-grid">
+        <PubField label="Title" id="hub-detail-title" value={titleInput} onChange={setTitleInput} max={200} />
+        <PubField label="Subtitle" id="hub-pub-subtitle" value={pub.subtitle ?? ''} onChange={sf('subtitle')} max={200} placeholder="A subtitle, if any" />
+        <PubField label="Series" id="hub-pub-series" value={pub.series ?? ''} onChange={sf('series')} max={200} placeholder="The Hollow Cycle, Book 1" />
+        <PubField label="Author" id="hub-detail-author" value={authorInput} onChange={setAuthorInput} max={200} placeholder="Author (optional)" />
+        <PubField label="Publisher" id="hub-pub-publisher" value={pub.publisher ?? ''} onChange={sf('publisher')} max={200} placeholder="Publishing house" />
+        <PubField label="Imprint" id="hub-pub-imprint" value={pub.imprint ?? ''} onChange={sf('imprint')} max={200} placeholder="Imprint" />
+      </div>
+
+      <div className="instrument-group-label pub-section-label">Classification</div>
+      <div className="pub-form-grid">
+        <PubField label="Genre" id="hub-pub-genre" value={pub.genre ?? ''} onChange={sf('genre')} max={100} placeholder="Literary fiction, memoir, thriller…" />
+        <PubField label="Language" id="hub-pub-language" value={pub.language ?? ''} onChange={sf('language')} max={50} placeholder="English" />
+      </div>
+
+      <div className="instrument-group-label pub-section-label">Synopsis</div>
+      <div className="pub-form-grid">
+        <PubTextarea label="Short synopsis" id="hub-pub-synopsis" value={pub.synopsis ?? ''} onChange={sf('synopsis')} max={1000}
+          placeholder="A short description for your title page and exports (Pandoc: description)." wide />
+      </div>
+
+      <div className="instrument-group-label pub-section-label">Publication</div>
+      <div className="pub-form-grid">
+        <PubField label="ISBN" id="hub-pub-isbn" value={pub.isbn ?? ''} onChange={sf('isbn')} max={20} placeholder="978-…" />
+        <PubField label="Edition" id="hub-pub-edition" value={pub.edition ?? ''} onChange={sf('edition')} max={100} placeholder="First edition" />
+        <PubField label="Publication date" id="hub-pub-publicationDate" value={pub.publicationDate ?? ''} onChange={sf('publicationDate')} max={100} placeholder="Spring 2027" />
+      </div>
+
+      <div className="instrument-group-label pub-section-label">Copyright</div>
+      <div className="pub-form-grid">
+        <PubField label="Copyright year" id="hub-pub-copyrightYear" value={pub.copyrightYear ?? ''} onChange={sf('copyrightYear')} max={10} placeholder={String(new Date().getFullYear())} />
+        <PubField label="Copyright holder" id="hub-pub-copyrightHolder" value={pub.copyrightHolder ?? ''} onChange={sf('copyrightHolder')} max={200} placeholder="Author or estate name" />
+        <PubField label="Rights" id="hub-pub-rights" value={pub.rights ?? ''} onChange={sf('rights')} max={200} placeholder="All rights reserved" wide />
+        <PubTextarea label="Dedication" id="hub-pub-dedication" value={pub.dedication ?? ''} onChange={sf('dedication')} max={1000} placeholder="For…" wide />
+      </div>
+
+      <div className="instrument-group-label pub-section-label">Status</div>
+      <div className="pub-status-options">
+        {STATUS_META.map(({ s, icon }) => (
+          <button key={s} type="button" className={`status-opt${selectedStatus === s ? ' selected' : ''}`}
+            onClick={() => setSelectedStatus(s)}>
+            <span className="status-opt-icon" aria-hidden="true">{icon}</span>
+            {s}
+          </button>
         ))}
       </div>
 
-      <button type="button" className="edit-save-btn" style={{ marginTop: '28px' }} onClick={save}>Save changes</button>
+      <div className="pub-form-actions">
+        <button type="button" className="btn-outline pub-reset-btn" onClick={reset}>Reset</button>
+      </div>
     </div>
   );
 }
@@ -656,7 +709,7 @@ function FeedbackTab({ annotations, readerCount, onRead }: {
     <div className="hub-panel">
       <div className="hub-overview-head">
         <h2 className="hub-panel-title">Feedback</h2>
-        <button className="hub-read-cta" onClick={onRead}>Annotate in reader →</button>
+        <button className="btn-outline" style={{ fontSize: '12px' }} onClick={onRead}>Annotate in reader →</button>
       </div>
       <div className="hub-stats">
         <div className="lib-stat"><span className="lib-stat-num">{annotations.length}</span><span className="lib-stat-label">Annotations</span></div>
@@ -691,25 +744,53 @@ function FeedbackTab({ annotations, readerCount, onRead }: {
 }
 
 // ── Exports: every publication-ready artifact in one home. ──
-function ExportsTab({
-  subject, manuscriptAvailable, annCount, editCount, hasPublishing, onGoToDetails,
-  onExportManuscript, onExportReportDocx, onExportReportHtml, onExportRevisionLog,
+/** A single export option, presented inline: a format chip, plain-language
+ *  description, and a download affordance — no intermediate modal. */
+function ExportCard({
+  chip, title, desc, onClick, disabled, disabledHint,
 }: {
-  subject: string;
+  chip: string; title: string; desc: string;
+  onClick: () => void; disabled?: boolean; disabledHint?: string;
+}) {
+  return (
+    <button
+      type="button"
+      className="hub-export-card"
+      onClick={onClick}
+      disabled={disabled}
+      title={disabled ? disabledHint : undefined}
+    >
+      <span className="hub-export-card-chip">{chip}</span>
+      <span className="hub-export-card-body">
+        <span className="hub-export-card-title">{title}</span>
+        <span className="hub-export-card-desc">{desc}</span>
+      </span>
+      <DownloadIcon size={15} className="hub-export-card-icon" />
+    </button>
+  );
+}
+
+function ExportsTab({
+  manuscriptAvailable, annCount, editCount, hasPublishing, onGoToDetails,
+  onExportManuscript, onExportReportDocx, onExportReportHtml, onExportReportJson, onExportRevisionLog,
+  onShareReader,
+}: {
   manuscriptAvailable: boolean; annCount: number; editCount: number;
   hasPublishing: boolean; onGoToDetails: () => void;
   onExportManuscript: (format: 'epub' | 'docx' | 'md') => void | Promise<void>;
   onExportReportDocx: () => void | Promise<void>;
   onExportReportHtml: () => void;
+  onExportReportJson: () => void;
   onExportRevisionLog: () => void;
+  onShareReader: (withAnnotations: boolean) => void;
 }) {
-  const [manuscriptOpen, setManuscriptOpen] = useState(false);
-  const [reportOpen, setReportOpen] = useState(false);
+  const noManuscript = !manuscriptAvailable;
+  const noManuscriptHint = 'Re-import this manuscript to export it';
 
   return (
     <div className="hub-panel">
-      <h2 className="hub-panel-title">Exports</h2>
-      <p className="hub-panel-lead">Publication-ready artifacts, built from your latest draft and title-page details.</p>
+      <h2 className="hub-panel-title">Exports &amp; Sharing</h2>
+      <p className="hub-panel-lead">Publication-ready files and clean reader copies — built from your latest draft and title-page details.</p>
 
       {!hasPublishing && (
         <button className="hub-detail-nudge" onClick={onGoToDetails}>
@@ -717,53 +798,57 @@ function ExportsTab({
         </button>
       )}
 
-      <div className="rp-export-group">
-        <div className="rp-export-group-label">Your manuscript</div>
-        <button className="rp-export-hero" onClick={() => setManuscriptOpen(true)} disabled={!manuscriptAvailable}
-          title={manuscriptAvailable ? undefined : 'Re-import this manuscript to export it'}>
-          Download your manuscript
-        </button>
-        {editCount > 0 && (
-          <button className="rp-export-btn ann-export-secondary" onClick={onExportRevisionLog} style={{ marginTop: '8px' }}>
-            Revision log ({editCount} edit{editCount !== 1 ? 's' : ''})
-          </button>
-        )}
-      </div>
+      <section className="hub-export-section">
+        <div className="hub-export-section-label">Manuscript</div>
+        <div className="hub-export-cards">
+          <ExportCard chip="EPUB" title="EPUB ebook" disabled={noManuscript} disabledHint={noManuscriptHint}
+            desc="Reflowable ebook for Kindle, Apple Books, and Kobo, with title, copyright, and contents pages — the format retailers ingest."
+            onClick={() => onExportManuscript('epub')} />
+          <ExportCard chip="DOCX" title="Word document" disabled={noManuscript} disabledHint={noManuscriptHint}
+            desc="Formatted .docx with title, copyright, and dedication pages — chapters, headings, and scene breaks preserved."
+            onClick={() => onExportManuscript('docx')} />
+          <ExportCard chip="MD" title="Markdown" disabled={noManuscript} disabledHint={noManuscriptHint}
+            desc="Plain-text Markdown with a YAML metadata block — portable into Pandoc and most ebook toolchains."
+            onClick={() => onExportManuscript('md')} />
+          <ExportCard chip="LOG" title="Revision log"
+            disabled={editCount === 0}
+            disabledHint="Edit a chapter in the reader to start a revision log"
+            desc={editCount > 0
+              ? `Every edit you’ve made to this draft (${editCount} so far), as a reviewable change record.`
+              : 'Every edit you make to this draft, as a reviewable change record.'}
+            onClick={onExportRevisionLog} />
+        </div>
+      </section>
 
-      <div className="rp-export-group">
-        <div className="rp-export-group-label">Your insights</div>
-        <button className="rp-export-btn ann-export-secondary" onClick={() => setReportOpen(true)} disabled={annCount === 0}
-          title={annCount === 0 ? 'Annotate first to generate a report' : undefined}>
-          Intelligence report
-        </button>
-      </div>
+      <section className="hub-export-section">
+        <div className="hub-export-section-label">Editorial report</div>
+        <div className="hub-export-cards">
+          <ExportCard chip="DOCX" title="Word document" disabled={annCount === 0}
+            disabledHint="Annotate first to generate a report"
+            desc="Best for sharing, adding comments, and print."
+            onClick={onExportReportDocx} />
+          <ExportCard chip="HTML" title="Web page" disabled={annCount === 0}
+            disabledHint="Annotate first to generate a report"
+            desc="Self-contained page — opens in any browser, easy to skim or print."
+            onClick={onExportReportHtml} />
+          <ExportCard chip="JSON" title="Raw data" disabled={annCount === 0}
+            disabledHint="Annotate first to generate a report"
+            desc="The same structured signals the app uses — for your own tools or downstream analysis."
+            onClick={onExportReportJson} />
+        </div>
+      </section>
 
-      <ExportChoiceModal
-        open={manuscriptOpen}
-        heading="Download your manuscript"
-        subject={subject}
-        primaryLabel="Download manuscript"
-        formats={[
-          { key: 'epub', label: 'EPUB (.epub)', desc: 'A standard reflowable ebook for Kindle, Apple Books, and Kobo — with a title page, copyright page, dedication, and contents built from your Details. The format retailers ingest.' },
-          { key: 'docx', label: 'Word (.docx)', desc: 'A formatted Word document with a title page, copyright page, and dedication built from your Details — chapters, headings, and scene breaks preserved.' },
-          { key: 'md', label: 'Markdown (.md)', desc: 'Plain-text Markdown with a YAML front-matter block carrying your publishing metadata. Portable into Pandoc and most ebook toolchains.' },
-        ]}
-        onClose={() => setManuscriptOpen(false)}
-        onExport={(format) => onExportManuscript(format as 'epub' | 'docx' | 'md')}
-      />
-
-      <ExportChoiceModal
-        open={reportOpen}
-        heading="Export intelligence report"
-        subject={subject}
-        primaryLabel="Download report"
-        formats={[
-          { key: 'docx', label: 'Word (.docx)', desc: 'A formatted Word document — best for sharing, adding comments, and print.' },
-          { key: 'html', label: 'Web page (.html)', desc: 'A self-contained web page — opens in any browser, easy to skim or print.' },
-        ]}
-        onClose={() => setReportOpen(false)}
-        onExport={(format) => (format === 'docx' ? onExportReportDocx() : onExportReportHtml())}
-      />
+      <section className="hub-export-section">
+        <div className="hub-export-section-label">Share with a reader</div>
+        <div className="hub-export-cards">
+          <ExportCard chip="READER" title="Reading-only copy" disabled={noManuscript} disabledHint={noManuscriptHint}
+            desc="A clean, read-only reader file — no annotation tools. Send it to anyone."
+            onClick={() => onShareReader(false)} />
+          <ExportCard chip="READER" title="Copy with annotation tools" disabled={noManuscript} disabledHint={noManuscriptHint}
+            desc="A reader file with full annotation tools — your beta reader marks it up and exports feedback you import back in."
+            onClick={() => onShareReader(true)} />
+        </div>
+      </section>
     </div>
   );
 }
