@@ -13,6 +13,7 @@ const POSITION_KEY = 'ms_pos_';
 const ANN_KEY = 'ms_ann_';
 const EDIT_KEY = 'ms_edits_';
 const SESSION_KEY = 'ms_sessions_';
+const COVER_KEY = 'ms_cover_';
 
 export class LocalStorageProvider implements StorageProvider {
   readonly name = 'localStorage';
@@ -71,5 +72,15 @@ export class LocalStorageProvider implements StorageProvider {
 
   async savePosition(id: string, frac: number): Promise<void> {
     localStorage.setItem(POSITION_KEY + id, String(frac));
+  }
+
+  async loadCover(id: string): Promise<string | null> {
+    return localStorage.getItem(COVER_KEY + id) ?? null;
+  }
+
+  async saveCover(id: string, dataUrl: string | null): Promise<void> {
+    if (dataUrl === null) { localStorage.removeItem(COVER_KEY + id); return; }
+    try { localStorage.setItem(COVER_KEY + id, dataUrl); }
+    catch { /* QuotaExceededError — cover won't persist on this backend */ }
   }
 }

@@ -105,10 +105,12 @@ export type AnnotationType =
   | 'bookmark'
   | 'question'
   | 'continuity'
-  | 'structural';
+  | 'structural'
+  | 'pacing'
+  | 'voice';
 
 export const ANNOTATION_TYPES: AnnotationType[] = [
-  'highlight', 'note', 'bookmark', 'question', 'continuity', 'structural',
+  'highlight', 'note', 'bookmark', 'question', 'continuity', 'structural', 'pacing', 'voice',
 ];
 
 export const ANNOTATION_LABELS: Record<AnnotationType, string> = {
@@ -118,6 +120,8 @@ export const ANNOTATION_LABELS: Record<AnnotationType, string> = {
   question:   'Question',
   continuity: 'Continuity',
   structural: 'Structural',
+  pacing:     'Pacing',
+  voice:      'Voice / Tone',
 };
 
 export const ANNOTATION_COLORS: Record<AnnotationType, string> = {
@@ -127,6 +131,8 @@ export const ANNOTATION_COLORS: Record<AnnotationType, string> = {
   question:   '#ef6461',
   continuity: '#34d399',
   structural: '#fb923c',
+  pacing:     '#38bdf8',
+  voice:      '#c084fc',
 };
 
 /** Revision lifecycle of an annotation. Reserved now (no UI yet) so the data
@@ -414,6 +420,44 @@ export interface EditorialSignals {
   engagementCurve: number[];    // per-chapter normalized engagement, in chapter order
   engagementDrops: number[];    // chapter indices where engagement falls sharply vs the prior chapter
 
+  // ── Prose-derived (text itself, not annotations; available on import) ──
+  prose: ProseAnalysis | null;  // null when the source markdown isn't available
+
   // ── Cross-version (Phase 8) ──
   revisionImpact: null;         // placeholder until version snapshots exist; always null for now
+}
+
+// ─── Prose analysis (Phase A — deterministic metrics on the TEXT itself) ──────
+// Derived from the manuscript prose, NOT annotations: available the moment a
+// manuscript is parsed, needing no annotations, readers, or AI. Tier 1 only —
+// pure counts and ratios, every figure traceable to the text. Baselines are the
+// manuscript's OWN means, so a chapter is always framed self-relative ("2× your
+// average"), never against an external "correct" style. Lexical flags (Tier 2)
+// and inferential proxies (Tier 3) come later. See
+// raw/prose-analysis-engine-brief.md.
+export interface ProseAnalysis {
+  generatedAt: number;
+  chapters: ChapterProse[];
+  baselines: ProseBaselines;
+}
+
+export interface ChapterProse {
+  index: number;
+  title: string;
+  words: number;
+  paragraphs: number;
+  meanParagraphWords: number;
+  scenes: number;                // sceneBreakCount + 1 (0 for a chapter with no prose)
+  dialogueRatio: number;         // 0..1 — share of words in dialogue paragraphs
+  sentences: number;
+  meanSentenceWords: number;
+  sentenceLengthVariance: number;// rhythm signal — high variance = varied sentence lengths
+}
+
+export interface ProseBaselines {
+  chapterCount: number;
+  totalWords: number;
+  meanChapterWords: number;      // over chapters with prose (words > 0)
+  meanSentenceWords: number;     // manuscript-wide: all sentence lengths
+  dialogueRatio: number;         // manuscript-wide: dialogue words / total words
 }

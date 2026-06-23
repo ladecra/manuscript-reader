@@ -9,15 +9,9 @@ import {
   Table, TableRow, TableCell, ShadingType, PageNumber, Footer, Packer,
   type IParagraphOptions, type ITableCellOptions,
 } from 'docx';
-import type { Annotation, AnnotationType, Chapter, EditorialSignals } from '../types';
+import type { Annotation, Chapter, EditorialSignals } from '../types';
 import { ANNOTATION_TYPES, ANNOTATION_LABELS } from '../types';
-
-const HEX: Record<AnnotationType, string> = {
-  highlight: 'C79A3A', note: '8A857A', bookmark: '6366F1',
-  question: 'EF6461', continuity: '2F9E7D', structural: 'FB923C',
-};
-const INK = '1B1A17', HEAD = '2C2A26', BODY = '3D3A36', META = '6B6760',
-      RULE = 'E4E0D6', QUOTE = '5A5750', LABEL = 'A09B90', PAPER = 'F7F5F0';
+import { ANN_COLOR_DOCX as HEX, DOCX_INK as INK, DOCX_HEAD as HEAD, DOCX_BODY as BODY, DOCX_META as META, DOCX_RULE as RULE, DOCX_QUOTE as QUOTE, DOCX_LABEL as LABEL, DOCX_PAPER as PAPER } from './exportPalette';
 const SERIF = 'Georgia', SANS = 'Arial';
 const NONE = { style: BorderStyle.NONE };
 const noBorders = { top: NONE, bottom: NONE, left: NONE, right: NONE };

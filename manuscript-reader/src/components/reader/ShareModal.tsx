@@ -51,7 +51,7 @@ export function ShareModal({ open, title, wordCount, chapterCount, onClose, onDo
 
         <div className="modal-body">
           <div id="share-meta" className="share-meta">
-            <strong style={{ color: 'var(--primary)' }}>{title}</strong><br />
+            <strong style={{ color: 'var(--ink)' }}>{title}</strong><br />
             {wordCount ? `${wordCount.toLocaleString()} words · ` : ''}{chapterCount} chapter{chapterCount !== 1 ? 's' : ''}
           </div>
 

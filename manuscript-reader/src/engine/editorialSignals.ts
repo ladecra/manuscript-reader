@@ -15,6 +15,8 @@ import type {
 } from './types';
 import { computeReport } from './report';
 import { mergeReaderSessions } from './sessions';
+import { buildManuscriptStructure } from './ingestion/manuscriptStructure';
+import { computeProseAnalysis } from './prose/proseAnalysis';
 
 /** Annotation types that represent an editorial *concern* (vs. engagement). */
 const CONCERN_TYPES = new Set(['question', 'continuity', 'structural']);
@@ -34,6 +36,12 @@ export function computeEditorialSignals(input: EditorialSignalsInput): Editorial
 
   const report = computeReport(annotations, chapters, combinedMarkdown);
   const merge = mergeReaderSessions(sessions, annotations, chapters);
+
+  // Prose-derived signal — analyses the text itself, so it's present even with
+  // zero annotations. Null only when the source markdown isn't available.
+  const prose = combinedMarkdown
+    ? computeProseAnalysis(buildManuscriptStructure(combinedMarkdown))
+    : null;
   const hasReaders = merge.readerCount > 0;
 
   // Reach lookup (readers who got to each chapter), for abandonment-aware silence.
@@ -97,6 +105,7 @@ export function computeEditorialSignals(input: EditorialSignalsInput): Editorial
     unresolvedConcerns,
     engagementCurve,
     engagementDrops,
+    prose,
     revisionImpact: null,
   };
 }

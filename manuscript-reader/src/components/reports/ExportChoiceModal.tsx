@@ -57,7 +57,7 @@ export function ExportChoiceModal({ open, heading, subject, formats, primaryLabe
 
         <div className="modal-body">
           <div className="share-meta">
-            <strong style={{ color: 'var(--primary)' }}>{subject}</strong>
+            <strong style={{ color: 'var(--ink)' }}>{subject}</strong>
           </div>
 
           <div className="share-toggle-row">

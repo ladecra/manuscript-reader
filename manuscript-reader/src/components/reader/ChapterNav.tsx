@@ -31,7 +31,7 @@ export function ChapterNav({
         <div id="nav-overlay" className="visible" onClick={onClose} />
       )}
 
-      <nav id="chapter-nav" className={open ? 'open' : ''}>
+      <nav id="chapter-nav" className={`panel panel--left${open ? ' open' : ''}`}>
         <div className="nav-section-label">Chapters</div>
         <div id="chapter-links">
           {chapters.map(ch => (
@@ -55,7 +55,7 @@ export function ChapterNav({
             <button
               style={{
                 background: 'none', border: '1px solid var(--border)',
-                fontFamily: "'Schibsted Grotesk', system-ui, sans-serif", fontSize: '10px',
+                fontFamily: "'Hanken Grotesk', system-ui, sans-serif", fontSize: '10px',
                 letterSpacing: '0.08em', textTransform: 'uppercase',
                 color: 'var(--dim)', padding: '8px 14px', cursor: 'pointer',
                 width: '100%', textAlign: 'left',

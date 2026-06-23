@@ -101,9 +101,29 @@ export function htmlToMarkdownBlocks(html: string): string {
   const s = html.replace(/<mark\b[^>]*>([\s\S]*?)<\/mark>/gi, '$1');
 
   const out: string[] = [];
+  // Loose inline content serializes to one paragraph — but peel out any line the
+  // author turned into a heading by typing "## " at a line start *without*
+  // splitting the block. contentEditable keeps that line inside the surrounding
+  // <p> via a <br>, and htmlToMarkdownInline collapses <br>→space, so without
+  // this the "## " folds mid-paragraph and reparses as prose (the old "you must
+  // hit return before ## " bug). Non-heading lines still rejoin into one
+  // paragraph, preserving normal soft-wrapped text.
+  const HEADING_LINE = /^#{2,4} \S/;
   const pushInline = (raw: string) => {
-    const md = htmlToMarkdownInline(raw);
-    if (md) out.push(md);
+    const segments = raw.split(/<br\s*\/?>/gi);
+    let para: string[] = [];
+    const flushPara = () => {
+      if (!para.length) return;
+      const md = htmlToMarkdownInline(para.join('<br>'));
+      if (md) out.push(md);
+      para = [];
+    };
+    for (const seg of segments) {
+      const md = htmlToMarkdownInline(seg);
+      if (HEADING_LINE.test(md)) { flushPara(); out.push(md); }
+      else para.push(seg);
+    }
+    flushPara();
   };
 
   // Match a void <hr> or any paired block element (non-greedy: contentEditable

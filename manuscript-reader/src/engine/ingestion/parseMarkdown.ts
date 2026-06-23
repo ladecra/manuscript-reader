@@ -109,7 +109,12 @@ export function parseMarkdown(md: string): ParsedManuscript {
     }
 
     // ── Horizontal rule / scene break ──
-    if (/^(-{3,}|\*{3,}|_{3,})$/.test(line.trim())) {
+    // Tight runs (`***`, `---`, `___`) AND the spaced/glyph forms real manuscripts
+    // overwhelmingly use: "* * *", "- - -", "· · ·", bullet/em-dash rows. Rule:
+    // once whitespace is removed the line is ≥3 separator glyphs and nothing else.
+    // Excludes `=` (setext underline, handled below) and backtick (code fence).
+    const sepOnly = line.trim().replace(/\s+/g, '');
+    if (sepOnly.length >= 3 && /^[*\-_·•—–]+$/.test(sepOnly)) {
       block('scene-break', lineStart[i], lineEnd(i), '');
       html += '<hr>';
       i++;

@@ -68,11 +68,11 @@ export function AddChaptersModal({ open, manuscriptTitle, onClose, onAppend }: A
           </button>
         </div>
 
-        <div className="add-ch-tabs">
-          <button className={`add-ch-tab${mode === 'paste' ? ' active' : ''}`} onClick={() => setMode('paste')}>
+        <div className="tabs">
+          <button className={`tab${mode === 'paste' ? ' active' : ''}`} onClick={() => setMode('paste')}>
             Paste text
           </button>
-          <button className={`add-ch-tab${mode === 'files' ? ' active' : ''}`} onClick={() => setMode('files')}>
+          <button className={`tab${mode === 'files' ? ' active' : ''}`} onClick={() => setMode('files')}>
             Add files
           </button>
         </div>

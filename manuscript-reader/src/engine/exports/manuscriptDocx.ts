@@ -11,8 +11,9 @@ import {
 } from 'docx';
 import { cleanManuscriptMarkdown, exportSlug, copyrightLine, type ExportManuscriptMeta } from './manuscriptMarkdown';
 
+import { DOCX_INK as INK, DOCX_QUOTE as QUOTE } from './exportPalette';
+
 const SERIF = 'Georgia';
-const INK = '1B1A17', QUOTE = '5A5750';
 const BODY = 24; // half-points → 12pt
 
 interface RunBase { italics?: boolean; color?: string; }

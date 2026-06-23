@@ -5,27 +5,8 @@
 // details (p.2). All charts are inline SVG. No external dependencies.
 
 import type { Annotation, AnnotationCluster, AnnotationType, Chapter, ChapterStat, EditorialSignals } from '../types';
-import { ANNOTATION_TYPES } from '../types';
-
-// ── Palette (matches app light mode: index.css :root.light) ───────────────────
-const COLOR: Record<AnnotationType, string> = {
-  highlight:  '#D9AC3C',  // --ann-highlight-solid
-  note:       '#8E9192',  // --ann-note-solid
-  bookmark:   '#6366F1',  // --ann-bookmark-solid
-  question:   '#EF6461',  // --ann-question-solid
-  continuity: '#34D399',  // --ann-continuity-solid
-  structural: '#FB923C',  // --ann-structural-solid
-};
-const LABEL: Record<AnnotationType, string> = {
-  highlight:  'Highlights',
-  note:       'Notes',
-  bookmark:   'Bookmarks',
-  question:   'Questions',
-  continuity: 'Continuity Flags',
-  structural: 'Structural',
-};
-const INK = '#1B1A17', HEAD = '#2C2A26', META = '#6B6760',
-      LBL = '#A09B90', RULE = '#E8E4DB', PAPER = '#FAF9F6';
+import { ANNOTATION_TYPES, ANNOTATION_COLORS as COLOR } from '../types';
+import { ANN_LABEL_PLURAL as LABEL, INK, HEAD, MUTED as META, DIM as LBL, RULE, PAGE as PAPER, GOOGLE_FONTS_LINK } from './exportPalette';
 
 // ── Editorial signal presentation ─────────────────────────────────────────────
 // The engine decides which clusters exist (report.ts); this maps each signal to
@@ -164,11 +145,11 @@ function densityChart(chapters: ChapterStat[]): string {
     });
 
     if (ch.density > 0) {
-      bars += `<text x="${(x + barW / 2).toFixed(1)}" y="${(PAD.top + chartH - totalBarH - 4).toFixed(1)}" text-anchor="middle" font-size="8.5" fill="${INK}" font-family="Arial,sans-serif" font-weight="500">${ch.density.toFixed(1)}</text>`;
+      bars += `<text x="${(x + barW / 2).toFixed(1)}" y="${(PAD.top + chartH - totalBarH - 4).toFixed(1)}" text-anchor="middle" font-size="8.5" fill="${INK}" font-family="'Hanken Grotesk',system-ui,sans-serif" font-weight="500">${ch.density.toFixed(1)}</text>`;
     }
-    bars += `<text x="${(x + barW / 2).toFixed(1)}" y="${(PAD.top + chartH + 13).toFixed(1)}" text-anchor="middle" font-size="8.5" fill="${META}" font-family="Arial,sans-serif">Ch. ${ch.index}</text>`;
+    bars += `<text x="${(x + barW / 2).toFixed(1)}" y="${(PAD.top + chartH + 13).toFixed(1)}" text-anchor="middle" font-size="8.5" fill="${META}" font-family="'Hanken Grotesk',system-ui,sans-serif">Ch. ${ch.index}</text>`;
     if (ch.words > 0) {
-      bars += `<text x="${(x + barW / 2).toFixed(1)}" y="${(PAD.top + chartH + 25).toFixed(1)}" text-anchor="middle" font-size="7.5" fill="${LBL}" font-family="Arial,sans-serif">${ch.words.toLocaleString()} words</text>`;
+      bars += `<text x="${(x + barW / 2).toFixed(1)}" y="${(PAD.top + chartH + 25).toFixed(1)}" text-anchor="middle" font-size="7.5" fill="${LBL}" font-family="'Hanken Grotesk',system-ui,sans-serif">${ch.words.toLocaleString()} words</text>`;
     }
   });
 
@@ -177,7 +158,7 @@ function densityChart(chapters: ChapterStat[]): string {
   yTicks.forEach(v => {
     const y = PAD.top + chartH - (v / maxD) * chartH;
     grid += `<line x1="${PAD.left}" y1="${y.toFixed(1)}" x2="${PAD.left + chartW}" y2="${y.toFixed(1)}" stroke="${RULE}" stroke-width="0.6"/>`;
-    grid += `<text x="${(PAD.left - 5).toFixed(1)}" y="${(y + 3.5).toFixed(1)}" text-anchor="end" font-size="7.5" fill="${LBL}" font-family="Arial,sans-serif">${v}</text>`;
+    grid += `<text x="${(PAD.left - 5).toFixed(1)}" y="${(y + 3.5).toFixed(1)}" text-anchor="end" font-size="7.5" fill="${LBL}" font-family="'Hanken Grotesk',system-ui,sans-serif">${v}</text>`;
   });
 
   return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">${grid}${bars}</svg>`;
@@ -220,7 +201,7 @@ function heatmapChart(
   let cumW = 0;
   for (const ch of chapterStats) {
     const midX = sx(cumW + ch.words / 2);
-    markers += `<text x="${midX.toFixed(1)}" y="${(PAD.top - 8).toFixed(1)}" text-anchor="middle" font-size="8" fill="${LBL}" font-family="Arial,sans-serif">Ch. ${ch.index}</text>`;
+    markers += `<text x="${midX.toFixed(1)}" y="${(PAD.top - 8).toFixed(1)}" text-anchor="middle" font-size="8" fill="${LBL}" font-family="'Hanken Grotesk',system-ui,sans-serif">Ch. ${ch.index}</text>`;
     if (cumW > 0) {
       const bx = sx(cumW);
       markers += `<line x1="${bx.toFixed(1)}" y1="${PAD.top}" x2="${bx.toFixed(1)}" y2="${(PAD.top + chartH).toFixed(1)}" stroke="${RULE}" stroke-width="0.8" stroke-dasharray="2,3"/>`;
@@ -234,7 +215,7 @@ function heatmapChart(
   yTicks.forEach(v => {
     const y = sy(v);
     yAxis += `<line x1="${PAD.left}" y1="${y.toFixed(1)}" x2="${(PAD.left + chartW).toFixed(1)}" y2="${y.toFixed(1)}" stroke="${RULE}" stroke-width="0.5"/>`;
-    yAxis += `<text x="${(PAD.left - 5).toFixed(1)}" y="${(y + 3.5).toFixed(1)}" text-anchor="end" font-size="7.5" fill="${LBL}" font-family="Arial,sans-serif">${v}</text>`;
+    yAxis += `<text x="${(PAD.left - 5).toFixed(1)}" y="${(y + 3.5).toFixed(1)}" text-anchor="end" font-size="7.5" fill="${LBL}" font-family="'Hanken Grotesk',system-ui,sans-serif">${v}</text>`;
   });
 
   // X axis ticks
@@ -244,9 +225,9 @@ function heatmapChart(
     const w = Math.round((i / steps) * totalWords);
     const x = sx(w);
     const label = w >= 1000 ? `${Math.round(w / 1000)}k` : String(w);
-    xAxis += `<text x="${x.toFixed(1)}" y="${(PAD.top + chartH + 14).toFixed(1)}" text-anchor="middle" font-size="7.5" fill="${LBL}" font-family="Arial,sans-serif">${label}</text>`;
+    xAxis += `<text x="${x.toFixed(1)}" y="${(PAD.top + chartH + 14).toFixed(1)}" text-anchor="middle" font-size="7.5" fill="${LBL}" font-family="'Hanken Grotesk',system-ui,sans-serif">${label}</text>`;
   }
-  xAxis += `<text x="${(PAD.left + chartW / 2).toFixed(1)}" y="${(H - 1).toFixed(1)}" text-anchor="middle" font-size="7.5" fill="${LBL}" font-family="Arial,sans-serif">Word Count</text>`;
+  xAxis += `<text x="${(PAD.left + chartW / 2).toFixed(1)}" y="${(H - 1).toFixed(1)}" text-anchor="middle" font-size="7.5" fill="${LBL}" font-family="'Hanken Grotesk',system-ui,sans-serif">Word Count</text>`;
 
   // Hotspot callout
   let callout = '';
@@ -259,8 +240,8 @@ function heatmapChart(
       <circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="3.5" fill="${INK}"/>
       <line x1="${px.toFixed(1)}" y1="${py.toFixed(1)}" x2="${(cx2).toFixed(1)}" y2="${(cy2 + 14).toFixed(1)}" stroke="#EF6461" stroke-width="0.9"/>
       <rect x="${cx2.toFixed(1)}" y="${cy2.toFixed(1)}" width="134" height="30" fill="white" stroke="${RULE}" stroke-width="0.6" rx="2"/>
-      <text x="${(cx2 + 7).toFixed(1)}" y="${(cy2 + 11).toFixed(1)}" font-size="7.5" fill="#EF6461" font-family="Arial,sans-serif" font-weight="bold">Hotspot</text>
-      <text x="${(cx2 + 7).toFixed(1)}" y="${(cy2 + 22).toFixed(1)}" font-size="7" fill="${META}" font-family="Arial,sans-serif">${peak.y.toFixed(1)} annotations / 1,000 words</text>
+      <text x="${(cx2 + 7).toFixed(1)}" y="${(cy2 + 11).toFixed(1)}" font-size="7.5" fill="#EF6461" font-family="'Hanken Grotesk',system-ui,sans-serif" font-weight="bold">Hotspot</text>
+      <text x="${(cx2 + 7).toFixed(1)}" y="${(cy2 + 22).toFixed(1)}" font-size="7" fill="${META}" font-family="'Hanken Grotesk',system-ui,sans-serif">${peak.y.toFixed(1)} annotations / 1,000 words</text>
     `;
   }
 
@@ -305,8 +286,8 @@ function pieChart(typeTotals: Record<AnnotationType, number>, totalAnns: number)
     const n = typeTotals[t] ?? 0;
     const pct = Math.round((n / totalAnns) * 100);
     legend += `<rect x="164" y="${ly}" width="8" height="8" fill="${COLOR[t]}" rx="1"/>`;
-    legend += `<text x="177" y="${ly + 7}" font-size="9.5" fill="${HEAD}" font-family="Georgia,serif">${LABEL[t]}</text>`;
-    legend += `<text x="340" y="${ly + 7}" text-anchor="end" font-size="9" fill="${META}" font-family="Arial,sans-serif">${n}  (${pct}%)</text>`;
+    legend += `<text x="177" y="${ly + 7}" font-size="9.5" fill="${HEAD}" font-family="'EB Garamond',Georgia,serif">${LABEL[t]}</text>`;
+    legend += `<text x="340" y="${ly + 7}" text-anchor="end" font-size="9" fill="${META}" font-family="'Hanken Grotesk',system-ui,sans-serif">${n}  (${pct}%)</text>`;
     ly += 19;
   });
 
@@ -346,10 +327,9 @@ function signalCard(c: AnnotationCluster, annById: Map<string, Annotation>): str
 // ── CSS ───────────────────────────────────────────────────────────────────────
 function css(): string {
   return `
-@import url('https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,600;1,400&display=swap');
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-body {
+:root {
   --bg:     #E8E4DB;
   --page:   ${PAPER};
   --card:   #ffffff;
@@ -360,8 +340,25 @@ body {
   --rule:   ${RULE};
   --desc:   #4A4740;
   --shadow: rgba(0,0,0,.12);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:     #151412;
+    --page:   #1e1c19;
+    --card:   #252320;
+    --ink:    #EDE8DF;
+    --head:   #D4CEC5;
+    --meta:   #8A8580;
+    --lbl:    #5E5A55;
+    --rule:   #333028;
+    --desc:   #B8B2A8;
+    --shadow: rgba(0,0,0,.4);
+  }
+}
+
+body {
   background: var(--bg);
-  font-family: Georgia, 'EB Garamond', serif;
+  font-family: 'EB Garamond', Georgia, serif;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -373,20 +370,20 @@ body {
 }
 
 /* header */
-.report-label { font-family: Arial, sans-serif; font-size: 10px; font-weight: 700; letter-spacing: .2em; text-transform: uppercase; color: var(--lbl); }
-.report-title { font-family: Georgia, serif; font-size: 46px; font-weight: 400; color: var(--ink); line-height: 1.08; margin: 8px 0 6px; }
-.report-meta  { font-family: Arial, sans-serif; font-size: 11px; color: var(--meta); letter-spacing: .02em; }
+.report-label { font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 10px; font-weight: 700; letter-spacing: .2em; text-transform: uppercase; color: var(--lbl); }
+.report-title { font-family: 'EB Garamond', Georgia, serif; font-size: 46px; font-weight: 400; color: var(--ink); line-height: 1.08; margin: 8px 0 6px; }
+.report-meta  { font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 11px; color: var(--meta); letter-spacing: .02em; }
 .rule { border: none; border-top: 1.5px solid var(--rule); margin: 16px 0; }
 .rule-sm { border: none; border-top: 1px solid var(--rule); margin: 8px 0 12px; }
 
 /* page 2 header bar */
 .page2-bar { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 28px; }
-.page2-bar-label { font-family: Arial, sans-serif; font-size: 10px; font-weight: 700; letter-spacing: .18em; text-transform: uppercase; color: var(--lbl); }
-.page2-bar-title { font-family: Arial, sans-serif; font-size: 10px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; color: var(--meta); }
+.page2-bar-label { font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 10px; font-weight: 700; letter-spacing: .18em; text-transform: uppercase; color: var(--lbl); }
+.page2-bar-title { font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 10px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; color: var(--meta); }
 
 /* section heading */
-.sec-head { font-family: Arial, sans-serif; font-size: 10px; font-weight: 700; letter-spacing: .18em; text-transform: uppercase; color: var(--lbl); margin-bottom: 6px; }
-.sec-sub   { font-family: Arial, sans-serif; font-size: 10px; color: var(--meta); margin-bottom: 12px; }
+.sec-head { font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 10px; font-weight: 700; letter-spacing: .18em; text-transform: uppercase; color: var(--lbl); margin-bottom: 6px; }
+.sec-sub   { font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 10px; color: var(--meta); margin-bottom: 12px; }
 
 /* stat cards */
 .glance-row { display: flex; gap: 10px; margin-top: 12px; margin-bottom: 24px; }
@@ -398,17 +395,17 @@ body {
   border-right: 1px solid var(--rule);
 }
 .stat-icon { margin-bottom: 6px; }
-.stat-num  { font-family: Georgia, serif; font-size: 28px; color: var(--ink); display: block; line-height: 1; margin-bottom: 4px; }
-.stat-name { font-family: Arial, sans-serif; font-size: 8px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--meta); display: block; margin-bottom: 3px; }
-.stat-sub  { font-family: Arial, sans-serif; font-size: 8.5px; color: var(--lbl); }
+.stat-num  { font-family: 'EB Garamond', Georgia, serif; font-size: 28px; color: var(--ink); display: block; line-height: 1; margin-bottom: 4px; }
+.stat-name { font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 8px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--meta); display: block; margin-bottom: 3px; }
+.stat-sub  { font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 8.5px; color: var(--lbl); }
 
 /* density legend */
 .legend { display: flex; gap: 16px; margin-bottom: 10px; flex-wrap: wrap; }
-.legend-item { display: flex; align-items: center; gap: 5px; font-family: Arial, sans-serif; font-size: 9px; color: var(--meta); }
+.legend-item { display: flex; align-items: center; gap: 5px; font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 9px; color: var(--meta); }
 .legend-dot  { width: 8px; height: 8px; border-radius: 1px; flex-shrink: 0; }
 
 /* engagement lead line */
-.engagement-lead { font-family: Georgia, serif; font-size: 13px; color: var(--desc); line-height: 1.5; margin-bottom: 16px; }
+.engagement-lead { font-family: 'EB Garamond', Georgia, serif; font-size: 13px; color: var(--desc); line-height: 1.5; margin-bottom: 16px; }
 .engagement-lead strong { color: var(--ink); font-weight: 600; }
 
 /* editorial signal cards */
@@ -418,36 +415,36 @@ body {
   border-top: 1px solid var(--rule); border-right: 1px solid var(--rule); border-bottom: 1px solid var(--rule);
 }
 .signal-head { display: flex; align-items: center; gap: 9px; margin-bottom: 5px; }
-.signal-label { font-family: Arial, sans-serif; font-size: 11px; font-weight: 700; letter-spacing: .04em; color: var(--sc); }
-.signal-sev { font-family: Arial, sans-serif; font-size: 7.5px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; padding: 2px 6px; border-radius: 2px; }
+.signal-label { font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 11px; font-weight: 700; letter-spacing: .04em; color: var(--sc); }
+.signal-sev { font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 7.5px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; padding: 2px 6px; border-radius: 2px; }
 .sev-high   { color: #fff; background: var(--sc); }
 .sev-medium { color: var(--sc); background: var(--card); border: 1px solid var(--sc); }
 .sev-low    { color: var(--meta); background: var(--card); border: 1px solid var(--rule); }
-.signal-lead { font-family: Georgia, serif; font-size: 12px; color: var(--desc); line-height: 1.5; margin-bottom: 8px; }
+.signal-lead { font-family: 'EB Garamond', Georgia, serif; font-size: 12px; color: var(--desc); line-height: 1.5; margin-bottom: 8px; }
 
 /* verbatim quote */
 .quote { display: flex; gap: 9px; margin-top: 7px; }
 .quote-mark { width: 3px; border-radius: 2px; flex-shrink: 0; align-self: stretch; }
 .quote-body { min-width: 0; }
 .quote-text { font-family: 'EB Garamond', Georgia, serif; font-size: 12px; font-style: italic; color: var(--head); line-height: 1.42; }
-.quote-attr { font-family: Arial, sans-serif; font-size: 8.5px; letter-spacing: .04em; color: var(--lbl); margin-top: 3px; text-transform: uppercase; }
+.quote-attr { font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 8.5px; letter-spacing: .04em; color: var(--lbl); margin-top: 3px; text-transform: uppercase; }
 
 /* reader consensus */
 .consensus-row { display: flex; align-items: center; gap: 12px; margin-bottom: 9px; }
-.consensus-ch { font-family: Georgia, serif; font-size: 12px; color: var(--head); width: 180px; flex-shrink: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.consensus-ch { font-family: 'EB Garamond', Georgia, serif; font-size: 12px; color: var(--head); width: 180px; flex-shrink: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .consensus-track { flex: 1; height: 7px; background: var(--rule); border-radius: 4px; overflow: hidden; }
 .consensus-fill { height: 100%; background: ${COLOR.bookmark}; border-radius: 4px; }
-.consensus-val { font-family: Arial, sans-serif; font-size: 9.5px; color: var(--meta); white-space: nowrap; flex-shrink: 0; min-width: 56px; text-align: right; }
+.consensus-val { font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 9.5px; color: var(--meta); white-space: nowrap; flex-shrink: 0; min-width: 56px; text-align: right; }
 
 /* reader feedback log */
 .feedback-group { margin-bottom: 18px; break-inside: avoid; }
-.feedback-ch { font-family: Georgia, serif; font-size: 14px; color: var(--ink); margin-bottom: 8px; padding-bottom: 5px; border-bottom: 1px solid var(--rule); }
+.feedback-ch { font-family: 'EB Garamond', Georgia, serif; font-size: 14px; color: var(--ink); margin-bottom: 8px; padding-bottom: 5px; border-bottom: 1px solid var(--rule); }
 .feedback-item { display: flex; gap: 9px; margin-bottom: 10px; }
 .feedback-mark { width: 3px; border-radius: 2px; flex-shrink: 0; align-self: stretch; }
-.feedback-type { font-family: Arial, sans-serif; font-size: 7.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--meta); margin-bottom: 2px; }
-.feedback-text { font-family: Georgia, serif; font-size: 12.5px; color: var(--desc); line-height: 1.48; }
+.feedback-type { font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 7.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--meta); margin-bottom: 2px; }
+.feedback-text { font-family: 'EB Garamond', Georgia, serif; font-size: 12.5px; color: var(--desc); line-height: 1.48; }
 .feedback-quote { font-family: 'EB Garamond', Georgia, serif; font-size: 11px; font-style: italic; color: var(--meta); line-height: 1.4; margin-top: 3px; padding-left: 9px; border-left: 1px solid var(--rule); }
-.feedback-attr { font-family: Arial, sans-serif; font-size: 8.5px; color: var(--lbl); margin-top: 3px; }
+.feedback-attr { font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 8.5px; color: var(--lbl); margin-top: 3px; }
 
 /* two-column */
 .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
@@ -455,14 +452,14 @@ body {
 
 /* hotspot list */
 .hotspot-item { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 12px; }
-.hotspot-num  { font-family: Georgia, serif; font-size: 16px; color: #EF6461; min-width: 18px; margin-top: 1px; }
-.hotspot-ch   { font-family: Georgia, serif; font-size: 12px; color: var(--head); line-height: 1.3; }
-.hotspot-sub  { font-family: Arial, sans-serif; font-size: 9.5px; color: var(--meta); margin-top: 2px; }
+.hotspot-num  { font-family: 'EB Garamond', Georgia, serif; font-size: 16px; color: #EF6461; min-width: 18px; margin-top: 1px; }
+.hotspot-ch   { font-family: 'EB Garamond', Georgia, serif; font-size: 12px; color: var(--head); line-height: 1.3; }
+.hotspot-sub  { font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 9.5px; color: var(--meta); margin-top: 2px; }
 
 /* silent chapters */
 .silent-item  { margin-bottom: 11px; }
-.silent-ch    { font-family: Georgia, serif; font-size: 12px; color: ${COLOR.bookmark}; }
-.silent-sub   { font-family: Arial, sans-serif; font-size: 9.5px; color: var(--meta); margin-top: 2px; }
+.silent-ch    { font-family: 'EB Garamond', Georgia, serif; font-size: 12px; color: ${COLOR.bookmark}; }
+.silent-sub   { font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 9.5px; color: var(--meta); margin-top: 2px; }
 
 /* annotation breakdown */
 .breakdown-block { display: flex; align-items: center; gap: 12px; }
@@ -471,11 +468,11 @@ body {
 .details-box { border: 1px solid var(--rule); padding: 14px 16px; }
 .detail-row  { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 9px; }
 .detail-ico  { color: var(--meta); margin-top: 1px; }
-.detail-label { font-family: Arial, sans-serif; font-size: 8.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--lbl); margin-bottom: 1px; }
-.detail-val   { font-family: Georgia, serif; font-size: 12px; color: var(--head); }
+.detail-label { font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 8.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--lbl); margin-bottom: 1px; }
+.detail-val   { font-family: 'EB Garamond', Georgia, serif; font-size: 12px; color: var(--head); }
 
 /* footer */
-.page-footer { margin-top: 28px; text-align: center; font-family: Arial, sans-serif; font-size: 9px; color: var(--lbl); letter-spacing: .06em; }
+.page-footer { margin-top: 28px; text-align: center; font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 9px; color: var(--lbl); letter-spacing: .06em; }
 
 /* section spacing */
 .mb4  { margin-bottom: 4px; }
@@ -688,6 +685,7 @@ function buildHtml(opts: {
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>${esc(title)} — Intelligence Report</title>
+${GOOGLE_FONTS_LINK}
 <style>${css()}</style>
 </head>
 <body>
@@ -768,6 +766,8 @@ ${page3}
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
+export { buildHtml as buildReportHtml };
+
 export function exportReportHtml(
   title: string,
   id: string,
