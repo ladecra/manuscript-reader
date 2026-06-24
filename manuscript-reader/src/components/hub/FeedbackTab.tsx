@@ -7,7 +7,10 @@ import {
 } from '../../engine/types';
 import { useReaderStore } from '../../state/readerStore';
 import { useUIStore } from '../../state/uiStore';
-import { ChevronDownIcon, FilterSlidersIcon } from '../ui/Icons';
+import type { ReaderExportPayload } from '../../engine/sessions';
+import { showToast } from '../ui/Toast';
+import { ChevronDownIcon, FilterSlidersIcon, PlusIcon } from '../ui/Icons';
+import { AddFeedbackModal } from './AddFeedbackModal';
 
 type SortMode = 'manuscript' | 'recent' | 'type';
 
@@ -70,13 +73,25 @@ function FilterToggle({
 export function FeedbackTab({
   annotations,
   readerCount,
+  manuscriptTitle,
+  wordCount,
+  chapterCount,
+  manuscriptAvailable,
   onRead,
+  onAnnotate,
+  onShareReader,
 }: {
   annotations: Annotation[];
   readerCount: number;
+  manuscriptTitle: string;
+  wordCount: number;
+  chapterCount: number;
+  manuscriptAvailable: boolean;
   onRead: () => void;
+  onAnnotate: () => void;
+  onShareReader: (withAnnotations: boolean) => void;
 }) {
-  const { patchAnnotation, deleteAnnotation } = useReaderStore();
+  const { patchAnnotation, deleteAnnotation, importSession } = useReaderStore();
   const { setPendingChapterIndex, setPendingAnnotationId } = useUIStore();
 
   const [sort, setSort] = useState<SortMode>('manuscript');
@@ -88,6 +103,7 @@ export function FeedbackTab({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftNote, setDraftNote] = useState('');
   const [rowMenuId, setRowMenuId] = useState<string | null>(null);
+  const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
 
   const filterRef = useRef<HTMLDivElement>(null);
   const sortRef = useRef<HTMLDivElement>(null);
@@ -160,14 +176,41 @@ export function FeedbackTab({
 
   const filterActive = hideResolved || hideOpen || ANNOTATION_TYPES.some(t => !typeEnabled[t]);
 
+  const handleImport = (payload: ReaderExportPayload) => {
+    const { imported, session } = importSession(payload);
+    const who = session?.readerName ? ` from ${session.readerName}` : '';
+    const far = session ? (session.completedAt ? ' · finished' : ` · read ${Math.round(session.progress * 100)}%`) : '';
+    showToast(`${imported} annotation${imported !== 1 ? 's' : ''} imported${who}${far}.`);
+  };
+
   return (
     <div className="hub-panel">
       <div className="hub-overview-head">
         <h2 className="hub-panel-title">Feedback</h2>
-        <button type="button" className="btn-outline" style={{ fontSize: '12px' }} onClick={onRead}>
-          Annotate in reader →
-        </button>
+        <div className="hub-feedback-head-actions">
+          <button type="button" className="library-new-btn" onClick={() => setFeedbackModalOpen(true)}>
+            <PlusIcon size={13} /> Add or share feedback
+          </button>
+          <button
+            type="button"
+            className="btn-outline hub-feedback-annotate-btn"
+            onClick={onAnnotate}
+            disabled={!manuscriptAvailable}
+          >
+            Annotate in reader →
+          </button>
+        </div>
       </div>
+      <AddFeedbackModal
+        open={feedbackModalOpen}
+        title={manuscriptTitle}
+        wordCount={wordCount}
+        chapterCount={chapterCount}
+        manuscriptAvailable={manuscriptAvailable}
+        onClose={() => setFeedbackModalOpen(false)}
+        onImport={handleImport}
+        onShareDownload={onShareReader}
+      />
       <div className="hub-stats">
         <div className="lib-stat">
           <span className="lib-stat-num">{annotations.length}</span>
@@ -183,8 +226,7 @@ export function FeedbackTab({
         <div className="hub-empty">
           <p>No annotations yet.</p>
           <p className="hub-empty-sub">
-            Open the reader to annotate, or import a beta reader&apos;s feedback file from the reader&apos;s
-            annotations panel.
+            Open the reader to annotate, or use Add or share feedback to import a beta reader&apos;s .json file.
           </p>
         </div>
       ) : (

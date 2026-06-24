@@ -27,6 +27,15 @@ export interface ReaderExportPayload {
   annotations: Annotation[];
 }
 
+/** Parse a beta-reader .json export (full payload or legacy annotations array). */
+export function parseReaderExportPayload(raw: unknown): ReaderExportPayload {
+  if (Array.isArray(raw)) return { annotations: raw as Annotation[] };
+  if (raw && typeof raw === 'object' && Array.isArray((raw as ReaderExportPayload).annotations)) {
+    return raw as ReaderExportPayload;
+  }
+  throw new Error('invalid');
+}
+
 /**
  * Build a ReaderSession from an import payload. Deterministic: the id is derived
  * from (manuscriptId, readerId), so re-importing an updated feedback file from

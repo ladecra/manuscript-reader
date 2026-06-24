@@ -2,6 +2,7 @@ import React, { useRef } from 'react';
 import type { Annotation, AnnotationType } from '../../engine/types';
 import { ANNOTATION_TYPES, ANNOTATION_LABELS, ANNOTATION_COLORS } from '../../engine/types';
 import type { ReaderExportPayload } from '../../engine/sessions';
+import { parseReaderExportPayload } from '../../engine/sessions';
 import { XIcon } from '../ui/Icons';
 
 interface AnnotationSidebarProps {
@@ -34,13 +35,7 @@ export function AnnotationSidebar({
     reader.onload = (ev) => {
       try {
         const parsed = JSON.parse(ev.target?.result as string);
-        // Normalize to a ReaderExportPayload: a bare array is a legacy export
-        // (annotations only); the full object carries session fields too.
-        let payload: ReaderExportPayload;
-        if (Array.isArray(parsed)) { payload = { annotations: parsed }; }
-        else if (parsed && Array.isArray(parsed.annotations)) { payload = parsed; }
-        else throw new Error('invalid');
-        onImport(payload);
+        onImport(parseReaderExportPayload(parsed));
       } catch {
         alert('Could not read annotation file.');
       }

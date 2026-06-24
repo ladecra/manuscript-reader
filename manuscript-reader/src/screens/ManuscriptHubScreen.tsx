@@ -455,7 +455,19 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
               />
             )}
 
-            {pane === 'feedback' && <FeedbackTab annotations={annotations} readerCount={readerCount} onRead={onRead} />}
+            {pane === 'feedback' && (
+              <FeedbackTab
+                annotations={annotations}
+                readerCount={readerCount}
+                manuscriptTitle={title}
+                wordCount={wordCount ?? 0}
+                chapterCount={chapterCount ?? chapters.length}
+                manuscriptAvailable={manuscriptAvailable}
+                onRead={onRead}
+                onAnnotate={() => enterReader(resumeChapter?.index ?? chapters[0]?.index ?? 1, 'annotate')}
+                onShareReader={handleShareReader}
+              />
+            )}
 
             {pane === 'versions' && (
               <VersionsTab
