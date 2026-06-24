@@ -119,6 +119,48 @@ const editOriginalHtml = new WeakMap<HTMLElement, string>();
 
 const EDITABLE_LEAF_SELECTOR = 'p, blockquote, h2, h3, h4, li';
 
+// Walk text nodes from root to targetNode+offset, counting characters.
+// Used to map a tap location into a chapter-relative char offset so ChapterEditor
+// can restore cursor position in TipTap after mount.
+function getTextOffset(root: Node, targetNode: Node, targetOffset: number): number {
+  let count = 0;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let node: Node | null;
+  while ((node = walker.nextNode())) {
+    if (node === targetNode) return count + targetOffset;
+    count += node.textContent?.length ?? 0;
+  }
+  return count;
+}
+
+// The chapter-relative character offset at a viewport point. Coordinate-based
+// (caretRangeFromPoint / caretPositionFromPoint) so it works even where tapping
+// non-editable text places no selection (e.g. iOS Safari); falls back to the live
+// selection. Returns undefined if the point resolves outside the block.
+function charOffsetAtPoint(block: HTMLElement, x: number, y: number): number | undefined {
+  let container: Node | null = null;
+  let offset = 0;
+  const doc = document as Document & {
+    caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+  };
+  if (typeof doc.caretRangeFromPoint === 'function') {
+    const r = doc.caretRangeFromPoint(x, y);
+    if (r) { container = r.startContainer; offset = r.startOffset; }
+  } else if (typeof doc.caretPositionFromPoint === 'function') {
+    const p = doc.caretPositionFromPoint(x, y);
+    if (p) { container = p.offsetNode; offset = p.offset; }
+  }
+  if (!container || !block.contains(container)) {
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0) {
+      const r = sel.getRangeAt(0);
+      if (block.contains(r.startContainer)) { container = r.startContainer; offset = r.startOffset; }
+    }
+  }
+  if (!container || !block.contains(container)) return undefined;
+  return getTextOffset(block, container, offset);
+}
+
 function stabilizeCaretInLeaf(leaf: HTMLElement) {
   const sel = window.getSelection();
   if (!sel || sel.rangeCount === 0) return;
@@ -202,7 +244,7 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   const [selection, setSelection] = useState<{ visible: boolean; position: { left: number; top: number }; range: Range | null; text: string }>({ visible: false, position: { left: 0, top: 0 }, range: null, text: '' });
   const [editingAnn, setEditingAnn] = useState<{ id: string; note: string } | null>(null);
   const [addChaptersOpen, setAddChaptersOpen] = useState(false);
-  const [editingChapter, setEditingChapter] = useState<{ id: string; title: string; initialHtml: string } | null>(null);
+  const [editingChapter, setEditingChapter] = useState<{ id: string; title: string; initialHtml: string; tapY?: number; charOffset?: number } | null>(null);
   // Desktop: the margin column's "browse" state — turns the anchored gutter into
   // a navigable index of every annotation. Collapses back to anchored on demand.
   const [annBrowse, setAnnBrowse] = useState(false);
@@ -530,7 +572,11 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
       const ch = chapters.find(ch => ch.id === prev!.id);
       if (!ch) return;
       const html = block.innerHTML.replace(/<mark\b[^>]*>([\s\S]*?)<\/mark>/gi, '$1');
-      setEditingChapter({ id: ch.id, title: ch.title, initialHtml: html });
+      // Capture where the tap landed as a block-relative character offset (so TipTap
+      // can restore the cursor) plus the tap's viewport Y (so the editor opens with
+      // that same line under the finger — not jumped to the chapter top).
+      const charOffset = charOffsetAtPoint(block, e.clientX, e.clientY);
+      setEditingChapter({ id: ch.id, title: ch.title, initialHtml: html, tapY: e.clientY, charOffset });
     }
     c.addEventListener('click', onContentClick as EventListener);
     return () => c.removeEventListener('click', onContentClick as EventListener);
@@ -840,6 +886,8 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
             initialHtml={editingChapter.initialHtml}
             onSave={handleTipTapSave}
             onCancel={() => { setEditingChapter(null); }}
+            tapY={editingChapter.tapY}
+            charOffset={editingChapter.charOffset}
           />
         )}
         <AnnMarginColumn
