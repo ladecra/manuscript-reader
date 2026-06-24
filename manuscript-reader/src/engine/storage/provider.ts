@@ -16,7 +16,7 @@
 // floated a per-reader `session:{id}:{readerId}` key; a per-manuscript list is
 // simpler and consistent with how every other child entity is stored.)
 
-import type { Annotation, Edit, ReaderSession, PublishingMetadata } from '../types';
+import type { Annotation, Edit, ReaderSession, PublishingMetadata, Snapshot, SnapshotMeta } from '../types';
 
 /** The flat record persisted per manuscript (matches the v0.9 localStorage schema
  *  for backward compatibility). `combinedMarkdown` is the source of truth. */
@@ -63,9 +63,30 @@ export interface StorageProvider {
   /** Cover image stored as a data URL. Returns null if none is set. */
   loadCover(id: string): Promise<string | null>;
   saveCover(id: string, dataUrl: string | null): Promise<void>;
+
+  // ── Version snapshots (Phase 8) ──
+  // Split read on purpose: list the light index without paying for the (large,
+  // content-addressed) frozen bodies; load a single full snapshot on demand.
+  /** Light index for a manuscript's snapshots — no frozen markdown bodies. */
+  listSnapshots(id: string): Promise<SnapshotMeta[]>;
+  /** One full snapshot (meta + frozen inputs), or null if absent. */
+  loadSnapshot(id: string, snapshotId: string): Promise<Snapshot | null>;
+  /** Persist a snapshot. Bodies are content-addressed by `versionId`, so an
+   *  identical body is stored once (idempotent re-save of unchanged prose). */
+  saveSnapshot(snap: Snapshot): Promise<void>;
+  /** Persist only the snapshot RECORD (meta + frozen children), never the body —
+   *  the cold-sync lazy-pull path: a pulled index entry has no body until first
+   *  open, when loadSnapshot streams + backfills it. */
+  saveSnapshotMeta(rec: SnapshotRecord): Promise<void>;
+  /** Remove a snapshot; its body is reclaimed only when no sibling still references it. */
+  deleteSnapshot(id: string, snapshotId: string): Promise<void>;
 }
 
 // ─── Key scheme (used by the IndexedDB provider's single key-value store) ──────
+// Snapshots use two key families: a per-snapshot record (meta + frozen annotations
+// + sessions, NO markdown) and a content-addressed body (markdown keyed by versionId,
+// scoped per-manuscript so dedup is intra-manuscript and deletion needs no global
+// refcount). The `*Prefix` helpers bound range scans.
 export const MANUSCRIPT_PREFIX = 'manuscript:';
 export const key = {
   manuscript: (id: string) => `${MANUSCRIPT_PREFIX}${id}`,
@@ -74,4 +95,12 @@ export const key = {
   sessions: (id: string) => `sessions:${id}`,
   position: (id: string) => `position:${id}`,
   cover: (id: string) => `cover:${id}`,
+  snapshot: (msId: string, snapId: string) => `snapshot:${msId}:${snapId}`,
+  snapshotPrefix: (msId: string) => `snapshot:${msId}:`,
+  snapshotBody: (msId: string, versionId: string) => `snapbody:${msId}:${versionId}`,
+  snapshotBodyPrefix: (msId: string) => `snapbody:${msId}:`,
 };
+
+/** The per-snapshot record persisted under the `snapshot:` key — a Snapshot with
+ *  its (large, separately stored) markdown body lifted out. Rejoined on load. */
+export type SnapshotRecord = Omit<Snapshot, 'markdown'>;

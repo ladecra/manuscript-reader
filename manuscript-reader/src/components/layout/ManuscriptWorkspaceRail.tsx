@@ -32,19 +32,21 @@ interface ManuscriptWorkspaceRailProps {
   context: WorkspaceRailContext;
   pane: HubPane;
   annotationCount: number;
+  versionCount?: number;
   savedLabel: string;
   readerSubtext?: string;
   recentAnnotations?: RailAnnotation[];
+  className?: string;
   onTogglePane: (id: HubPane) => void;
   onRead?: () => void;
   onManuscript?: () => void;
   onOpenAnnotations?: () => void;
 }
 
-// Rail order: Publishing Details · Exports & Sharing · Editorial Report · Annotations.
-// (Snapshots is hidden for now — its pane still exists but isn't surfaced.)
+// Rail order: Publishing Details · Versions · Exports & Sharing · Editorial Report · Annotations.
 const MANUSCRIPT_TOOLS: RailTool[] = [
   { id: 'details', label: 'Publishing Details', sub: 'Genre, synopsis & copyright', Icon: BookIcon },
+  { id: 'versions', label: 'Versions', sub: 'Saved drafts of this manuscript', Icon: LayersIcon },
   { id: 'exports', label: 'Exports & Sharing', sub: 'Files & reader copies', Icon: ExportTrayIcon },
   { id: 'report', label: 'Editorial Report', sub: 'Patterns from reader actions', Icon: ReportIcon },
   { id: 'feedback', label: 'Annotations', sub: 'Notes & marks across the manuscript', Icon: PencilIcon },
@@ -54,16 +56,18 @@ export function ManuscriptWorkspaceRail({
   context,
   pane,
   annotationCount,
+  versionCount = 0,
   savedLabel,
   readerSubtext = 'Resume in the reader',
   recentAnnotations,
+  className,
   onTogglePane,
   onRead,
   onManuscript,
   onOpenAnnotations,
 }: ManuscriptWorkspaceRailProps) {
   return (
-    <aside className="hub-tools">
+    <aside className={`hub-tools${className ? ` ${className}` : ''}`}>
       <nav className="hub-tools-nav" aria-label="Manuscript workspace">
         <div className="instrument-group-label hub-tools-eyebrow">Tools</div>
         <div className="instrument-nav hub-tools-group-nav">
@@ -88,7 +92,9 @@ export function ManuscriptWorkspaceRail({
             </button>
           )}
           {MANUSCRIPT_TOOLS.map(t => {
-            const badge = t.id === 'feedback' && annotationCount > 0 ? annotationCount : t.badge;
+            const badge = t.id === 'feedback' && annotationCount > 0 ? annotationCount
+              : t.id === 'versions' && versionCount > 0 ? versionCount
+              : t.badge;
             return (
               <button
                 key={t.id}

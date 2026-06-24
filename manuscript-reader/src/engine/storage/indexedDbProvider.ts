@@ -7,9 +7,15 @@
 // added later WITHOUT an IndexedDB version bump / upgrade migration.
 
 import { openDB, type IDBPDatabase } from 'idb';
-import type { Annotation, Edit, ReaderSession } from '../types';
-import type { StorageProvider, StoredManuscript } from './provider';
+import type { Annotation, Edit, ReaderSession, Snapshot, SnapshotMeta } from '../types';
+import type { StorageProvider, StoredManuscript, SnapshotRecord } from './provider';
 import { key, MANUSCRIPT_PREFIX } from './provider';
+
+/** Drop the frozen children from a snapshot record down to the light index shape. */
+function toMeta(rec: SnapshotRecord): SnapshotMeta {
+  const { annotations: _a, sessions: _s, ...meta } = rec;
+  return meta;
+}
 
 const DB_NAME = 'vellibris';
 const DB_VERSION = 1;
@@ -48,6 +54,11 @@ export class IndexedDbProvider implements StorageProvider {
 
   async deleteManuscript(id: string): Promise<void> {
     const db = await this.db();
+    // Snapshot records + bodies are keyed by ranges; collect their keys first.
+    const snapKeys = await db.getAllKeys(
+      STORE, IDBKeyRange.bound(key.snapshotPrefix(id), key.snapshotPrefix(id) + '￿'));
+    const bodyKeys = await db.getAllKeys(
+      STORE, IDBKeyRange.bound(key.snapshotBodyPrefix(id), key.snapshotBodyPrefix(id) + '￿'));
     const tx = db.transaction(STORE, 'readwrite');
     await Promise.all([
       tx.store.delete(key.manuscript(id)),
@@ -55,6 +66,9 @@ export class IndexedDbProvider implements StorageProvider {
       tx.store.delete(key.edits(id)),
       tx.store.delete(key.sessions(id)),
       tx.store.delete(key.position(id)),
+      tx.store.delete(key.cover(id)),
+      ...snapKeys.map(k => tx.store.delete(k)),
+      ...bodyKeys.map(k => tx.store.delete(k)),
       tx.done,
     ]);
   }
@@ -108,5 +122,56 @@ export class IndexedDbProvider implements StorageProvider {
     const db = await this.db();
     if (dataUrl === null) await db.delete(STORE, key.cover(id));
     else await db.put(STORE, dataUrl, key.cover(id));
+  }
+
+  // ── Version snapshots ──
+  // The record (meta + frozen children) and the markdown body live under separate
+  // keys so listing never loads bodies, and an identical body (same versionId)
+  // stores once.
+
+  async listSnapshots(id: string): Promise<SnapshotMeta[]> {
+    const db = await this.db();
+    const range = IDBKeyRange.bound(key.snapshotPrefix(id), key.snapshotPrefix(id) + '￿');
+    const recs = (await db.getAll(STORE, range)) as SnapshotRecord[];
+    return recs.map(toMeta).sort((a, b) => a.createdAt - b.createdAt);
+  }
+
+  async loadSnapshot(id: string, snapshotId: string): Promise<Snapshot | null> {
+    const db = await this.db();
+    const rec = (await db.get(STORE, key.snapshot(id, snapshotId))) as SnapshotRecord | undefined;
+    if (!rec) return null;
+    const markdown = ((await db.get(STORE, key.snapshotBody(id, rec.versionId))) as string) ?? '';
+    return { ...rec, markdown };
+  }
+
+  async saveSnapshot(snap: Snapshot): Promise<void> {
+    const db = await this.db();
+    const { markdown, ...rec } = snap;
+    const bodyKey = key.snapshotBody(snap.manuscriptId, snap.versionId);
+    const tx = db.transaction(STORE, 'readwrite');
+    const bodyExists = (await tx.store.get(bodyKey)) !== undefined;
+    const ops: Promise<unknown>[] = [
+      tx.store.put(rec as SnapshotRecord, key.snapshot(snap.manuscriptId, snap.id)),
+    ];
+    if (!bodyExists) ops.push(tx.store.put(markdown, bodyKey)); // content-addressed: write once
+    await Promise.all([...ops, tx.done]);
+  }
+
+  async saveSnapshotMeta(rec: SnapshotRecord): Promise<void> {
+    const db = await this.db();
+    await db.put(STORE, rec, key.snapshot(rec.manuscriptId, rec.id)); // record only, no body
+  }
+
+  async deleteSnapshot(id: string, snapshotId: string): Promise<void> {
+    const db = await this.db();
+    const rec = (await db.get(STORE, key.snapshot(id, snapshotId))) as SnapshotRecord | undefined;
+    if (!rec) return;
+    await db.delete(STORE, key.snapshot(id, snapshotId));
+    // Reclaim the body only if no sibling snapshot still references this versionId.
+    const range = IDBKeyRange.bound(key.snapshotPrefix(id), key.snapshotPrefix(id) + '￿');
+    const siblings = (await db.getAll(STORE, range)) as SnapshotRecord[];
+    if (!siblings.some(s => s.versionId === rec.versionId)) {
+      await db.delete(STORE, key.snapshotBody(id, rec.versionId));
+    }
   }
 }

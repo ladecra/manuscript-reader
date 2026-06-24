@@ -203,6 +203,31 @@ export interface Edit {
   createdAt: number;        // Unix ms
 }
 
+// ─── Change list (Phase 8, Changes mode) ──────────────────────────────────────
+// A coalesced, noise-filtered view of the Edit log for revision review. Repeated
+// edits to the same passage chain into ONE entry (net before→after); changes that
+// don't alter the RENDERED prose (formatting, whitespace, escape cleanup) are
+// dropped. The reader marks revisions/additions in the prose and shows the
+// before/after in the margin; deletions are listed (their text is gone).
+export type ChangeKind = 'revised' | 'added' | 'deleted';
+
+export interface ChangeEntry {
+  id: string;               // the latest edit id in the chain (stable handle for the mark)
+  kind: ChangeKind;
+  chapterId: string;
+  chapterIndex: number;
+  chapterTitle: string;
+  // The CHANGED region only (common prefix/suffix trimmed for `revised`, so a
+  // whole-chapter edit shows just the words that moved); '' for the absent side.
+  previous: string;         // old wording ('' when added)
+  current: string;          // new wording — also what the prose mark targets ('' when deleted)
+  startEllipsis: boolean;   // context was trimmed before the changed region
+  endEllipsis: boolean;     // context was trimmed after the changed region
+  editCount: number;        // how many raw edits collapsed into this entry
+  firstAt: number;
+  lastAt: number;
+}
+
 // ─── Report ──────────────────────────────────────────────────────────────────
 
 export interface ChapterStat {
@@ -351,6 +376,104 @@ export interface ReaderSession {
   completedAt?: number;        // set when the reader reached the end
   progress: number;            // 0–1, furthest point reached
   annotationIds: string[];     // ids into the manuscript's annotation store
+}
+
+// ─── Version snapshots (Phase 8) ──────────────────────────────────────────────
+// An immutable, frozen copy of a manuscript's editorial state at a deliberate
+// moment ("Draft 3", "After beta round") — the before/after axis the report
+// engine's revision-impact features need. Uncapturable retroactively, so capture
+// runs in the web app now even though the rich compare UI is a later (desktop)
+// client. See raw/dev-plan-claude.md Phase 8.
+//
+// Two shapes for one storage split — large bodies are lazy, the light index is eager:
+//   • SnapshotMeta — everything needed to LIST / label / compare WITHOUT loading the
+//     (multi-MB) frozen markdown. Hydrated into the cache at startup.
+//   • Snapshot     — the meta PLUS the frozen inputs. Loaded on demand (the cover
+//     precedent: never held in the in-memory cache).
+//
+// Frozen INPUTS only (markdown + annotations + sessions). EditorialSignals are
+// deliberately NOT frozen — they're a derivation, recomputed by the *current* engine
+// at compare time so a Draft 2 ↔ Draft 4 diff never compares two engine versions
+// (the same "derived caches are not truth" lesson as annotation chapter resolution).
+// Bodies are content-addressed by `versionId`, so a "Save version" on unchanged prose
+// costs zero new body bytes. Reader sessions bind back to the snapshot they read via
+// matching `manuscriptVersionId` ↔ `versionId`.
+export interface SnapshotMeta {
+  id: string;
+  manuscriptId: string;
+  parentId?: string;            // the snapshot this draft was derived from (lineage; optional)
+  label?: string;               // author-editable ("Draft 3"); the frozen content does not change
+  createdAt: number;
+  trigger: 'import' | 'manual'; // why it was captured: import baseline vs explicit "Save version"
+  versionId: string;            // manuscriptVersionId(markdown) — the content address / dedup key
+  wordCount: number;
+  chapterCount: number;
+}
+
+/** A full immutable snapshot: the light meta plus the frozen inputs. The `markdown`
+ *  is the content-addressed body (stored once per `versionId`); `annotations` and
+ *  `sessions` are frozen as captured. No derived `signals` — recompute from these. */
+export interface Snapshot extends SnapshotMeta {
+  markdown: string;
+  annotations: Annotation[];
+  sessions: ReaderSession[];
+}
+
+// ─── Snapshot diff (Phase 8 — the revision-impact keystone) ───────────────────
+// The structured, deterministic answer to "is this draft actually better, or does
+// it just feel different?" Produced by diffSnapshots(from, to): each side's
+// EditorialSignals is RECOMPUTED from its frozen inputs by the current engine
+// (never read from a stored cache), then compared. No scores — only grounded
+// deltas a reviser can act on. The output feeds the revision-impact report,
+// History mode, and (eventually) the AI layer; it's also what will populate
+// EditorialSignals.revisionImpact once a consumer pairs two snapshots.
+
+/** A light reference to one side of a diff. */
+export interface SnapshotRef {
+  id: string;
+  label?: string;
+  versionId: string;
+  createdAt: number;
+  wordCount: number;
+  chapterCount: number;
+}
+
+/** Per-chapter change across the interval. Chapters are aligned by title (with
+ *  duplicate-title disambiguation by order); content change is detected by hashing
+ *  each chapter's text, so `modified` means the prose actually changed. */
+export interface SnapshotChapterDiff {
+  status: 'added' | 'removed' | 'modified' | 'unchanged';
+  title: string;
+  fromIndex: number | null;       // 1-based index in `from`, null if added
+  toIndex: number | null;         // 1-based index in `to`, null if removed
+  wordCountDelta: number;         // to − from (chapter words)
+  annotationCountDelta: number;   // to − from (annotations homed to this chapter)
+  engagementDelta: number;        // to − from (raw highlight+bookmark count; comparable across drafts)
+}
+
+/** Annotation lifecycle across the interval, keyed by annotation id — the literal
+ *  "did the questions get addressed or persist?" signal. */
+export interface AnnotationLifecycle {
+  added: string[];           // ids present in `to`, absent in `from`
+  removed: string[];         // ids in `from`, absent in `to` (deleted / addressed away)
+  resolvedBetween: string[]; // id in both: open in `from`, resolved in `to`
+  reopenedBetween: string[]; // id in both: resolved in `from`, open in `to`
+  persistentOpen: string[];  // open in both (still unaddressed)
+}
+
+/** The structured diff of two snapshots — data, not presentation. */
+export interface SnapshotDiff {
+  from: SnapshotRef;
+  to: SnapshotRef;
+  identical: boolean;             // same versionId ⇒ prose unchanged (annotations/sessions may still differ)
+
+  wordCountDelta: number;
+  chapterCountDelta: number;
+  unresolvedConcernsDelta: number;        // to − from (open question/continuity/structural)
+  completionRateDelta: number | null;     // to − from, or null if either side had no readers
+
+  chapters: SnapshotChapterDiff[];
+  annotations: AnnotationLifecycle;
 }
 
 /** A revision packet — the editorial deliverable for a reader session. */

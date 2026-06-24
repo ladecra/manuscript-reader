@@ -10,6 +10,11 @@
     "preview": "vite preview",
     "check-fixtures": "tsx fixtures/check-fixtures.mjs",
     "check-sessions": "tsx fixtures/check-sessions.mjs",
+    "check-snapshots": "tsx fixtures/check-snapshots.mjs",
+    "check-snapshot-sync": "tsx fixtures/check-snapshot-sync.mjs",
+    "check-snapshot-diff": "tsx fixtures/check-snapshot-diff.mjs",
+    "check-edit-needle": "tsx fixtures/check-edit-needle.mjs",
+    "check-change-list": "tsx fixtures/check-change-list.mjs",
     "check-prose": "tsx fixtures/check-prose.mjs",
     "check-epub": "tsx fixtures/check-epub.mjs"
   },
