@@ -404,19 +404,29 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
       return;
     }
 
-    // A jump sent from the hub (a Report chip): land at that chapter instead of
-    // fading in + resuming the last position. Consume it so it fires only once.
+    // A jump sent from the hub (report chip, Feedback "go to passage", etc.):
+    // land at that chapter or annotation instead of resuming. Consumed once.
     const pendingIdx = useUIStore.getState().pendingChapterIndex;
-    if (pendingIdx != null) {
+    const pendingAnnId = useUIStore.getState().pendingAnnotationId;
+    if (pendingIdx != null || pendingAnnId != null) {
       useUIStore.getState().setPendingChapterIndex(null);
+      useUIStore.getState().setPendingAnnotationId(null);
+      const chapterIdx = pendingIdx;
+      const annId = pendingAnnId;
       c.querySelectorAll('p, blockquote, ul, ol').forEach(el => el.classList.add('visible'));
       if (editModeRef.current) c.classList.add('edit-mode');
       syncAnnotationDOM();
-      const target = chapters.find(ch => ch.index === pendingIdx);
       requestAnimationFrame(() => requestAnimationFrame(() => {
-        const el = target ? document.getElementById(target.id) : null;
-        if (el) el.scrollIntoView({ block: 'start' });
-        else window.scrollTo(0, 0);
+        const mark = annId ? c.querySelector(`mark[data-ann="${CSS.escape(annId)}"]`) : null;
+        if (mark) {
+          mark.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          setSelectedAnnId(annId!);
+        } else if (chapterIdx != null) {
+          const target = chapters.find(ch => ch.index === chapterIdx);
+          const el = target ? document.getElementById(target.id) : null;
+          if (el) el.scrollIntoView({ block: 'start' });
+          else window.scrollTo(0, 0);
+        }
       }));
       // The hub may have asked us to land in a particular posture (edit / annotate
       // the chapter), not just read it. Apply it once; the editMode/sidebar effects

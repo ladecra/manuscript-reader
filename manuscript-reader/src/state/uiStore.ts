@@ -45,6 +45,10 @@ interface UIStore {
   // chapter rather than just read it. Consumed once, alongside pendingChapterIndex.
   pendingReaderIntent: 'annotate' | 'edit' | null;
 
+  /** Annotation id the reader should scroll to on its next mount (hub Feedback
+   *  "go to passage"). Consumed once, usually with pendingChapterIndex. */
+  pendingAnnotationId: string | null;
+
   // Actions
   setScreen: (s: Screen) => void;
   toggleTheme: () => void;
@@ -75,6 +79,7 @@ interface UIStore {
 
   setPendingChapterIndex: (n: number | null) => void;
   setPendingReaderIntent: (i: 'annotate' | 'edit' | null) => void;
+  setPendingAnnotationId: (id: string | null) => void;
 }
 
 const FONT_MIN = 15;
@@ -93,6 +98,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   hubPane: 'contents',
   pendingChapterIndex: null,
   pendingReaderIntent: null,
+  pendingAnnotationId: null,
 
   setScreen(s) {
     let workspaceRailOpen = get().workspaceRailOpen;
@@ -165,4 +171,5 @@ export const useUIStore = create<UIStore>((set, get) => ({
 
   setPendingChapterIndex(n) { set({ pendingChapterIndex: n }); },
   setPendingReaderIntent(i) { set({ pendingReaderIntent: i }); },
+  setPendingAnnotationId(id) { set({ pendingAnnotationId: id }); },
 }));
