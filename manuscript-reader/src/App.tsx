@@ -11,7 +11,7 @@ import { ReaderRail } from './components/layout/ReaderRail';
 import { Toast, useToast } from './components/ui/Toast';
 import { SettingsMenu } from './components/ui/SettingsMenu';
 import { AppShell, type LibraryNavFilter } from './components/layout/AppShell';
-import { QuillIcon, MenuIcon, LibraryIcon, UndoIcon, RedoIcon } from './components/ui/Icons';
+import { QuillIcon, MenuIcon, LibraryIcon, UndoIcon, RedoIcon, ChevronLeftIcon } from './components/ui/Icons';
 import { parseMarkdown } from './engine/ingestion/parseMarkdown';
 import { workspaceRailOpenByDefault, WORKSPACE_RAIL_MOBILE_MAX_PX } from './engine/ui/workspaceRail';
 import type { Manuscript } from './engine/types';
@@ -255,6 +255,9 @@ export function App() {
           {screen === 'reader' ? (
             <>
               <IconBtn onClick={toggleNav} title="Chapters"><MenuIcon /></IconBtn>
+              <button className="topbar-back-hub" onClick={goManuscriptPage} title="Back to manuscript page" aria-label="Back to manuscript page">
+                <ChevronLeftIcon size={12} />
+              </button>
               <button id="topbar-title" className="topbar-title-btn" onClick={goManuscriptPage} title="Manuscript page">{title}</button>
               {chapterLabel && (
                 <>

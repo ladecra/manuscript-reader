@@ -344,6 +344,20 @@ html[data-mode="reader"] #topbar #topbar-title {
 html[data-mode="reader"] #topbar #topbar-title:hover { opacity: 0.85; color: var(--muted); }
 html[data-mode="reader"] #topbar #topbar-chapter { opacity: 0.45; }
 
+/* Mobile-only back-to-hub escape hatch in reader topbar-left. Hidden on desktop
+   because the reader rail provides that navigation. */
+/* Icon-only chevron back button — mobile reader only (desktop uses the rail). */
+.topbar-back-hub {
+  display: none;
+  align-items: center; justify-content: center;
+  background: none; border: none; cursor: pointer; padding: 6px;
+  color: var(--dim); opacity: 0.65;
+  transition: color var(--transition), opacity var(--transition);
+  -webkit-tap-highlight-color: transparent;
+}
+.topbar-back-hub:hover { color: var(--muted); opacity: 1; }
+html.light[data-mode="reader"] .topbar-back-hub { color: var(--ink-2); }
+
 /* Reader topbar: three columns so the mode switch centers over the prose
    regardless of the left title's width. */
 html[data-mode="reader"] #topbar {
@@ -544,6 +558,9 @@ html.light[data-mode="reader"] #topbar #topbar-chapter { opacity: 0.6; }
 #chapter-nav {
   width: min(280px, 80vw);
   background: var(--page);
+}
+:root.light #chapter-nav {
+  background: #f6f1e6;
   overflow-y: auto; -webkit-overflow-scrolling: touch;
   padding: 24px 0 calc(24px + var(--safe-bottom));
 }
@@ -576,6 +593,7 @@ html.light[data-mode="reader"] #topbar #topbar-chapter { opacity: 0.6; }
 #ann-sidebar {
   width: min(340px, 90vw);
 }
+:root.light #ann-sidebar { background: #f6f1e6; }
 .ann-sidebar-title-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
 #ann-close {
   background: none; border: none; cursor: pointer; color: var(--dim);
@@ -593,25 +611,25 @@ html.light[data-mode="reader"] #topbar #topbar-chapter { opacity: 0.6; }
   color: var(--dim); line-height: 1.7;
 }
 .ann-item {
-  padding: 16px 20px; border-bottom: 1px solid var(--line);
-  border-left: 2px solid transparent;
-  cursor: pointer; transition: background var(--transition), border-color var(--transition);
+  padding: 14px 20px 14px 18px; border-bottom: 1px solid var(--line);
+  border-left: 2px solid var(--line);
+  cursor: pointer; transition: border-color var(--transition);
   -webkit-tap-highlight-color: transparent;
 }
-.ann-item:hover { background: var(--gold-tint); border-left-color: var(--gold-line); }
-.ann-item-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.ann-item:hover { border-left-color: var(--gold-line); }
+.ann-item-header { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
 .ann-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; opacity: 0.75; }
 .ann-type-label {
-  font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 9px; font-weight: 500;
-  letter-spacing: 0.12em; text-transform: uppercase; color: var(--dim); flex: 1;
-}
-.ann-loc { font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 9px; color: var(--dim); opacity: 0.5; letter-spacing: 0.06em; }
-.ann-reader {
   font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 8px; font-weight: 600;
-  letter-spacing: 0.1em; text-transform: uppercase; color: var(--ann-bookmark-solid);
-  border: 1px solid currentColor; border-radius: 0;
-  padding: 1px 5px; white-space: nowrap; max-width: 110px;
-  overflow: hidden; text-overflow: ellipsis; opacity: 0.7;
+  letter-spacing: 0.18em; text-transform: uppercase; color: var(--gold); flex: 1;
+}
+.ann-loc { font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 9px; color: var(--dim); opacity: 0.45; letter-spacing: 0.06em; }
+/* Reader attribution: italic dim label, matching ann-margin-reader (no chip border). */
+.ann-reader {
+  font-family: 'Hanken Grotesk', system-ui, sans-serif;
+  font-size: 10px; color: var(--dim); font-style: italic;
+  white-space: nowrap; max-width: 110px;
+  overflow: hidden; text-overflow: ellipsis;
 }
 .ann-item-more {
   background: none; border: none; cursor: pointer; color: var(--dim); opacity: 0;
@@ -621,13 +639,13 @@ html.light[data-mode="reader"] #topbar #topbar-chapter { opacity: 0.6; }
 .ann-item:hover .ann-item-more { opacity: 1; }
 .ann-item-more:hover { color: var(--muted); }
 .ann-quote {
-  font-family: 'EB Garamond', Georgia, serif; font-size: 15px;
-  font-style: italic; color: var(--muted); line-height: 1.55; margin-bottom: 6px;
+  font-family: 'EB Garamond', Georgia, serif; font-size: 13px;
+  font-style: italic; color: var(--dim); line-height: 1.5; margin-bottom: 5px;
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
 }
 .ann-note-text {
   font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 11px;
-  color: var(--ink); line-height: 1.6; opacity: 0.8;
+  color: var(--ink-2); line-height: 1.6;
 }
 #export-btn {
   width: 100%; padding: 11px; background: none; border-radius: 0;
@@ -1267,10 +1285,10 @@ html.shell-scroll-lock body {
 .app-shell--collapsed .app-shell-item-meta { display: none; }
 .app-shell--collapsed .app-shell-group-label { text-align: center; padding-left: 0; padding-right: 0; }
 
-.app-shell-body .hub {
+:root.light .app-shell-body .hub {
   margin-top: 0;
   min-height: calc(100dvh - var(--topbar-h));
-  background: #f6f5f1!important;
+  background: #f6f5f1;
 }
 
 /* ── Reader rail ──────────────────────────────────────────────────────────
@@ -1319,6 +1337,15 @@ html.light .reader-rail {
 }
 @media (max-width: 860px) {
   .reader-rail { display: none; }
+  /* Hide title + chapter breadcrumb in reader topbar — they overlap the centered
+     mode switch and intercept clicks on the READING tab. */
+  html[data-mode="reader"] #topbar-title,
+  html[data-mode="reader"] #topbar-sep,
+  html[data-mode="reader"] #topbar-chapter { display: none; }
+  /* Back-to-hub button: show on mobile, hidden on desktop (see below). */
+  .topbar-back-hub { display: flex; }
+  /* Tighten the left gap so hamburger + chevron (≈58px) fit the narrow 1fr column. */
+  html[data-mode="reader"] #topbar-left { gap: 6px; }
 }
 
 .reader-workspace {
@@ -2301,7 +2328,6 @@ mark[data-ann]:hover { filter: brightness(1.2); }
   position: relative;
 }
 .hub::before { content: none; }
-.hub.hub--3col { background-color: var(--dim); }
 .hub-main {
   min-width: 0; width: 100%;
   padding: clamp(38px, 5.5vh, 56px) clamp(28px, 3.4vw, 56px) 100px;
@@ -2836,14 +2862,6 @@ mark[data-ann]:hover { filter: brightness(1.2); }
   background: var(--gold); color: var(--on-gold);
 }
 .hub-continue-btn.btn-fill:hover:not(:disabled) { background: var(--gold-soft); opacity: 1; }
-.hub-continue-open {
-  background: none; border: none; cursor: pointer; padding: 0;
-  font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 10px; font-weight: 600;
-  letter-spacing: 0.14em; text-transform: uppercase; color: var(--brand); text-align: center;
-  transition: color var(--transition), letter-spacing var(--transition);
-}
-.hub-continue-open:hover:not(:disabled) { color: var(--ink); letter-spacing: 0.18em; }
-.hub-continue-open:disabled { opacity: 0.35; cursor: not-allowed; }
 .hub-continue-restart {
   width: 100%; margin-top: 0;
   background: none; border: none; cursor: pointer; padding: 2px 0;
@@ -2911,13 +2929,27 @@ mark[data-ann]:hover { filter: brightness(1.2); }
 
 @media (max-width: 860px) {
   .workspace-rail-backdrop { display: block; }
-  .hub-main { padding: 30px 22px 50px; }
+  /* Bottom bar occupies ~52px — pad the hub so content isn't hidden behind it. */
+  .hub-main { padding: 30px 22px 72px; }
   /* Hub: stack to one column — the rail flows below the manuscript. */
   .hub { grid-template-columns: minmax(0, 1fr); }
+  /* Hub tools: fixed bottom sheet above the tab bar, slides in on open. */
   .hub .hub-tools {
-    position: static; height: auto; width: auto;
+    position: fixed;
+    bottom: 52px; left: 0; right: 0;
+    height: auto; max-height: 70vh; width: auto;
+    overflow-y: auto; -webkit-overflow-scrolling: touch;
     border-left: none; border-top: 1px solid var(--line);
-    padding: 24px 22px 40px;
+    padding: 24px 22px 32px;
+    z-index: calc(var(--z-panel) - 1);
+    background: var(--sidebar);
+    display: flex;
+    transform: translateY(0);
+  }
+  :root.light .hub .hub-tools { background: var(--page); }
+  /* Hidden state: push fully below viewport. */
+  .hub .hub-tools.hub-tools--mobile-hidden {
+    display: none;
   }
   /* Reader: keep the slide-over drawer. */
   .reader-workspace .hub-tools {
@@ -2926,10 +2958,54 @@ mark[data-ann]:hover { filter: brightness(1.2); }
   }
   .hub-continue { flex-direction: column; align-items: stretch; }
   .hub-continue-aside { max-width: none; }
+  /* Suppress flex grow on continue-main — it pushes content apart at narrow widths. */
+  .hub-continue-main { flex: none; }
   .hub-hero-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: none; }
   .hub-stat { border-left: none; padding: var(--space-2) 0; border-top: 1px solid var(--line); }
   .hub-stat:nth-child(-n+2) { border-top: none; }
-  .hub-hero { flex-direction: column; gap: var(--space-5); }
-  .hub-hero-cover { width: 128px; }
+  /* Hero: keep side-by-side but shrink cover and title for narrow screens. */
+  .hub-hero { gap: var(--space-4); align-items: flex-start; }
+  .hub-hero-cover { width: 110px; }
+  .hub-hero-title { font-size: clamp(24px, 8vw, 40px); }
   .hub-form-grid { grid-template-columns: 1fr; }
+  /* Stats: switch to compact Hanken Grotesk on mobile. */
+  .hub-stat-value {
+    font-family: 'Hanken Grotesk', system-ui, sans-serif;
+    font-size: 14px; font-weight: 500; letter-spacing: 0.01em; line-height: 1.3;
+  }
+  .hub-stat-value--meta { font-size: 12px; }
+}
+
+/* ── Mobile hub bottom bar ── */
+/* Only visible inside the app shell (hub/library views) at narrow widths.
+   Fixed to the viewport bottom, one action: toggle the tools panel. */
+.hub-mobile-bar {
+  display: none;
+}
+@media (max-width: 860px) {
+  .hub-mobile-bar {
+    display: flex;
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: var(--z-panel);
+    height: 52px;
+    background: var(--sidebar);
+    border-top: 1px solid var(--line);
+    align-items: stretch;
+  }
+  :root.light .hub-mobile-bar { background: var(--page); }
+  .hub-mobile-bar-btn {
+    flex: 1;
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    background: none; border: none; cursor: pointer; padding: 0 16px;
+    font-family: 'Hanken Grotesk', system-ui, sans-serif;
+    font-size: 10px; font-weight: 600; letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--dim);
+    transition: color var(--transition);
+    -webkit-tap-highlight-color: transparent;
+  }
+  .hub-mobile-bar-btn:hover,
+  .hub-mobile-bar-btn--open { color: var(--ink); }
+  .hub-mobile-bar-chevron {
+    font-size: 12px; line-height: 1;
+    transition: transform 0.2s var(--ease-expo);
+  }
 }

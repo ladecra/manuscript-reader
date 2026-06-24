@@ -38,6 +38,7 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
   const [tocQuery, setTocQuery] = useState('');
   const [tocCompact, setTocCompact] = useState(false);
   const [openChapterMenu, setOpenChapterMenu] = useState<number | null>(null);
+  const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
 
   const title = manuscript?.metadata.title ?? '';
   const combinedMarkdown = manuscript?.metadata.combinedMarkdown;
@@ -350,9 +351,6 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
               <button type="button" className="hub-continue-btn btn-fill" onClick={onRead} disabled={!manuscriptAvailable}>
                 {pct > 1 ? 'Continue reading' : 'Start reading'}
               </button>
-              <button type="button" className="hub-continue-open" onClick={onRead} disabled={!manuscriptAvailable}>
-                Open in reader <span aria-hidden="true">→</span>
-              </button>
               {pct > 1 && (
                 <button type="button" className="hub-continue-restart" onClick={startOver} disabled={!manuscriptAvailable}>
                   Start from the beginning
@@ -475,10 +473,23 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
         annotationCount={annotations.length}
         savedLabel={savedLabel}
         recentAnnotations={recentAnnotations}
+        className={mobileToolsOpen ? undefined : 'hub-tools--mobile-hidden'}
         onTogglePane={toggleToolPane}
         onRead={onRead}
         onOpenAnnotations={() => setHubPane('feedback')}
       />
+
+      <div className="hub-mobile-bar">
+        <button
+          type="button"
+          className={`hub-mobile-bar-btn${mobileToolsOpen ? ' hub-mobile-bar-btn--open' : ''}`}
+          onClick={() => setMobileToolsOpen(o => !o)}
+          aria-expanded={mobileToolsOpen}
+        >
+          <span className="hub-mobile-bar-label">Tools</span>
+          <span className="hub-mobile-bar-chevron" aria-hidden="true">{mobileToolsOpen ? '↓' : '↑'}</span>
+        </button>
+      </div>
       <AddChaptersModal
         open={addChaptersOpen}
         manuscriptTitle={title}

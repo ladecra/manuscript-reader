@@ -35,6 +35,7 @@ interface ManuscriptWorkspaceRailProps {
   savedLabel: string;
   readerSubtext?: string;
   recentAnnotations?: RailAnnotation[];
+  className?: string;
   onTogglePane: (id: HubPane) => void;
   onRead?: () => void;
   onManuscript?: () => void;
@@ -57,13 +58,14 @@ export function ManuscriptWorkspaceRail({
   savedLabel,
   readerSubtext = 'Resume in the reader',
   recentAnnotations,
+  className,
   onTogglePane,
   onRead,
   onManuscript,
   onOpenAnnotations,
 }: ManuscriptWorkspaceRailProps) {
   return (
-    <aside className="hub-tools">
+    <aside className={`hub-tools${className ? ` ${className}` : ''}`}>
       <nav className="hub-tools-nav" aria-label="Manuscript workspace">
         <div className="instrument-group-label hub-tools-eyebrow">Tools</div>
         <div className="instrument-nav hub-tools-group-nav">
