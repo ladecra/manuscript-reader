@@ -2,6 +2,9 @@ import React, { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { useUIStore, readerModeOf, type ReaderMode } from './state/uiStore';
 import { useLibraryStore } from './state/libraryStore';
 import { useReaderStore } from './state/readerStore';
+import { useSnapshotStore } from './state/snapshotStore';
+import { buildChangeList } from './engine/manuscript/changeList';
+import { usesTouchFriendlyEditing } from './lib/touchEditing';
 import { LandingScreen } from './screens/LandingScreen';
 import { LibraryScreen } from './screens/LibraryScreen';
 import { LoadModal } from './screens/LoadScreen';
@@ -32,18 +35,21 @@ function IconBtn({ onClick, active, title, label, disabled, children }: {
   );
 }
 
-/** The reader's 3-mode switch (Vellibris): Reading · Manuscript · Annotations. */
+/** The reader's mode switch (Vellibris): Reading · Manuscript · Annotations ·
+ *  Changes. Changes appears only once the manuscript has edits to review. */
 const READER_MODES: { key: ReaderMode; label: string; title: string }[] = [
   { key: 'reading',     label: 'Reading',     title: 'Reading mode — clean prose' },
   { key: 'manuscript',  label: 'Manuscript',  title: 'Manuscript view — edit prose' },
   { key: 'annotations', label: 'Annotations', title: 'Annotation mode — notes in the margin' },
+  { key: 'changes',     label: 'Changes',     title: 'Changes — your edits, with the previous text in the margin' },
 ];
-function ReaderModeSwitch({ mode, hasAnnotations, onSet }: {
-  mode: ReaderMode; hasAnnotations: boolean; onSet: (m: ReaderMode) => void;
+function ReaderModeSwitch({ mode, hasAnnotations, showChanges, onSet }: {
+  mode: ReaderMode; hasAnnotations: boolean; showChanges: boolean; onSet: (m: ReaderMode) => void;
 }) {
+  const modes = showChanges ? READER_MODES : READER_MODES.filter(m => m.key !== 'changes');
   return (
     <div className="reader-mode-switch" role="tablist" aria-label="Reader mode">
-      {READER_MODES.map(m => (
+      {modes.map(m => (
         <button
           key={m.key}
           role="tab"
@@ -62,12 +68,12 @@ function ReaderModeSwitch({ mode, hasAnnotations, onSet }: {
 
 export function App() {
   const {
-    screen, theme, fontSize, annSidebarOpen, editMode,
+    screen, theme, fontSize, annSidebarOpen, editMode, changesOpen,
     setScreen, toggleNav, setReaderMode, setHubPane,
   } = useUIStore();
-  const readerMode = readerModeOf({ editMode, annSidebarOpen });
+  const readerMode = readerModeOf({ editMode, annSidebarOpen, changesOpen });
   const { library, upsertManuscript, cycleStatus, toggleFavorite, deleteManuscript, replaceMarkdown, getReadingPosition } = useLibraryStore();
-  const { manuscript, annotations, openManuscript, closeManuscript, undoEdit, redoEdit, setEditReturnScroll, undoStack, redoStack } = useReaderStore();
+  const { manuscript, annotations, edits, openManuscript, closeManuscript, undoEdit, redoEdit, setEditReturnScroll, undoStack, redoStack } = useReaderStore();
   const { toastState, showToast } = useToast();
 
   // Undo/redo a committed prose edit: restore the snapshot markdown the store
@@ -183,6 +189,10 @@ export function App() {
     const ms = upsertManuscript(combinedMarkdown);
     const { chapters } = parseMarkdown(combinedMarkdown);
     openManuscript(ms, chapters);
+    // Capture the import baseline (Draft 0) — idempotent, so re-importing an
+    // existing title doesn't stack duplicate baselines. The version history the
+    // revision-impact features depend on can only start if it starts now.
+    useSnapshotStore.getState().captureBaseline(ms);
     setLoadModalOpen(false);
     setScreen('reader');
     showToast(`Loaded ${chapters.length} chapter${chapters.length !== 1 ? 's' : ''}.`);
@@ -228,6 +238,10 @@ export function App() {
 
   const title = manuscript?.metadata.title ?? '';
   const hasAnnotations = annotations.length > 0;
+  // Changes mode appears only when there are substantive (coalesced, non-formatting)
+  // changes to review, and only on non-touch desktop (it relies on the margin gutter).
+  const hasChanges = useMemo(() => buildChangeList(edits).length > 0, [edits]);
+  const showChanges = hasChanges && !usesTouchFriendlyEditing();
 
   // Reader rail → this manuscript's hub (the page the old tools rail linked to).
   function goManuscriptPage() {
@@ -279,7 +293,7 @@ export function App() {
 
         <div id="topbar-center">
           {screen === 'reader' && (
-            <ReaderModeSwitch mode={readerMode} hasAnnotations={hasAnnotations} onSet={setReaderMode} />
+            <ReaderModeSwitch mode={readerMode} hasAnnotations={hasAnnotations} showChanges={showChanges} onSet={setReaderMode} />
           )}
         </div>
 

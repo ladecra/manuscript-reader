@@ -9,7 +9,7 @@
 // This is what lets us swap localStorage → IndexedDB (→ future SQLite/cloud)
 // without changing a single caller.
 
-import type { Annotation, Edit, ReaderSession } from '../types';
+import type { Annotation, Edit, ReaderSession, Snapshot, SnapshotMeta } from '../types';
 import type { StorageProvider, StoredManuscript } from './provider';
 import { LocalStorageProvider } from './localStorageProvider';
 import { IndexedDbProvider, indexedDbAvailable } from './indexedDbProvider';
@@ -25,6 +25,9 @@ const cache = {
   edits: new Map<string, Edit[]>(),
   sessions: new Map<string, ReaderSession[]>(),
   positions: new Map<string, number>(),
+  // Snapshots: only the LIGHT index is cached (the cover precedent). Frozen bodies
+  // are never held in memory — loadSnapshot fetches them on demand.
+  snapshots: new Map<string, SnapshotMeta[]>(),
 };
 
 // Persistence failures (e.g. quota) are surfaced through a settable handler so
@@ -67,6 +70,7 @@ export async function hydrateStorage(): Promise<void> {
     cache.annotations.set(m.id, await provider.loadAnnotations(m.id));
     cache.edits.set(m.id, await provider.loadEdits(m.id));
     cache.sessions.set(m.id, await provider.loadSessions(m.id));
+    cache.snapshots.set(m.id, await provider.listSnapshots(m.id)); // index only — bodies stay lazy
     const pos = await provider.loadPosition(m.id);
     cache.positions.set(m.id, pos);
     m.progress = pos; // position is the source of truth for reading progress
@@ -98,6 +102,10 @@ async function migrateFromLocalStorage(target: StorageProvider): Promise<void> {
     await target.saveEdits(m.id, await legacy.loadEdits(m.id));
     await target.saveSessions(m.id, await legacy.loadSessions(m.id));
     await target.savePosition(m.id, await legacy.loadPosition(m.id));
+    for (const meta of await legacy.listSnapshots(m.id)) {
+      const snap = await legacy.loadSnapshot(m.id, meta.id);
+      if (snap) await target.saveSnapshot(snap);
+    }
   }
   console.info(`[storage] migrated ${list.length} manuscript(s) to IndexedDB`);
 }
@@ -226,6 +234,62 @@ export function saveCover(id: string, dataUrl: string | null): void {
   persist(() => provider.saveCover(id, dataUrl));
 }
 
+// ── Version snapshots (Phase 8) ──────────────────────────────────────────────
+// The light index is cached (hydrated at startup, kept in sync on save/delete) so
+// the library/hub can list versions synchronously. Frozen bodies are NEVER cached:
+// loadSnapshot is async and fetches on demand (the cover pattern), optionally
+// streaming the body from Supabase the first time when sync is configured.
+
+const copySnapMeta = (m: SnapshotMeta): SnapshotMeta => ({ ...m });
+
+/** Light index of a manuscript's snapshots, newest-capture last. Synchronous. */
+export function listSnapshots(id: string): SnapshotMeta[] {
+  return (cache.snapshots.get(id) ?? []).map(copySnapMeta);
+}
+
+/** Load one full snapshot (frozen markdown + inputs). Async — bodies are lazy.
+ *  When the local body is missing but cloud sync is configured, the body is pulled
+ *  from Supabase and backfilled locally (lazy-pull), then returned. */
+export async function loadSnapshot(id: string, snapshotId: string): Promise<Snapshot | null> {
+  const local = await provider.loadSnapshot(id, snapshotId);
+  if (local && local.markdown) return local;
+  if (local && !local.markdown && syncClient) {
+    try {
+      const body = await syncClient.fetchSnapshotBody(id, local.versionId);
+      if (body != null) {
+        const full = { ...local, markdown: body };
+        persist(() => provider.saveSnapshot(full)); // backfill so the next read is local
+        return full;
+      }
+    } catch (e) { console.warn('[sync] pull snapshot body', e); }
+  }
+  return local;
+}
+
+/** Persist a snapshot (immutable once written; re-save only backfills/dedups the
+ *  body). Updates the cached index, persists locally, and pushes to the cloud. */
+export function saveSnapshot(snap: Snapshot): void {
+  const meta = toSnapshotMeta(snap);
+  const list = (cache.snapshots.get(snap.manuscriptId) ?? []).filter(s => s.id !== snap.id);
+  list.push(meta);
+  list.sort((a, b) => a.createdAt - b.createdAt);
+  cache.snapshots.set(snap.manuscriptId, list);
+  persist(() => provider.saveSnapshot(snap));
+  syncPushSnapshot(snap);
+}
+
+/** Delete a snapshot. Updates the cached index, persists locally, syncs the delete. */
+export function deleteSnapshot(id: string, snapshotId: string): void {
+  cache.snapshots.set(id, (cache.snapshots.get(id) ?? []).filter(s => s.id !== snapshotId));
+  persist(() => provider.deleteSnapshot(id, snapshotId));
+  syncDeleteSnapshot(id, snapshotId);
+}
+
+function toSnapshotMeta(s: Snapshot): SnapshotMeta {
+  const { markdown: _m, annotations: _a, sessions: _s, ...meta } = s;
+  return meta;
+}
+
 // ── Preferences (theme / font) ───────────────────────────────────────────────
 // Tiny, read synchronously at startup to avoid a flash. These stay on
 // localStorage on purpose — they don't need IndexedDB capacity or async.
@@ -315,6 +379,24 @@ export function syncDeleteManuscript(id: string): void {
     .catch(e => console.warn('[sync] delete manuscript', e));
 }
 
+/** Push a snapshot (index row + content-addressed body) to Supabase. Immutable,
+ *  so this is a simple upsert; the body is uploaded once per versionId. */
+export function syncPushSnapshot(snap: Snapshot): void {
+  if (!syncClient) return;
+  const sc = syncClient;
+  writeChain = writeChain
+    .then(() => sc.pushSnapshot(snap))
+    .catch(e => console.warn('[sync] push snapshot', e));
+}
+
+export function syncDeleteSnapshot(id: string, snapshotId: string): void {
+  if (!syncClient) return;
+  const sc = syncClient;
+  writeChain = writeChain
+    .then(() => sc.deleteSnapshot(id, snapshotId))
+    .catch(e => console.warn('[sync] delete snapshot', e));
+}
+
 export interface SyncResult {
   pulled: number;
   pushed: number;
@@ -390,6 +472,36 @@ export async function performSync(): Promise<SyncResult> {
       result.pushed++;
     } catch (e) {
       console.warn('[sync] push manuscript failed', local.id, e);
+      result.failed = true;
+    }
+  }
+
+  // Snapshots: immutable + append-only, so reconcile by PRESENCE (snapshot id),
+  // not last-write-wins. Pull missing-local records as bodyless index entries
+  // (lazy — the body streams on first open); push missing-remote snapshots whole
+  // (a snapshot absent from remote was created locally, so it has a local body).
+  const allMsIds = new Set<string>([...localMap.keys(), ...remoteMap.keys()]);
+  for (const msId of allMsIds) {
+    try {
+      const remoteRecs = await sc.fetchSnapshotRecords(msId);
+      const localMetas = cache.snapshots.get(msId) ?? [];
+      const localIds = new Set(localMetas.map(s => s.id));
+      const remoteIds = new Set(remoteRecs.map(r => r.id));
+
+      for (const rec of remoteRecs) {
+        if (localIds.has(rec.id)) continue;
+        const { annotations: _a, sessions: _s, ...meta } = rec;
+        cache.snapshots.set(msId, [...(cache.snapshots.get(msId) ?? []), meta].sort((a, b) => a.createdAt - b.createdAt));
+        persist(() => provider.saveSnapshotMeta(rec)); // record only; body stays lazy
+        result.pulled++;
+      }
+      for (const meta of localMetas) {
+        if (remoteIds.has(meta.id)) continue;
+        const full = await provider.loadSnapshot(msId, meta.id);
+        if (full && full.markdown) { await sc.pushSnapshot(full); result.pushed++; }
+      }
+    } catch (e) {
+      console.warn('[sync] reconcile snapshots failed', msId, e);
       result.failed = true;
     }
   }

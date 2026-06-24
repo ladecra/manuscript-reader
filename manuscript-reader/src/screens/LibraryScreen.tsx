@@ -1,6 +1,6 @@
 import { useMemo, useState, useRef, useEffect } from 'react';
 import type { Manuscript } from '../engine/types';
-import { getAnnotationStats, loadAnnotations } from '../engine/storage';
+import { getAnnotationStats, loadAnnotations, listSnapshots } from '../engine/storage';
 import { manuscriptListSynopsis, sortLibraryManuscripts, type LibrarySortKey } from '../engine/library';
 import { PlusIcon, StarIcon, DotsIcon, ListLayoutIcon, GridLayoutIcon } from '../components/ui/Icons';
 import { CoverImage } from '../components/ui/CoverImage';
@@ -323,6 +323,7 @@ function LibraryGridCard({ ms, onOpen, onDelete, onToggleFavorite }: {
   // The library projection doesn't always hydrate annotations onto the object;
   // fall back to the annotation cache (same source as the aggregate stat).
   const annCount = ms.annotations?.length || loadAnnotations(ms.id).length;
+  const versionCount = listSnapshots(ms.id).length;
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -345,6 +346,9 @@ function LibraryGridCard({ ms, onOpen, onDelete, onToggleFavorite }: {
       >
         <span className="lib-card-cover-wrap">
           <CoverImage manuscriptId={ms.id} title={title} />
+          {versionCount > 0 && (
+            <span className="lib-card-version" title={`${versionCount} saved version${versionCount !== 1 ? 's' : ''}`}>v{versionCount}</span>
+          )}
         </span>
         <span className="lib-card-title">{title}</span>
         <span className="lib-card-genre">{genre || ' '}</span>

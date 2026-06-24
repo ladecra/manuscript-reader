@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useReaderStore } from '../state/readerStore';
 import { useLibraryStore } from '../state/libraryStore';
+import { useSnapshotStore } from '../state/snapshotStore';
 import { useUIStore } from '../state/uiStore';
 import { computeEditorialSignals } from '../engine/editorialSignals';
 import { resolveAnnotationChapters } from '../engine/annotations/chapterResolve';
 import { parseMarkdown } from '../engine/ingestion/parseMarkdown';
 import { estimateReadingPagePosition, chapterWordCounts, resumeChapterByProgress } from '../engine/reading/manuscriptPages';
 import { ANNOTATION_LABELS, ANNOTATION_COLORS } from '../engine/types';
-import type { ManuscriptStatus, PublishingMetadata, Chapter } from '../engine/types';
+import type { ManuscriptStatus, PublishingMetadata, Chapter, SnapshotMeta } from '../engine/types';
 import { applyChapterEdits, type ChapterEdit } from '../engine/manuscript/chapterEdit';
 import type { ExportManuscriptMeta } from '../engine/exports/manuscriptMarkdown';
 import { ChapterTree } from '../components/library/ChapterTree';
@@ -15,7 +16,7 @@ import { AddChaptersModal } from '../components/reader/AddChaptersModal';
 import { ReportView } from '../components/reports/ReportView';
 import { exportShareableReader, ShareReaderBuildError } from '../engine/exports/shareableReader';
 import { showToast } from '../components/ui/Toast';
-import { PencilIcon, ChevronLeftIcon, DotsIcon, DownloadIcon } from '../components/ui/Icons';
+import { PencilIcon, ChevronLeftIcon, DotsIcon, DownloadIcon, LayersIcon, PlusIcon, XIcon } from '../components/ui/Icons';
 import { CoverImage } from '../components/ui/CoverImage';
 import { ManuscriptWorkspaceRail, type HubPane } from '../components/layout/ManuscriptWorkspaceRail';
 
@@ -32,6 +33,7 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
   const { manuscript, chapters, annotations: rawAnnotations, edits, sessions, openManuscript } = useReaderStore();
   const { library, updateManuscript, replaceMarkdown, appendChapters, getReadingPosition, updateProgress, cycleStatus } = useLibraryStore();
   const { setPendingChapterIndex, setPendingReaderIntent, hubPane: pane, setHubPane } = useUIStore();
+  const { versions: versionsByMs, refresh: refreshVersions, saveVersion, relabel, remove: removeVersion } = useSnapshotStore();
   const [editStructure, setEditStructure] = useState(false);
   const [chapterEdits, setChapterEdits] = useState<ChapterEdit[]>([]);
   const [addChaptersOpen, setAddChaptersOpen] = useState(false);
@@ -55,6 +57,21 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
   );
   const pct = manuscript ? Math.round(getReadingPosition(manuscript.id) * 100) : 0;
   const progressFrac = manuscript ? getReadingPosition(manuscript.id) : 0;
+
+  // Version snapshots (Phase 8) for this manuscript. The store mirrors the
+  // synchronous snapshot index; refresh once on mount so a freshly hydrated /
+  // cross-device-synced history shows up.
+  const versions = manuscript ? versionsByMs[manuscript.id] ?? [] : [];
+  useEffect(() => {
+    if (manuscript) refreshVersions(manuscript.id);
+  }, [manuscript, refreshVersions]);
+
+  const handleSaveVersion = useCallback(() => {
+    if (!manuscript) return;
+    const meta = saveVersion(manuscript);
+    if (meta) showToast(`Saved “${meta.label}”.`);
+    else showToast('Source text unavailable — re-import to save a version.');
+  }, [manuscript, saveVersion]);
   const pageEstimate = useMemo(() => {
     const wc = manuscript?.metadata.wordCount ?? 0;
     return estimateReadingPagePosition(wc, progressFrac);
@@ -440,6 +457,16 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
 
             {pane === 'feedback' && <FeedbackTab annotations={annotations} readerCount={readerCount} onRead={onRead} />}
 
+            {pane === 'versions' && (
+              <VersionsTab
+                versions={versions}
+                manuscriptAvailable={manuscriptAvailable}
+                onSaveVersion={handleSaveVersion}
+                onRelabel={(snapId, label) => manuscript && relabel(manuscript.id, snapId, label)}
+                onDelete={snapId => manuscript && removeVersion(manuscript.id, snapId)}
+              />
+            )}
+
             {pane === 'report' && (
               <>
                 <h2 className="hub-panel-title">Manuscript Intelligence</h2>
@@ -471,6 +498,7 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
         context="hub"
         pane={pane}
         annotationCount={annotations.length}
+        versionCount={versions.length}
         savedLabel={savedLabel}
         recentAnnotations={recentAnnotations}
         className={mobileToolsOpen ? undefined : 'hub-tools--mobile-hidden'}
@@ -751,6 +779,99 @@ function FeedbackTab({ annotations, readerCount, onRead }: {
         </div>
       )}
     </div>
+  );
+}
+
+// ── Versions: the author's deliberate draft history (Phase 8). ──
+/** Lists saved versions newest-first, with an inline-editable label, the capture
+ *  reason, and a delete. "Save current as version" freezes the live draft. The
+ *  before/after compare surface is the separate workspace app (Track B). */
+function VersionsTab({ versions, manuscriptAvailable, onSaveVersion, onRelabel, onDelete }: {
+  versions: SnapshotMeta[];
+  manuscriptAvailable: boolean;
+  onSaveVersion: () => void;
+  onRelabel: (snapId: string, label: string) => void;
+  onDelete: (snapId: string) => void;
+}) {
+  const ordered = [...versions].sort((a, b) => b.createdAt - a.createdAt); // newest first
+  const ordinalById = new Map(
+    [...versions].sort((a, b) => a.createdAt - b.createdAt).map((v, i) => [v.id, i + 1] as const),
+  );
+  return (
+    <div className="hub-panel">
+      <div className="hub-overview-head">
+        <h2 className="hub-panel-title">Versions</h2>
+        <button type="button" className="library-new-btn" onClick={onSaveVersion} disabled={!manuscriptAvailable}>
+          <PlusIcon size={13} /> Save current as version
+        </button>
+      </div>
+      <p className="hub-panel-lead">
+        A saved version freezes the whole draft — its text, annotations, and reader sessions — so you
+        can revise freely and still see what changed. Editing never overwrites a saved version.
+      </p>
+
+      {ordered.length === 0 ? (
+        <div className="hub-empty">
+          <p>No versions saved yet.</p>
+          <p className="hub-empty-sub">Importing a manuscript captures a baseline automatically; save a new version at any milestone — before a beta round, after a revision pass.</p>
+        </div>
+      ) : (
+        <ul className="hub-versions">
+          {ordered.map(v => (
+            <VersionRow
+              key={v.id}
+              version={v}
+              ordinal={ordinalById.get(v.id) ?? 0}
+              onRelabel={label => onRelabel(v.id, label)}
+              onDelete={() => onDelete(v.id)}
+            />
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function VersionRow({ version, ordinal, onRelabel, onDelete }: {
+  version: SnapshotMeta;
+  ordinal: number;
+  onRelabel: (label: string) => void;
+  onDelete: () => void;
+}) {
+  const [label, setLabel] = useState(version.label ?? '');
+  const commit = () => {
+    const next = label.trim();
+    if (next && next !== version.label) onRelabel(next);
+    else setLabel(version.label ?? '');
+  };
+  const when = new Date(version.createdAt).toLocaleString(undefined, {
+    month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit',
+  });
+  return (
+    <li className="hub-version">
+      <span className="hub-version-chip"><LayersIcon size={12} /> v{ordinal}</span>
+      <div className="hub-version-body">
+        <input
+          className="hub-version-label"
+          value={label}
+          onChange={e => setLabel(e.target.value)}
+          onBlur={commit}
+          onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') setLabel(version.label ?? ''); }}
+          aria-label={`Label for version ${ordinal}`}
+        />
+        <div className="hub-version-meta">
+          {version.trigger === 'import' ? 'Imported baseline' : 'Saved version'} · {when} · {version.wordCount.toLocaleString()} words · {version.chapterCount} ch.
+        </div>
+      </div>
+      <button
+        type="button"
+        className="hub-version-del"
+        onClick={() => { if (confirm(`Delete version “${version.label ?? `v${ordinal}`}”? This can't be undone.`)) onDelete(); }}
+        aria-label={`Delete version ${ordinal}`}
+      >
+        <XIcon size={13} />
+      </button>
+    </li>
   );
 }
 

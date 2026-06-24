@@ -32,6 +32,7 @@ interface ManuscriptWorkspaceRailProps {
   context: WorkspaceRailContext;
   pane: HubPane;
   annotationCount: number;
+  versionCount?: number;
   savedLabel: string;
   readerSubtext?: string;
   recentAnnotations?: RailAnnotation[];
@@ -42,10 +43,10 @@ interface ManuscriptWorkspaceRailProps {
   onOpenAnnotations?: () => void;
 }
 
-// Rail order: Publishing Details · Exports & Sharing · Editorial Report · Annotations.
-// (Snapshots is hidden for now — its pane still exists but isn't surfaced.)
+// Rail order: Publishing Details · Versions · Exports & Sharing · Editorial Report · Annotations.
 const MANUSCRIPT_TOOLS: RailTool[] = [
   { id: 'details', label: 'Publishing Details', sub: 'Genre, synopsis & copyright', Icon: BookIcon },
+  { id: 'versions', label: 'Versions', sub: 'Saved drafts of this manuscript', Icon: LayersIcon },
   { id: 'exports', label: 'Exports & Sharing', sub: 'Files & reader copies', Icon: ExportTrayIcon },
   { id: 'report', label: 'Editorial Report', sub: 'Patterns from reader actions', Icon: ReportIcon },
   { id: 'feedback', label: 'Annotations', sub: 'Notes & marks across the manuscript', Icon: PencilIcon },
@@ -55,6 +56,7 @@ export function ManuscriptWorkspaceRail({
   context,
   pane,
   annotationCount,
+  versionCount = 0,
   savedLabel,
   readerSubtext = 'Resume in the reader',
   recentAnnotations,
@@ -90,7 +92,9 @@ export function ManuscriptWorkspaceRail({
             </button>
           )}
           {MANUSCRIPT_TOOLS.map(t => {
-            const badge = t.id === 'feedback' && annotationCount > 0 ? annotationCount : t.badge;
+            const badge = t.id === 'feedback' && annotationCount > 0 ? annotationCount
+              : t.id === 'versions' && versionCount > 0 ? versionCount
+              : t.badge;
             return (
               <button
                 key={t.id}

@@ -558,6 +558,7 @@ html.light[data-mode="reader"] #topbar #topbar-chapter { opacity: 0.6; }
 #chapter-nav {
   width: min(280px, 80vw);
   background: var(--page);
+  z-index: 100;
 }
 :root.light #chapter-nav {
   background: #f6f1e6;
@@ -579,7 +580,7 @@ html.light[data-mode="reader"] #topbar #topbar-chapter { opacity: 0.6; }
 }
 .chapter-link:hover, .chapter-link:active { color: var(--ink); background: var(--surface-high); }
 .chapter-link.active {
-  color: var(--brand); font-weight: 600;
+  color: #f6f1e9; font-weight: 600;
   box-shadow: inset 2px 0 0 var(--brand);
 }
 .ch-num { display: block; font-size: 10px; color: var(--ink-faint); margin-bottom: 2px; letter-spacing: 0.1em; }
@@ -798,6 +799,100 @@ html.light[data-mode="reader"] #topbar #topbar-chapter { opacity: 0.6; }
   font-family: 'Hanken Grotesk', system-ui, sans-serif;
   font-size: 11px; color: var(--dim); font-style: italic;
   padding-left: 12px;
+}
+
+/* ── Changes margin column (#changes-margin) — Phase 8 revision review ──
+   The signal lives on the TEXT: a changed passage gets a dashed gold underline
+   and a faint warm wash; clicking it expands its "Previously…" in the margin.
+   Desktop (≥1200px): sticky column in the right gutter (reuses .ann-open's grid). */
+#changes-margin {
+  display: flex; flex-direction: column; gap: 6px;
+  margin: 48px auto 0; max-width: var(--max-w); padding: 0 24px;
+}
+
+/* The change-mark on the prose — dashed underline + faint wash (collapsed state). */
+.change-mark {
+  color: inherit; cursor: pointer; border-radius: 2px;
+  background: rgba(189, 161, 98, 0.08);
+  text-decoration: underline; text-decoration-style: dashed;
+  text-decoration-color: var(--gold-line); text-underline-offset: 3px;
+  transition: background var(--transition), text-decoration-color var(--transition);
+}
+.change-mark:hover { background: var(--gold-tint); text-decoration-color: var(--gold-soft); }
+.change-mark.sel { background: var(--gold-tint); text-decoration-color: var(--gold); }
+
+.changes-margin-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 8px; margin-bottom: 10px; padding-left: 14px;
+}
+.changes-margin-head-label {
+  font-family: var(--font-ui); font-size: 9px; font-weight: 600;
+  letter-spacing: 0.18em; text-transform: uppercase; color: var(--dim);
+}
+.changes-margin-toggle {
+  background: none; border: none; cursor: pointer; padding: 0;
+  font-family: var(--font-ui); font-size: 9px; font-weight: 500;
+  letter-spacing: 0.1em; text-transform: uppercase; color: var(--gold);
+  transition: color var(--transition);
+}
+.changes-margin-toggle:hover { color: var(--gold-soft); }
+
+.changes-margin-card {
+  border-left: 2px solid transparent; padding-left: 12px;
+  transition: border-color var(--transition), opacity var(--transition);
+}
+.changes-margin-card.emph { border-left-color: var(--gold); }
+.changes-margin-card.expanded { border-left-color: var(--gold-line); }
+.changes-margin-card.orphan { opacity: 0.6; }
+
+.changes-margin-cardhead {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  width: 100%; background: none; border: none; cursor: pointer; text-align: left;
+  padding: 7px 0;
+}
+.changes-margin-tag {
+  font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 9px; font-weight: 600;
+  letter-spacing: 0.1em; text-transform: uppercase; color: var(--gold);
+}
+/* Kind eyebrow: revised (gold), added (green-ish), deleted (muted/struck). */
+.changes-margin-kind {
+  display: inline-block; margin-right: 7px; padding: 1px 5px; border-radius: 3px;
+  font-size: 8px; letter-spacing: 0.12em; background: var(--gold-tint); color: var(--gold);
+}
+.changes-margin-kind.kind-added { background: rgba(120, 150, 100, 0.16); color: #8a9a6e; }
+.changes-margin-kind.kind-deleted { background: rgba(150, 110, 100, 0.16); color: #a8857a; }
+.changes-margin-card.kind-deleted .changes-margin-prev { text-decoration: line-through; text-decoration-color: var(--ink-faint); }
+.changes-margin-when { color: var(--dim); font-weight: 400; letter-spacing: 0.06em; }
+.changes-margin-count {
+  margin-left: 6px; color: var(--dim); font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.changes-margin-chevron { color: var(--dim); font-size: 9px; flex-shrink: 0; }
+.changes-margin-prev {
+  font-family: 'EB Garamond', Georgia, serif; font-style: italic;
+  font-size: 13px; line-height: 1.55; color: var(--dim);
+  padding: 0 0 10px; animation: change-expand 0.18s ease;
+}
+.changes-margin-prev-label {
+  display: block; font-family: 'Hanken Grotesk', system-ui, sans-serif;
+  font-style: normal; font-size: 8px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--dim); margin-bottom: 3px;
+}
+@keyframes change-expand { from { opacity: 0; transform: translateY(-2px); } to { opacity: 1; transform: none; } }
+.changes-margin-empty {
+  font-family: 'Hanken Grotesk', system-ui, sans-serif;
+  font-size: 11px; color: var(--dim); font-style: italic; padding-left: 14px; line-height: 1.6;
+}
+
+@media (min-width: 1200px) {
+  #reader-body.changes-open #content { grid-column: 2; margin: 0; }
+  #reader-body.changes-open #changes-margin {
+    grid-column: 3; margin: 0; max-width: 300px; padding: 0 0 0 40px;
+    align-self: start; position: sticky; top: calc(var(--topbar-h) + 24px);
+    max-height: calc(100vh - var(--topbar-h) - 56px); overflow-y: auto; scrollbar-width: none;
+    opacity: 0; pointer-events: none; transition: opacity 0.55s ease;
+  }
+  #reader-body.changes-open #changes-margin.open { opacity: 1; pointer-events: auto; }
 }
 
 /* ── Selection popup — dark editorial panel ── */
@@ -1664,12 +1759,19 @@ html.light .reader-rail {
   text-align: center; padding: 16px 16px 22px;
 }
 .lib-card-cover-wrap {
+  position: relative;
   display: block; width: 100%; aspect-ratio: 3 / 4;
   border-radius: 4px; overflow: hidden; background: var(--page);
   box-shadow: var(--cover-shadow-lg);
   transition: transform var(--transition-slow);
 }
 .lib-card-open:hover .lib-card-cover-wrap { transform: translateY(-2px); }
+.lib-card-version {
+  position: absolute; top: 8px; right: 8px;
+  font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 10px; font-weight: 600;
+  letter-spacing: 0.04em; color: var(--on-gold); background: var(--gold);
+  padding: 2px 7px; border-radius: 999px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
 
 .lib-card-title {
   font-family: var(--font-body);
@@ -2623,6 +2725,34 @@ mark[data-ann]:hover { filter: brightness(1.2); }
 .hub-ann-meta { font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--dim); }
 .hub-ann-quote { font-family: 'EB Garamond', Georgia, serif; font-size: 15px; color: var(--muted); font-style: italic; margin-top: 6px; line-height: 1.5; }
 .hub-ann-note { font-family: 'EB Garamond', Georgia, serif; font-size: 15px; color: var(--ink); margin-top: 4px; line-height: 1.5; }
+
+/* ── Versions (Phase 8): the author's deliberate draft history ── */
+.hub-versions { list-style: none; margin: 18px 0 0; padding: 0; display: flex; flex-direction: column; }
+.hub-version { display: flex; align-items: center; gap: 14px; padding: 14px 0; border-bottom: 1px solid var(--border); }
+.hub-version-chip {
+  flex-shrink: 0; display: inline-flex; align-items: center; gap: 5px;
+  font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 11px; font-weight: 600;
+  letter-spacing: 0.04em; color: var(--gold); padding: 4px 9px; border-radius: 999px;
+  background: var(--gold-tint); border: 1px solid var(--gold-line);
+}
+.hub-version-body { flex: 1; min-width: 0; }
+.hub-version-label {
+  width: 100%; background: transparent; border: 1px solid transparent; border-radius: 6px;
+  font-family: 'EB Garamond', Georgia, serif; font-size: 16px; color: var(--ink);
+  padding: 3px 6px; margin: -3px -6px 0; transition: border-color 0.12s, background 0.12s;
+}
+.hub-version-label:hover { border-color: var(--border); }
+.hub-version-label:focus { outline: none; border-color: var(--gold-line); background: var(--surface-high); }
+.hub-version-meta {
+  font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 11px; letter-spacing: 0.03em;
+  color: var(--dim); margin-top: 4px;
+}
+.hub-version-del {
+  flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border-radius: 6px; border: none; background: transparent;
+  color: var(--dim); cursor: pointer; transition: color 0.12s, background 0.12s;
+}
+.hub-version-del:hover { color: var(--ink); background: var(--surface-high); }
 
 /* ── Manuscript page: hero (title block), continue band, contents, details ── */
 .ms-row-clickable { cursor: pointer; }

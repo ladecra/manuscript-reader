@@ -5,16 +5,19 @@ import { workspaceRailOpenByDefault, WORKSPACE_RAIL_MOBILE_MAX_PX } from '../eng
 
 export type Screen = 'landing' | 'library' | 'load' | 'manuscript' | 'reader';
 
-/** The reader's three postures (Vellibris model). Derived from the existing
- *  editMode / annSidebarOpen booleans so all legacy effects keep working:
+/** The reader's postures (Vellibris model). Derived from boolean flags so all
+ *  legacy effects keep working:
  *    reading      → clean immersive prose (annotation column faded out)
  *    manuscript   → the editing surface (was: editMode)
- *    annotations  → annotation column active (was: annSidebarOpen) */
-export type ReaderMode = 'reading' | 'manuscript' | 'annotations';
+ *    annotations  → annotation column active (was: annSidebarOpen)
+ *    changes      → revision review: edited passages marked, previous text in the
+ *                   margin (Phase 8). Read-only; never an overlay on Reading. */
+export type ReaderMode = 'reading' | 'manuscript' | 'annotations' | 'changes';
 
-export function readerModeOf(s: { editMode: boolean; annSidebarOpen: boolean }): ReaderMode {
+export function readerModeOf(s: { editMode: boolean; annSidebarOpen: boolean; changesOpen?: boolean }): ReaderMode {
   if (s.editMode) return 'manuscript';
   if (s.annSidebarOpen) return 'annotations';
+  if (s.changesOpen) return 'changes';
   return 'reading';
 }
 
@@ -28,6 +31,7 @@ interface UIStore {
   annSidebarOpen: boolean;
   annSidebarCollapsed: boolean;
   editMode: boolean;
+  changesOpen: boolean;   // Changes (revision review) mode — see ReaderMode
   workspaceRailOpen: boolean;
   hubPane: HubPane;
 
@@ -84,6 +88,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   annSidebarOpen: false,
   annSidebarCollapsed: false,
   editMode: false,
+  changesOpen: false,
   workspaceRailOpen: false,
   hubPane: 'contents',
   pendingChapterIndex: null,
@@ -99,6 +104,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
       navOpen: false,
       annSidebarOpen: false,
       editMode: false,
+      changesOpen: false,
       workspaceRailOpen,
     });
     // Apply theme class whenever screen changes (safe to re-apply)
@@ -126,7 +132,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   closeNav:  () => set({ navOpen: false }),
   toggleNav: () => set(s => ({ navOpen: !s.navOpen })),
 
-  openAnnSidebar()     { set({ annSidebarOpen: true, annSidebarCollapsed: false }); },
+  openAnnSidebar()     { set({ annSidebarOpen: true, annSidebarCollapsed: false, changesOpen: false }); },
   closeAnnSidebar()    { set({ annSidebarOpen: false, annSidebarCollapsed: false }); },
   collapseAnnSidebar() { set({ annSidebarCollapsed: true }); },
   toggleAnnSidebar() {
@@ -135,17 +141,19 @@ export const useUIStore = create<UIStore>((set, get) => ({
   },
 
   // Edit mode is exclusive with the side panels — editing is its own posture.
-  toggleEditMode() { set(s => ({ editMode: !s.editMode, navOpen: false, annSidebarOpen: false })); },
-  enterEditMode()  { set({ editMode: true, navOpen: false, annSidebarOpen: false }); },
+  toggleEditMode() { set(s => ({ editMode: !s.editMode, navOpen: false, annSidebarOpen: false, changesOpen: false })); },
+  enterEditMode()  { set({ editMode: true, navOpen: false, annSidebarOpen: false, changesOpen: false }); },
   exitEditMode()   { set({ editMode: false }); },
 
-  // The single entry point for the 3-mode switch. Maps each posture onto the
-  // existing booleans so legacy reader effects (DOM edit-mode class, mark
-  // stripping, sidebar) continue to drive off the same state.
+  // The single entry point for the reader-mode switch. Maps each posture onto the
+  // booleans so legacy reader effects (DOM edit-mode class, mark stripping,
+  // sidebar) continue to drive off the same state. The four postures are mutually
+  // exclusive.
   setReaderMode(m) {
-    if (m === 'manuscript')       set({ editMode: true,  annSidebarOpen: false, annSidebarCollapsed: false, navOpen: false });
-    else if (m === 'annotations') set({ editMode: false, annSidebarOpen: true,  annSidebarCollapsed: false, navOpen: false });
-    else                          set({ editMode: false, annSidebarOpen: false, annSidebarCollapsed: false });
+    if (m === 'manuscript')       set({ editMode: true,  annSidebarOpen: false, annSidebarCollapsed: false, changesOpen: false, navOpen: false });
+    else if (m === 'annotations') set({ editMode: false, annSidebarOpen: true,  annSidebarCollapsed: false, changesOpen: false, navOpen: false });
+    else if (m === 'changes')     set({ editMode: false, annSidebarOpen: false, annSidebarCollapsed: false, changesOpen: true,  navOpen: false });
+    else                          set({ editMode: false, annSidebarOpen: false, annSidebarCollapsed: false, changesOpen: false });
   },
 
   toggleWorkspaceRail() { set(s => ({ workspaceRailOpen: !s.workspaceRailOpen })); },
@@ -153,7 +161,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   closeWorkspaceRail()  { set({ workspaceRailOpen: false }); },
   setHubPane(p) { set({ hubPane: p }); },
 
-  closeAllPanels() { set({ navOpen: false, annSidebarOpen: false }); },
+  closeAllPanels() { set({ navOpen: false, annSidebarOpen: false, changesOpen: false }); },
 
   setPendingChapterIndex(n) { set({ pendingChapterIndex: n }); },
   setPendingReaderIntent(i) { set({ pendingReaderIntent: i }); },

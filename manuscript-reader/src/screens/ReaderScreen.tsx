@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useCallback, useState, useMemo } from 'react';
-import type { AnnotationType, TextAnchor, Chapter } from '../engine/types';
+import type { AnnotationType, TextAnchor, Chapter, ChangeEntry } from '../engine/types';
 import { buildAnchor, locateAnchor, anchorFromQuote } from '../engine/annotations/anchor';
+import { buildChangeList } from '../engine/manuscript/changeList';
 import { resolveAnnotationChapters } from '../engine/annotations/chapterResolve';
 import { applyBlockEdit, htmlToMarkdownBlocks, sameProse, serializeContentDomToMarkdown } from '../engine/manuscript/blockEdit';
 import { matchMarkdownBlockPrefix } from '../engine/manuscript/editMarkdownShortcut';
@@ -16,6 +17,7 @@ import { SelectionPopup } from '../components/reader/SelectionPopup';
 import { AddChaptersModal } from '../components/reader/AddChaptersModal';
 import { ChapterEditor } from '../components/reader/ChapterEditor';
 import { AnnMarginColumn } from '../components/reader/AnnMarginColumn';
+import { ChangesMarginColumn } from '../components/reader/ChangesMarginColumn';
 import { showToast } from '../components/ui/Toast';
 import { usesTouchFriendlyEditing } from '../lib/touchEditing';
 
@@ -182,6 +184,56 @@ function stripAnnotationMarks(container: HTMLElement) {
   });
 }
 
+// ── Changes mode: mark edited passages in the prose (Phase 8) ──
+// Parallel to the annotation marks, but keyed on the Edit log. An edit anchors in
+// the source-markdown domain; we locate the RENDERED text of its replacement (via
+// editRenderedNeedle) within the edit's chapter and wrap it. Annotation marks and
+// change marks never coexist in the DOM — the reader swaps one set for the other
+// on mode change — so there's no overlap/nesting conflict between them.
+function stripChangeMarks(container: HTMLElement) {
+  container.querySelectorAll('mark[data-edit]').forEach(mark => {
+    const parent = mark.parentNode!;
+    while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
+    parent.removeChild(mark);
+    (parent as Element).normalize?.();
+  });
+}
+
+function markChangeInRoot(root: HTMLElement, anchor: TextAnchor, id: string): HTMLElement | null {
+  const full = root.textContent ?? '';
+  const loc = locateAnchor(full, anchor);
+  if (loc && loc.end > loc.start) {
+    const range = textOffsetToRange(root, loc.start, loc.end);
+    if (range) {
+      try {
+        const mark = document.createElement('mark');
+        mark.dataset.edit = id; mark.className = 'change-mark';
+        range.surroundContents(mark);
+        return mark;
+      } catch { /* range spans elements — leave unmarked (still listed in the margin) */ }
+    }
+  }
+  return null;
+}
+
+function markChangeByAnchor(container: HTMLElement, entry: ChangeEntry): HTMLElement | null {
+  const needle = entry.current; // already rendered text (see buildChangeList)
+  if (!needle) return null;
+  const scope = entry.chapterId ? chapterBlockFor(container, entry.chapterId) : null;
+  const roots = scope ? [scope, container] : [container];
+  // Try the full passage first, then a leading slice — a long replacement may not
+  // survive verbatim (further edits since), but its opening usually does.
+  for (const probe of [needle, needle.slice(0, 80), needle.slice(0, 40)]) {
+    if (probe.length < 8) break;
+    const anchor: TextAnchor = { ...anchorFromQuote(probe), chapterId: entry.chapterId };
+    for (const root of roots) {
+      const mark = markChangeInRoot(root, anchor, entry.id);
+      if (mark) return mark;
+    }
+  }
+  return null; // unlocatable — still listed in the margin
+}
+
 // Desktop: whole `.chapter-block` is contentEditable (structural edits). Touch:
 // each prose block leaf is editable; chapter commit is deferred (see focus handlers).
 function setupEditable(container: HTMLElement, on: boolean) {
@@ -223,7 +275,7 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   const scrollSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const entranceObs = useRef<IntersectionObserver | null>(null);
 
-  const { manuscript, chapters, annotations: rawAnnotations, addAnnotation, updateAnnotation, deleteAnnotation, importSession, openManuscript, recordEdit, pushEditTransition, setEditReturnScroll } = useReaderStore();
+  const { manuscript, chapters, annotations: rawAnnotations, edits, addAnnotation, updateAnnotation, deleteAnnotation, importSession, openManuscript, recordEdit, pushEditTransition, setEditReturnScroll } = useReaderStore();
   // Re-home annotations to their live chapter (positional ids drift on edits), so
   // the mobile sidebar's labels/sort and the reader's mark-scoping all read the
   // current chapter — not a creation-time snapshot. Identity is stable until an
@@ -234,7 +286,7 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     () => resolveAnnotationChapters(rawAnnotations, manuscript?.metadata.combinedMarkdown),
     [rawAnnotations, manuscript?.metadata.combinedMarkdown],
   );
-  const { navOpen, annSidebarOpen, annSidebarCollapsed, editMode, closeNav, closeAnnSidebar, collapseAnnSidebar, toggleAnnSidebar, closeAllPanels } = useUIStore();
+  const { navOpen, annSidebarOpen, annSidebarCollapsed, editMode, changesOpen, closeNav, closeAnnSidebar, collapseAnnSidebar, toggleAnnSidebar, closeAllPanels } = useUIStore();
   const { updateProgress, getReadingPosition, appendChapters, replaceMarkdown } = useLibraryStore();
 
   const [activeChapterIdx, setActiveChapterIdx] = useState(0);
@@ -250,15 +302,19 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   const [annBrowse, setAnnBrowse] = useState(false);
   // The selected annotation — its card gets gold emphasis, its mark a gold underline.
   const [selectedAnnId, setSelectedAnnId] = useState<string | null>(null);
+  // The selected edit (Changes mode) — its card + change-mark get gold emphasis.
+  const [selectedEditId, setSelectedEditId] = useState<string | null>(null);
   const totalWords = useRef(0);
   const editModeRef = useRef(false);
   const annSidebarOpenRef = useRef(false);
+  const changesOpenRef = useRef(false);
   const cancelEditRef = useRef(false);
   const commitRef = useRef<(p: HTMLElement) => void>(() => {});
   const activeEditBlockRef = useRef<HTMLElement | null>(null);
   const pendingFullDomCommitRef = useRef(false);
   useEffect(() => { editModeRef.current = editMode; }, [editMode]);
   useEffect(() => { annSidebarOpenRef.current = annSidebarOpen; }, [annSidebarOpen]);
+  useEffect(() => { changesOpenRef.current = changesOpen; }, [changesOpen]);
 
   // Clock
   useEffect(() => {
@@ -287,12 +343,45 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     });
   }, [annotations]);
 
+  // Coalesced, noise-filtered change list (chains repeated edits to one passage,
+  // drops formatting-only churn). Drives both the prose marks and the margin.
+  const changeEntries = useMemo(() => buildChangeList(edits), [edits]);
+
+  // Changes mode: wrap each changed passage in a change-mark, clickable to select
+  // its margin card. Re-locates from the live rendered text (chapter-scoped).
+  const reapplyChangeMarks = useCallback(() => {
+    const c = contentRef.current; if (!c) return;
+    stripChangeMarks(c);
+    changeEntries.forEach(entry => {
+      const mark = markChangeByAnchor(c, entry);
+      if (mark) mark.addEventListener('click', e => { e.stopPropagation(); setSelectedEditId(entry.id); });
+    });
+  }, [changeEntries]);
+
+  // The single post-render mark applier — mode-aware so a content re-render shows
+  // the marks for the CURRENT posture (change-marks in Changes, annotation marks
+  // otherwise, none while editing). Reads modes from refs so toggling a mode
+  // doesn't re-run the content-render effects that depend on this callback.
   const syncAnnotationDOM = useCallback(() => {
+    const c = contentRef.current;
     if (editModeRef.current) {
-      const c = contentRef.current;
-      if (c) stripAnnotationMarks(c);
-    } else reapplyHighlights();
-  }, [reapplyHighlights]);
+      if (c) { stripAnnotationMarks(c); stripChangeMarks(c); }
+    } else if (changesOpenRef.current) {
+      reapplyChangeMarks();
+    } else {
+      reapplyHighlights();
+    }
+  }, [reapplyHighlights, reapplyChangeMarks]);
+
+  // Mode owns the marks: Changes shows change-marks (annotation marks stripped),
+  // every other non-editing posture shows annotation marks (change-marks stripped).
+  // One set in the DOM at a time, so they never overlap or nest.
+  useEffect(() => {
+    if (editMode) return; // the editing surface manages its own DOM
+    const c = contentRef.current; if (!c) return;
+    if (changesOpen) { stripAnnotationMarks(c); reapplyChangeMarks(); }
+    else { stripChangeMarks(c); reapplyHighlights(); }
+  }, [changesOpen, editMode, reapplyChangeMarks, reapplyHighlights]);
 
   // Render content + entrance observer + restore position
   useEffect(() => {
@@ -535,9 +624,9 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
       if (!usesTouchFriendlyEditing()) setupEditable(c, true);
     }
     c.classList.toggle('edit-mode', editMode);
-    if (editMode) stripAnnotationMarks(c);
-    if (!editMode) reapplyHighlights();
-  }, [editMode, reapplyHighlights]);
+    if (editMode) { stripAnnotationMarks(c); stripChangeMarks(c); }
+    else syncAnnotationDOM(); // restore marks for whatever posture we return to
+  }, [editMode, syncAnnotationDOM]);
 
   // Switching reader mode (Manuscript / Annotations) dismisses the floating
   // annotate command menu — it belongs to a live selection in Reading.
@@ -828,6 +917,21 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     if (mark) { const p = mark.parentNode!; while (mark.firstChild) p.insertBefore(mark.firstChild, mark); p.removeChild(mark); (p as Element).normalize?.(); }
   }, []);
 
+  // Changes mode: select an edit and scroll its change-mark into view (if located).
+  const jumpToEdit = useCallback((id: string) => {
+    setSelectedEditId(id);
+    const mark = contentRef.current?.querySelector(`mark[data-edit="${CSS.escape(id)}"]`);
+    mark?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, []);
+
+  // Keep the selected edit's change-mark visually emphasized (gold), in step with
+  // the selected card. Declarative over the imperatively-managed marks.
+  useEffect(() => {
+    const c = contentRef.current; if (!c) return;
+    c.querySelectorAll('mark[data-edit].sel').forEach(m => m.classList.remove('sel'));
+    if (selectedEditId) c.querySelector(`mark[data-edit="${CSS.escape(selectedEditId)}"]`)?.classList.add('sel');
+  }, [selectedEditId, changesOpen]);
+
   const handleAppendChapters = useCallback((chunk: string) => {
     if (!manuscript) return;
     const updated = appendChapters(manuscript.id, chunk);
@@ -874,9 +978,9 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
           onClose={() => setEditingAnn(null)}
         />
       )}
-      {/* reader-body: on desktop in Annotations mode this becomes a flex row
-          (prose left, margin annotation column right). On mobile it's transparent. */}
-      <div id="reader-body" className={annSidebarOpen && !usesTouchFriendlyEditing() ? 'ann-open' : ''}>
+      {/* reader-body: on desktop in Annotations or Changes mode this becomes a flex
+          row (prose left, margin column right). On mobile it's transparent. */}
+      <div id="reader-body" className={`${(annSidebarOpen || changesOpen) && !usesTouchFriendlyEditing() ? 'ann-open' : ''}${changesOpen ? ' changes-open' : ''}`.trim()}>
         {/* On touch the TipTap editor replaces #content for the active chapter.
             On desktop #content stays visible — it IS the inline editing surface. */}
         <div id="content" ref={contentRef} style={editingChapter && usesTouchFriendlyEditing() ? { display: 'none' } : undefined} />
@@ -890,15 +994,25 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
             charOffset={editingChapter.charOffset}
           />
         )}
-        <AnnMarginColumn
-          annotations={annotations}
-          open={annSidebarOpen}
-          browse={annBrowse}
-          selectedId={selectedAnnId}
-          onJumpTo={jumpToAnnotation}
-          onOpenBrowse={() => setAnnBrowse(true)}
-          onCloseBrowse={() => setAnnBrowse(false)}
-        />
+        {changesOpen ? (
+          <ChangesMarginColumn
+            entries={changeEntries}
+            chapters={chapters}
+            open={changesOpen}
+            selectedId={selectedEditId}
+            onJumpTo={jumpToEdit}
+          />
+        ) : (
+          <AnnMarginColumn
+            annotations={annotations}
+            open={annSidebarOpen}
+            browse={annBrowse}
+            selectedId={selectedAnnId}
+            onJumpTo={jumpToAnnotation}
+            onOpenBrowse={() => setAnnBrowse(true)}
+            onCloseBrowse={() => setAnnBrowse(false)}
+          />
+        )}
       </div>
       <div id="end-mark">End of manuscript</div>
       <div id="bottom-strip" className={scrollPct > 5 && !editMode && !editingChapter ? 'visible' : ''}>
