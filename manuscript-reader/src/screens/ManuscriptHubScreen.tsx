@@ -7,7 +7,6 @@ import { computeEditorialSignals } from '../engine/editorialSignals';
 import { resolveAnnotationChapters } from '../engine/annotations/chapterResolve';
 import { parseMarkdown } from '../engine/ingestion/parseMarkdown';
 import { estimateReadingPagePosition, chapterWordCounts, resumeChapterByProgress } from '../engine/reading/manuscriptPages';
-import { ANNOTATION_LABELS, ANNOTATION_COLORS } from '../engine/types';
 import type { ManuscriptStatus, PublishingMetadata, Chapter, SnapshotMeta } from '../engine/types';
 import { applyChapterEdits, type ChapterEdit } from '../engine/manuscript/chapterEdit';
 import type { ExportManuscriptMeta } from '../engine/exports/manuscriptMarkdown';
@@ -19,6 +18,7 @@ import { showToast } from '../components/ui/Toast';
 import { PencilIcon, ChevronLeftIcon, DotsIcon, DownloadIcon, LayersIcon, PlusIcon, XIcon } from '../components/ui/Icons';
 import { CoverImage } from '../components/ui/CoverImage';
 import { ManuscriptWorkspaceRail, type HubPane } from '../components/layout/ManuscriptWorkspaceRail';
+import { FeedbackTab } from '../components/hub/FeedbackTab';
 
 // The manuscript page: a book's antechamber. Shared `.instrument-*` list styling
 // (hub rail, contents, publishing fields) is the evolving shell language; a
@@ -735,49 +735,6 @@ function DetailsTab({
       <div className="pub-form-actions">
         <button type="button" className="btn-outline pub-reset-btn" onClick={reset}>Reset</button>
       </div>
-    </div>
-  );
-}
-
-// ── Feedback: a read-only roll-up of reader annotations. Annotating stays in the reader. ──
-function FeedbackTab({ annotations, readerCount, onRead }: {
-  annotations: { id: string; type: string; quote: string; note: string; chapterTitle: string; readerName?: string | null }[];
-  readerCount: number; onRead: () => void;
-}) {
-  return (
-    <div className="hub-panel">
-      <div className="hub-overview-head">
-        <h2 className="hub-panel-title">Feedback</h2>
-        <button className="btn-outline" style={{ fontSize: '12px' }} onClick={onRead}>Annotate in reader →</button>
-      </div>
-      <div className="hub-stats">
-        <div className="lib-stat"><span className="lib-stat-num">{annotations.length}</span><span className="lib-stat-label">Annotations</span></div>
-        <div className="lib-stat"><span className="lib-stat-num">{readerCount}</span><span className="lib-stat-label">Readers</span></div>
-      </div>
-
-      {annotations.length === 0 ? (
-        <div className="hub-empty">
-          <p>No annotations yet.</p>
-          <p className="hub-empty-sub">Open the reader to annotate, or import a beta reader's feedback file from the reader's annotations panel.</p>
-        </div>
-      ) : (
-        <div className="hub-ann-list">
-          {annotations.map(a => (
-            <div key={a.id} className="hub-ann">
-              <span className="hub-ann-dot" style={{ background: ANNOTATION_COLORS[a.type as keyof typeof ANNOTATION_COLORS] ?? 'var(--dim)' }} />
-              <div className="hub-ann-body">
-                <div className="hub-ann-meta">
-                  {ANNOTATION_LABELS[a.type as keyof typeof ANNOTATION_LABELS] ?? a.type}
-                  {a.chapterTitle ? ` · ${a.chapterTitle}` : ''}
-                  {a.readerName ? ` · ${a.readerName}` : ''}
-                </div>
-                {a.quote && <div className="hub-ann-quote">“{a.quote.slice(0, 160)}”</div>}
-                {a.note && <div className="hub-ann-note">{a.note}</div>}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }

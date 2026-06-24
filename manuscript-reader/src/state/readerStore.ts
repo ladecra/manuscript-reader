@@ -51,6 +51,7 @@ interface ReaderStore {
     anchor?: TextAnchor;
   }) => Annotation;
   updateAnnotation: (id: string, note: string) => void;
+  patchAnnotation: (id: string, patch: Partial<Pick<Annotation, 'note' | 'status'>>) => void;
   deleteAnnotation: (id: string) => void;
   /** Import a beta reader's feedback file: lands their annotations (deduped) AND
    *  records a durable ReaderSession (who, how far, which draft). Returns the
@@ -125,9 +126,21 @@ export const useReaderStore = create<ReaderStore>((set, get) => ({
   },
 
   updateAnnotation(id, note) {
+    get().patchAnnotation(id, { note });
+  },
+
+  patchAnnotation(id, patch) {
     const { manuscript } = get();
     set(state => {
-      const next = state.annotations.map(a => a.id === id ? { ...a, note } : a);
+      const next = state.annotations.map(a => {
+        if (a.id !== id) return a;
+        const merged = { ...a, ...patch };
+        if ('status' in patch && patch.status === undefined) {
+          const { status: _drop, ...rest } = merged;
+          return rest as Annotation;
+        }
+        return merged;
+      });
       if (manuscript) saveAnnotations(manuscript.id, next);
       return { annotations: next };
     });
