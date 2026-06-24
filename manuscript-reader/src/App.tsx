@@ -3,7 +3,7 @@ import { useUIStore, readerModeOf, type ReaderMode } from './state/uiStore';
 import { useLibraryStore } from './state/libraryStore';
 import { useReaderStore } from './state/readerStore';
 import { useSnapshotStore } from './state/snapshotStore';
-import { buildChangeList } from './engine/manuscript/changeList';
+import { hasMeaningfulEdits } from './engine/manuscript/changeList';
 import { usesTouchFriendlyEditing } from './lib/touchEditing';
 import { LandingScreen } from './screens/LandingScreen';
 import { LibraryScreen } from './screens/LibraryScreen';
@@ -238,10 +238,14 @@ export function App() {
 
   const title = manuscript?.metadata.title ?? '';
   const hasAnnotations = annotations.length > 0;
-  // Changes mode appears only when there are substantive (coalesced, non-formatting)
-  // changes to review, and only on non-touch desktop (it relies on the margin gutter).
-  const hasChanges = useMemo(() => buildChangeList(edits).length > 0, [edits]);
-  const showChanges = hasChanges && !usesTouchFriendlyEditing();
+  // Changes mode appears only when there are substantive (non-formatting) changes,
+  // and only on non-touch desktop (it relies on the margin gutter). Gated on the
+  // reader screen + a cheap early-exit predicate so navigating to a hub never pays
+  // for the full change-list coalescing (that runs lazily, only inside the reader).
+  const showChanges = useMemo(
+    () => screen === 'reader' && !usesTouchFriendlyEditing() && hasMeaningfulEdits(edits),
+    [screen, edits],
+  );
 
   // Reader rail → this manuscript's hub (the page the old tools rail linked to).
   function goManuscriptPage() {

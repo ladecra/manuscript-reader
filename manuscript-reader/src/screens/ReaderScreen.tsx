@@ -21,6 +21,8 @@ import { ChangesMarginColumn } from '../components/reader/ChangesMarginColumn';
 import { showToast } from '../components/ui/Toast';
 import { usesTouchFriendlyEditing } from '../lib/touchEditing';
 
+const EMPTY_CHANGES: ChangeEntry[] = []; // stable ref when Changes mode is closed
+
 function wrapTextInMark(container: HTMLElement, text: string, id: string, type: AnnotationType) {
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
   const search = text.slice(0, 60);
@@ -344,8 +346,9 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   }, [annotations]);
 
   // Coalesced, noise-filtered change list (chains repeated edits to one passage,
-  // drops formatting-only churn). Drives both the prose marks and the margin.
-  const changeEntries = useMemo(() => buildChangeList(edits), [edits]);
+  // drops formatting-only churn). Computed LAZILY — only while Changes mode is
+  // open — so entering the reader (reading/annotating/editing) never pays for it.
+  const changeEntries = useMemo(() => (changesOpen ? buildChangeList(edits) : EMPTY_CHANGES), [changesOpen, edits]);
 
   // Changes mode: wrap each changed passage in a change-mark, clickable to select
   // its margin card. Re-locates from the live rendered text (chapter-scoped).
@@ -358,30 +361,20 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     });
   }, [changeEntries]);
 
-  // The single post-render mark applier — mode-aware so a content re-render shows
-  // the marks for the CURRENT posture (change-marks in Changes, annotation marks
-  // otherwise, none while editing). Reads modes from refs so toggling a mode
-  // doesn't re-run the content-render effects that depend on this callback.
+  // The single mark applier — mode-aware and self-contained: it always clears BOTH
+  // mark sets first, then applies the current posture's (change-marks in Changes,
+  // annotation marks otherwise, none while editing). One pass owns the DOM, so the
+  // two sets never coexist, and there's no separate effect double-applying on mount.
+  // Reads modes from refs so toggling a mode doesn't re-run the content-render
+  // effects that depend on this callback's identity.
   const syncAnnotationDOM = useCallback(() => {
-    const c = contentRef.current;
-    if (editModeRef.current) {
-      if (c) { stripAnnotationMarks(c); stripChangeMarks(c); }
-    } else if (changesOpenRef.current) {
-      reapplyChangeMarks();
-    } else {
-      reapplyHighlights();
-    }
-  }, [reapplyHighlights, reapplyChangeMarks]);
-
-  // Mode owns the marks: Changes shows change-marks (annotation marks stripped),
-  // every other non-editing posture shows annotation marks (change-marks stripped).
-  // One set in the DOM at a time, so they never overlap or nest.
-  useEffect(() => {
-    if (editMode) return; // the editing surface manages its own DOM
     const c = contentRef.current; if (!c) return;
-    if (changesOpen) { stripAnnotationMarks(c); reapplyChangeMarks(); }
-    else { stripChangeMarks(c); reapplyHighlights(); }
-  }, [changesOpen, editMode, reapplyChangeMarks, reapplyHighlights]);
+    stripAnnotationMarks(c);
+    stripChangeMarks(c);
+    if (editModeRef.current) return;        // editing surface: no marks
+    if (changesOpenRef.current) reapplyChangeMarks();
+    else reapplyHighlights();
+  }, [reapplyHighlights, reapplyChangeMarks]);
 
   // Render content + entrance observer + restore position
   useEffect(() => {
@@ -451,7 +444,9 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-render content only when the manuscript changes
   }, [manuscript?.id, manuscript?.metadata.combinedMarkdown]);
 
-  useEffect(() => { syncAnnotationDOM(); }, [annotations, editMode, syncAnnotationDOM]);
+  // Apply the right marks whenever the data or posture changes (incl. toggling
+  // Changes mode — changesOpenRef is updated by the effect above, which runs first).
+  useEffect(() => { syncAnnotationDOM(); }, [annotations, editMode, changesOpen, syncAnnotationDOM]);
 
   // ── Edit mode ──────────────────────────────────────────────────────────────
   // Re-render the current source in place (no persist): used to discard stray

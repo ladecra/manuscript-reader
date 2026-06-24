@@ -52,6 +52,18 @@ interface Chain {
   lastAt: number;
 }
 
+/** Cheap predicate for "is the Changes tab worth showing?" — early-exits on the
+ *  first edit whose RENDERED prose actually changed, without coalescing/narrowing
+ *  the whole log. Keeps the per-navigation hot path light (buildChangeList is only
+ *  paid when the author actually opens Changes mode). */
+export function hasMeaningfulEdits(edits: Edit[]): boolean {
+  for (const e of edits) {
+    if (e.originalText === e.replacementText) continue; // identical source → skip the regex work
+    if (editRenderedNeedle(e.originalText) !== editRenderedNeedle(e.replacementText)) return true;
+  }
+  return false;
+}
+
 export function buildChangeList(edits: Edit[]): ChangeEntry[] {
   const ordered = [...edits].sort((a, b) => a.createdAt - b.createdAt);
   // Open chains per chapter, keyed by the rendered text they currently produce —
