@@ -8,7 +8,9 @@ interface ChapterEditorProps {
   initialHtml: string;
   onSave: (markdown: string) => void;
   onCancel: () => void;
-  tapY?: number;
+  /** Viewport Y at tap (full manuscript); keeps the caret line under the finger. */
+  tapClientY?: number;
+  /** Plain-text offset in the reader chapter block at tap time. */
   charOffset?: number;
 }
 
@@ -16,25 +18,36 @@ interface ChapterEditorProps {
 // nearest ProseMirror document position so TipTap can restore the cursor after mount.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 function charOffsetToPmPos(doc: any, charOffset: number | undefined): number {
+  const max = Math.max(1, doc.content.size - 1);
   if (charOffset === undefined) return 1;
   let chars = 0;
   let result = 1;
   let found = false;
+  let lastTextEnd = 1;
   doc.nodesBetween(0, doc.content.size, (node: any, pos: number) => {
     if (found) return false;
     if (node.isText) {
       const len: number = node.text.length;
+      lastTextEnd = pos + len;
       if (chars + len > charOffset) { result = pos + (charOffset - chars); found = true; }
       else chars += len;
       return false;
     }
     return true;
   });
-  return result;
+  if (!found && charOffset >= chars) result = lastTextEnd;
+  return Math.min(Math.max(1, result), max);
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
-export function ChapterEditor({ chapterTitle, initialHtml, onSave, onCancel, tapY, charOffset }: ChapterEditorProps) {
+export function ChapterEditor({
+  chapterTitle,
+  initialHtml,
+  onSave,
+  onCancel,
+  tapClientY,
+  charOffset,
+}: ChapterEditorProps) {
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
@@ -51,24 +64,31 @@ export function ChapterEditor({ chapterTitle, initialHtml, onSave, onCancel, tap
     onSave(htmlToMarkdownBlocks(editor.getHTML()));
   }, [editor, onSave]);
 
-  // Place the cursor where the tap landed and open the editor with that same line
-  // under the finger — otherwise mounting TipTap (which replaces the whole scrolled
-  // #content) jumps the viewport to the chapter top. Two rAFs so TipTap has laid out
-  // its content before we measure caret coordinates.
+  // Place the caret near the tap without TipTap/browser auto-scroll fighting us.
+  // Caller resets window scroll to 0 before mount so alignment math is stable.
   useEffect(() => {
     if (!editor) return;
     requestAnimationFrame(() => requestAnimationFrame(() => {
+      const { view } = editor;
       const pmPos = charOffsetToPmPos(editor.state.doc, charOffset);
+
       editor.commands.setTextSelection(pmPos);
-      editor.commands.focus();
-      if (tapY !== undefined) {
-        // coordsAtPos is viewport-relative; nudge the page so the caret sits back
-        // at the tap's Y. Guard against the caret being off the laid-out doc.
-        const caret = editor.view.coordsAtPos(pmPos);
-        if (caret) window.scrollBy(0, caret.top - tapY);
+
+      let lockY = window.scrollY;
+      if (tapClientY != null) {
+        const caret = view.coordsAtPos(pmPos);
+        lockY = Math.max(0, window.scrollY + caret.top - tapClientY);
+        window.scrollTo(0, lockY);
       }
+
+      editor.commands.focus(pmPos, { scrollIntoView: false });
+
+      // iOS Safari still nudges the viewport on focus — put it back once.
+      requestAnimationFrame(() => {
+        if (Math.abs(window.scrollY - lockY) > 2) window.scrollTo(0, lockY);
+      });
     }));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- run once when the editor instance is ready
   }, [editor]);
 
   useEffect(() => {
@@ -91,8 +111,6 @@ export function ChapterEditor({ chapterTitle, initialHtml, onSave, onCancel, tap
       <EditorContent editor={editor} className="chapter-editor-content" />
       <div className="chapter-editor-hint">⌘S to save · Esc to cancel · ⌘B bold · ⌘I italic</div>
 
-      {/* Fixed action bar — always reachable without scrolling back to the top
-          (the old top-only Save was a real pain on long chapters / mobile). */}
       <div className="chapter-editor-bar" role="toolbar" aria-label="Editing actions">
         <button className="chapter-editor-cancel" onClick={onCancel} type="button">Cancel</button>
         <button className="chapter-editor-save" onClick={handleSave} type="button">Save &amp; close</button>
