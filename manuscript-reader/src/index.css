@@ -1747,16 +1747,26 @@ html.light .reader-rail {
 }
 .lib-card {
   position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
   background: var(--raised);
   border: 1px solid var(--line);
   border-radius: 12px;
+  padding: 16px 16px 22px;
   transition: border-color var(--transition);
 }
 .lib-card:hover { border-color: var(--ink-faint); }
 .lib-card-open {
   display: flex; flex-direction: column; align-items: center;
-  width: 100%; height: 100%; background: none; border: none; cursor: pointer;
-  text-align: center; padding: 16px 16px 22px;
+  width: 100%; background: none; border: none; cursor: pointer;
+  text-align: center; padding: 0;
+}
+.lib-card-open--cover { flex-shrink: 0; }
+.lib-card-open--tail {
+  flex: 1;
+  display: flex; flex-direction: column; align-items: center;
+  margin-top: 5px;
 }
 .lib-card-cover-wrap {
   position: relative;
@@ -1773,16 +1783,29 @@ html.light .reader-rail {
   padding: 2px 7px; border-radius: 999px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
+.lib-card-title-row {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) 26px;
+  align-items: center;
+  width: 100%;
+  margin-top: 18px;
+  gap: 0;
+}
 .lib-card-title {
+  grid-column: 2;
   font-family: var(--font-body);
   font-size: 22px; font-weight: 500; line-height: 1.12;
-  color: var(--ink); margin-top: 18px;
+  color: var(--ink); margin: 0; padding: 0;
+  background: none; border: none; cursor: pointer; text-align: center;
   transition: color var(--transition);
 }
-.lib-card-open:hover .lib-card-title { color: var(--gold); }
+.lib-card:hover .lib-card-title,
+.lib-card-open--tail:hover .lib-card-genre { color: var(--gold); }
+.lib-card-title:hover { color: var(--gold); }
 .lib-card-genre {
   font-family: var(--font-body); font-style: italic;
-  font-size: 14px; color: var(--ink-2); margin-top: 5px; min-height: 1em;
+  font-size: 14px; color: var(--ink-2); min-height: 1em;
+  transition: color var(--transition);
 }
 .lib-card-meta {
   display: flex; justify-content: center; gap: 22px;
@@ -1809,18 +1832,37 @@ html.light .reader-rail {
 .lib-card:hover .lib-card-star { opacity: 0.5; }
 .lib-card-star:hover { opacity: 1; }
 .lib-card-star.active { opacity: 1; }
-.lib-card-menu-wrap { position: absolute; top: 24px; right: 24px; z-index: 2; }
+.lib-card-menu-wrap {
+  grid-column: 3;
+  justify-self: end;
+  position: relative;
+  z-index: 2;
+}
 .lib-card-menu-btn {
   background: none; border: none; cursor: pointer; color: var(--ink-muted);
-  padding: 4px 6px; display: flex; align-items: center; opacity: 0;
+  padding: 4px 2px; display: flex; align-items: center; opacity: 0;
   transition: opacity var(--transition), color var(--transition);
 }
+.lib-card-menu-btn--vertical { transform: rotate(90deg); }
 .lib-card:hover .lib-card-menu-btn { opacity: 0.5; }
 .lib-card-menu-btn:hover { opacity: 1; color: var(--ink); }
 .lib-card-menu {
   position: absolute; top: 100%; right: 0; left: auto; z-index: 20; min-width: 140px;
   background: var(--raised); border: 1px solid var(--line);
   border-radius: var(--radius-chip); box-shadow: var(--raised-shadow); padding: 6px 0;
+}
+
+.lib-card-edit-modal { width: min(400px, 100%); }
+.lib-card-edit-body { display: flex; flex-direction: column; gap: 18px; }
+.lib-card-edit-cover {
+  width: 140px; margin: 0 auto;
+  aspect-ratio: 2 / 3; border-radius: 4px; overflow: hidden;
+  box-shadow: var(--cover-shadow-lg);
+}
+.lib-card-edit-field { display: flex; flex-direction: column; gap: 6px; }
+.lib-card-edit-hint {
+  font-family: var(--font-ui); font-size: 11px; line-height: 1.45;
+  color: var(--dim); margin: 0;
 }
 
 @media (max-width: 900px) {

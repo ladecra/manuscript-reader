@@ -1,5 +1,6 @@
 import { useMemo, useState, useRef, useEffect } from 'react';
-import type { Manuscript } from '../engine/types';
+import type { Manuscript, PublishingMetadata } from '../engine/types';
+import { LibraryCardEditModal } from '../components/library/LibraryCardEditModal';
 import { getAnnotationStats, loadAnnotations, listSnapshots } from '../engine/storage';
 import { manuscriptListSynopsis, sortLibraryManuscripts, type LibrarySortKey } from '../engine/library';
 import { PlusIcon, StarIcon, DotsIcon, ListLayoutIcon, GridLayoutIcon } from '../components/ui/Icons';
@@ -33,13 +34,14 @@ interface LibraryScreenProps {
   onRead: (ms: Manuscript) => void;
   onNew: () => void;
   onDelete: (id: string) => void;
+  onUpdateManuscript: (id: string, patch: { title?: string; publishing?: PublishingMetadata }) => void;
   onCycleStatus: (id: string) => void;
   onToggleFavorite: (id: string) => void;
   getReadingPosition: (id: string) => number;
 }
 
 export function LibraryScreen({
-  library, libraryFilter, onLibraryFilter, onOpen, onRead, onNew, onDelete, onCycleStatus, onToggleFavorite, getReadingPosition,
+  library, libraryFilter, onLibraryFilter, onOpen, onRead, onNew, onDelete, onUpdateManuscript, onCycleStatus, onToggleFavorite, getReadingPosition,
 }: LibraryScreenProps) {
   const [sortKey, setSortKey] = useState<LibrarySortKey>('lastOpened');
   const [viewMode, setViewMode] = useState<LibraryViewMode>('grid');
@@ -184,6 +186,7 @@ export function LibraryScreen({
                   ms={ms}
                   onOpen={() => onOpen(ms)}
                   onDelete={() => onDelete(ms.id)}
+                  onUpdate={(patch) => onUpdateManuscript(ms.id, patch)}
                   onToggleFavorite={() => onToggleFavorite(ms.id)}
                 />
               ))}
@@ -315,8 +318,12 @@ function LibraryListRow({ ms, onOpen, onRead, onDelete, onCycleStatus, onToggleF
   );
 }
 
-function LibraryGridCard({ ms, onOpen, onDelete, onToggleFavorite }: {
-  ms: Manuscript; onOpen: () => void; onDelete: () => void; onToggleFavorite: () => void;
+function LibraryGridCard({ ms, onOpen, onDelete, onUpdate, onToggleFavorite }: {
+  ms: Manuscript;
+  onOpen: () => void;
+  onDelete: () => void;
+  onUpdate: (patch: { title?: string; publishing?: PublishingMetadata }) => void;
+  onToggleFavorite: () => void;
 }) {
   const { title, wordCount, chapterCount, publishing, favorite } = ms.metadata;
   const genre = publishing?.genre;
@@ -325,6 +332,7 @@ function LibraryGridCard({ ms, onOpen, onDelete, onToggleFavorite }: {
   const annCount = ms.annotations?.length || loadAnnotations(ms.id).length;
   const versionCount = listSnapshots(ms.id).length;
   const [menuOpen, setMenuOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -340,7 +348,7 @@ function LibraryGridCard({ ms, onOpen, onDelete, onToggleFavorite }: {
     <article className="lib-card">
       <button
         type="button"
-        className="lib-card-open"
+        className="lib-card-open lib-card-open--cover"
         onClick={onOpen}
         onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } }}
       >
@@ -350,7 +358,55 @@ function LibraryGridCard({ ms, onOpen, onDelete, onToggleFavorite }: {
             <span className="lib-card-version" title={`${versionCount} saved version${versionCount !== 1 ? 's' : ''}`}>v{versionCount}</span>
           )}
         </span>
-        <span className="lib-card-title">{title}</span>
+      </button>
+
+      <div className="lib-card-title-row">
+        <button type="button" className="lib-card-title" onClick={onOpen}>{title}</button>
+        <div className="lib-card-menu-wrap" ref={menuRef} onClick={e => e.stopPropagation()}>
+          <button
+            type="button"
+            className="lib-card-menu-btn lib-card-menu-btn--vertical"
+            aria-label="Manuscript actions"
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen(o => !o)}
+          >
+            <DotsIcon size={14} />
+          </button>
+          {menuOpen && (
+            <div className="lib-card-menu" role="menu">
+              <button
+                type="button"
+                role="menuitem"
+                className="lib-row-menu-item"
+                onClick={() => {
+                  setMenuOpen(false);
+                  setEditOpen(true);
+                }}
+              >
+                Edit
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="lib-row-menu-item lib-row-menu-item--danger"
+                onClick={() => {
+                  setMenuOpen(false);
+                  if (window.confirm(`Remove "${title}"?`)) onDelete();
+                }}
+              >
+                Remove
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <button
+        type="button"
+        className="lib-card-open lib-card-open--tail"
+        onClick={onOpen}
+        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } }}
+      >
         <span className="lib-card-genre">{genre || ' '}</span>
         <span className="lib-card-meta">
           <span className="lib-card-meta-cell">
@@ -378,32 +434,21 @@ function LibraryGridCard({ ms, onOpen, onDelete, onToggleFavorite }: {
         <StarIcon filled={!!favorite} />
       </button>
 
-      <div className="lib-card-menu-wrap" ref={menuRef} onClick={e => e.stopPropagation()}>
-        <button
-          type="button"
-          className="lib-card-menu-btn"
-          aria-label="Manuscript actions"
-          aria-expanded={menuOpen}
-          onClick={() => setMenuOpen(o => !o)}
-        >
-          <DotsIcon size={14} />
-        </button>
-        {menuOpen && (
-          <div className="lib-card-menu" role="menu">
-            <button
-              type="button"
-              role="menuitem"
-              className="lib-row-menu-item lib-row-menu-item--danger"
-              onClick={() => {
-                setMenuOpen(false);
-                if (window.confirm(`Remove "${title}"?`)) onDelete();
-              }}
-            >
-              Remove
-            </button>
-          </div>
-        )}
-      </div>
+      {editOpen && (
+        <LibraryCardEditModal
+          key={ms.id}
+          manuscriptId={ms.id}
+          title={title}
+          genre={genre ?? ''}
+          onClose={() => setEditOpen(false)}
+          onSave={({ title: nextTitle, genre: nextGenre }) => {
+            onUpdate({
+              title: nextTitle,
+              publishing: { ...publishing, genre: nextGenre || undefined },
+            });
+          }}
+        />
+      )}
     </article>
   );
 }

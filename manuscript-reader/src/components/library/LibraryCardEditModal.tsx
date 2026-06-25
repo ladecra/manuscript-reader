@@ -3,7 +3,6 @@ import { CoverImage } from '../ui/CoverImage';
 import { XIcon } from '../ui/Icons';
 
 interface LibraryCardEditModalProps {
-  open: boolean;
   manuscriptId: string;
   title: string;
   genre: string;
@@ -12,25 +11,16 @@ interface LibraryCardEditModalProps {
 }
 
 export function LibraryCardEditModal({
-  open, manuscriptId, title, genre, onClose, onSave,
-}: LibraryCardEditModalProps) {
+  manuscriptId, title, genre, onClose, onSave,
+}: Omit<LibraryCardEditModalProps, 'open'>) {
   const [titleInput, setTitleInput] = useState(title);
   const [genreInput, setGenreInput] = useState(genre);
 
   useEffect(() => {
-    if (!open) return;
-    setTitleInput(title);
-    setGenreInput(genre);
-  }, [open, title, genre]);
-
-  useEffect(() => {
-    if (!open) return;
     function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose(); }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
-
-  if (!open) return null;
+  }, [onClose]);
 
   function save() {
     onSave({
