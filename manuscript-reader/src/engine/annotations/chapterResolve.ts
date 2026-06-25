@@ -18,7 +18,7 @@
 // satisfies the engine-purity test: it runs without a DOM.
 
 import type { Annotation } from '../types';
-import { parseMarkdown } from '../ingestion/parseMarkdown';
+import { getParsedManuscript } from '../ingestion/parseCache';
 import { locateAnchor, anchorFromQuote, type AnchorConfidence } from './anchor';
 
 const CONFIDENCE_RANK: Record<AnchorConfidence, number> = { exact: 3, context: 2, fuzzy: 1 };
@@ -26,7 +26,7 @@ const CONFIDENCE_RANK: Record<AnchorConfidence, number> = { exact: 3, context: 2
 /** Plain text per chapter index (1-based; 0 = forematter, excluded), assembled
  *  from the parser's structural blocks — the same text the anchor resolves against. */
 function chapterTexts(combinedMarkdown: string): { texts: Map<number, string>; titles: Map<number, string> } {
-  const { blocks, chapters } = parseMarkdown(combinedMarkdown);
+  const { blocks, chapters } = getParsedManuscript(combinedMarkdown);
   const texts = new Map<number, string>();
   for (const b of blocks) {
     if (b.chapterIndex <= 0) continue; // skip forematter

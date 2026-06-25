@@ -5,7 +5,7 @@ import { useSnapshotStore } from '../state/snapshotStore';
 import { useUIStore } from '../state/uiStore';
 import { computeEditorialSignals } from '../engine/editorialSignals';
 import { resolveAnnotationChapters } from '../engine/annotations/chapterResolve';
-import { parseMarkdown } from '../engine/ingestion/parseMarkdown';
+import { getParsedManuscript } from '../engine/ingestion/parseCache';
 import { estimateReadingPagePosition, chapterWordCounts, resumeChapterByProgress } from '../engine/reading/manuscriptPages';
 import type { ManuscriptStatus, PublishingMetadata, Chapter, SnapshotMeta } from '../engine/types';
 import { applyChapterEdits, type ChapterEdit } from '../engine/manuscript/chapterEdit';
@@ -255,7 +255,7 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
     if (newMd && newMd !== combinedMarkdown) {
       const updated = replaceMarkdown(manuscript.id, newMd);
       if (updated) {
-        openManuscript(updated, parseMarkdown(updated.metadata.combinedMarkdown!).chapters);
+        openManuscript(updated, getParsedManuscript(updated.metadata.combinedMarkdown!).chapters);
         setChapterEdits([]);
         showToast('Chapters updated.');
         return;
@@ -268,7 +268,7 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
     if (!manuscript) return;
     const updated = appendChapters(manuscript.id, chunk);
     if (!updated) { showToast('Manuscript not cached — reload files first.'); setAddChaptersOpen(false); return; }
-    const { chapters: newChapters } = parseMarkdown(updated.metadata.combinedMarkdown!);
+    const { chapters: newChapters } = getParsedManuscript(updated.metadata.combinedMarkdown!);
     const added = newChapters.length - chapters.length;
     openManuscript(updated, newChapters);
     setAddChaptersOpen(false);

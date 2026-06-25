@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { parseMarkdown } from '../../engine/ingestion/parseMarkdown';
+import { getParsedManuscript } from '../../engine/ingestion/parseCache';
 import type { ChapterEdit } from '../../engine/manuscript/chapterEdit';
 
 interface ChapterTreeRow {
@@ -16,7 +16,7 @@ interface ChapterTreeProps {
 
 function rowsFromMarkdown(md: string | undefined): ChapterTreeRow[] {
   if (!md) return [];
-  return parseMarkdown(md).chapters.map(c => ({ index: c.index, title: c.title, deleted: false }));
+  return getParsedManuscript(md).chapters.map(c => ({ index: c.index, title: c.title, deleted: false }));
 }
 
 export function ChapterTree({ combinedMarkdown, onChange }: ChapterTreeProps) {

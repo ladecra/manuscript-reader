@@ -15,7 +15,7 @@ import { Toast, useToast } from './components/ui/Toast';
 import { SettingsMenu } from './components/ui/SettingsMenu';
 import { AppShell, type LibraryNavFilter } from './components/layout/AppShell';
 import { QuillIcon, MenuIcon, LibraryIcon, UndoIcon, RedoIcon, ChevronLeftIcon } from './components/ui/Icons';
-import { parseMarkdown } from './engine/ingestion/parseMarkdown';
+import { getParsedManuscript } from './engine/ingestion/parseCache';
 import { workspaceRailOpenByDefault, WORKSPACE_RAIL_MOBILE_MAX_PX } from './engine/ui/workspaceRail';
 import type { Manuscript } from './engine/types';
 
@@ -83,7 +83,7 @@ export function App() {
     setEditReturnScroll(window.scrollY);
     const updated = replaceMarkdown(manuscript.id, markdown);
     if (!updated) return;
-    const { chapters } = parseMarkdown(updated.metadata.combinedMarkdown!);
+    const { chapters } = getParsedManuscript(updated.metadata.combinedMarkdown!);
     openManuscript(updated, chapters);
     showToast(msg);
   }, [manuscript, replaceMarkdown, openManuscript, setEditReturnScroll, showToast]);
@@ -187,7 +187,7 @@ export function App() {
 
   function handleLoad(combinedMarkdown: string) {
     const ms = upsertManuscript(combinedMarkdown);
-    const { chapters } = parseMarkdown(combinedMarkdown);
+    const { chapters } = getParsedManuscript(combinedMarkdown);
     openManuscript(ms, chapters);
     // Capture the import baseline (Draft 0) — idempotent, so re-importing an
     // existing title doesn't stack duplicate baselines. The version history the
@@ -206,7 +206,7 @@ export function App() {
       setLoadModalOpen(true);
       return;
     }
-    const { chapters } = parseMarkdown(ms.metadata.combinedMarkdown);
+    const { chapters } = getParsedManuscript(ms.metadata.combinedMarkdown);
     openManuscript(ms, chapters);
     setHubPane('contents');
     setScreen('manuscript');
@@ -220,7 +220,7 @@ export function App() {
       setLoadModalOpen(true);
       return;
     }
-    const { chapters } = parseMarkdown(ms.metadata.combinedMarkdown);
+    const { chapters } = getParsedManuscript(ms.metadata.combinedMarkdown);
     openManuscript(ms, chapters);
     setScreen('reader');
   }
