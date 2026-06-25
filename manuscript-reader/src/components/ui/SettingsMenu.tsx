@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { useUIStore } from '../../state/uiStore';
 import { GearIcon } from './Icons';
 import { AuthPanel } from '../auth/AuthPanel';
@@ -12,8 +13,8 @@ interface SettingsMenuProps {
 }
 
 /** Settings popover — theme + text-size controls. On mobile (≤860px) also shows
- *  auth. The popover is position:fixed off the trigger so it never clips inside
- *  the rail's overflow. */
+ *  auth. Overlay is portaled to document.body with position:fixed so it never
+ *  clips inside a rail (overflow, backdrop-filter containing blocks, etc.). */
 export function SettingsMenu({ variant = 'icon' }: SettingsMenuProps) {
   const { theme, fontSize, toggleTheme, increaseFontSize, decreaseFontSize } = useUIStore();
   const [open, setOpen] = useState(false);
@@ -40,18 +41,35 @@ export function SettingsMenu({ variant = 'icon' }: SettingsMenuProps) {
     return () => window.removeEventListener('keydown', onKey);
   }, [open]);
 
-  // Anchor the fixed popover to the trigger. A rail item opens upward, aligned to
-  // the trigger's left edge and extending into the body (clears a narrow rail).
-  // The compact icon opens downward, right-aligned under the trigger.
+  // Anchor the fixed popover to the trigger. Rail item opens upward; when the
+  // trigger is icon-only (collapsed rail), open to the right of the rail like the
+  // auth flyout. Compact icon opens downward, right-aligned under the trigger.
   useLayoutEffect(() => {
     if (!open || !triggerRef.current) return;
-    const r = triggerRef.current.getBoundingClientRect();
-    const W = 244;
-    if (variant === 'rail-item') {
-      setPos({ left: r.left, bottom: window.innerHeight - r.top + 8 });
-    } else {
-      setPos({ left: Math.max(12, r.right - W), top: r.bottom + 8 });
-    }
+    const place = () => {
+      const el = triggerRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      const W = 244;
+      const margin = 12;
+      if (variant === 'rail-item') {
+        const iconOnly = r.width < 100;
+        const left = iconOnly ? r.right + 8 : r.left;
+        setPos({
+          left: Math.min(left, window.innerWidth - W - margin),
+          bottom: window.innerHeight - r.top + 8,
+        });
+      } else {
+        setPos({ left: Math.max(margin, r.right - W), top: r.bottom + 8 });
+      }
+    };
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
   }, [open, variant]);
 
   const setTheme = (t: 'light' | 'dark') => { if (theme !== t) toggleTheme(); };
@@ -85,43 +103,45 @@ export function SettingsMenu({ variant = 'icon' }: SettingsMenuProps) {
         </button>
       )}
 
-      {open && (
-        <>
-          <div className="settings-menu-backdrop" onMouseDown={() => setOpen(false)} />
-          <div
-            role="menu"
-            className="settings-menu"
-            onMouseDown={e => e.stopPropagation()}
-            style={{ position: 'fixed', left: pos.left, top: pos.top, bottom: pos.bottom }}
-          >
-            <Section label="Theme">
-              <div className="settings-seg">
-                <button className={`settings-seg-opt${theme === 'light' ? ' selected' : ''}`} onClick={() => setTheme('light')}>Light</button>
-                <button className={`settings-seg-opt${theme === 'dark' ? ' selected' : ''}`} onClick={() => setTheme('dark')}>Dark</button>
-              </div>
-            </Section>
+      {open &&
+        createPortal(
+          <>
+            <div className="settings-menu-backdrop" onMouseDown={() => setOpen(false)} />
+            <div
+              role="menu"
+              className="settings-menu"
+              onMouseDown={e => e.stopPropagation()}
+              style={{ position: 'fixed', left: pos.left, top: pos.top, bottom: pos.bottom }}
+            >
+              <Section label="Theme">
+                <div className="settings-seg">
+                  <button className={`settings-seg-opt${theme === 'light' ? ' selected' : ''}`} onClick={() => setTheme('light')}>Light</button>
+                  <button className={`settings-seg-opt${theme === 'dark' ? ' selected' : ''}`} onClick={() => setTheme('dark')}>Dark</button>
+                </div>
+              </Section>
 
-            <Section label="Text size">
-              <div className="settings-textsize">
-                <button className="settings-step" onClick={decreaseFontSize} aria-label="Decrease text size">A−</button>
-                <span className="settings-textsize-val">{fontSize}</span>
-                <button className="settings-step" onClick={increaseFontSize} aria-label="Increase text size">A+</button>
-              </div>
-            </Section>
+              <Section label="Text size">
+                <div className="settings-textsize">
+                  <button className="settings-step" onClick={decreaseFontSize} aria-label="Decrease text size">A−</button>
+                  <span className="settings-textsize-val">{fontSize}</span>
+                  <button className="settings-step" onClick={increaseFontSize} aria-label="Increase text size">A+</button>
+                </div>
+              </Section>
 
-            {supabaseConfigured() && (
-              <div className="settings-sync-section">
-                <Section label="Sync">
-                  <AuthPanel
-                    userEmail={userEmail}
-                    onSignedOut={() => setUserEmail(null)}
-                  />
-                </Section>
-              </div>
-            )}
-          </div>
-        </>
-      )}
+              {supabaseConfigured() && (
+                <div className="settings-sync-section">
+                  <Section label="Sync">
+                    <AuthPanel
+                      userEmail={userEmail}
+                      onSignedOut={() => setUserEmail(null)}
+                    />
+                  </Section>
+                </div>
+              )}
+            </div>
+          </>,
+          document.body,
+        )}
     </>
   );
 }

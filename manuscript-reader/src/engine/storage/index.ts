@@ -294,8 +294,32 @@ function toSnapshotMeta(s: Snapshot): SnapshotMeta {
 // Tiny, read synchronously at startup to avoid a flash. These stay on
 // localStorage on purpose — they don't need IndexedDB capacity or async.
 
-const THEME_KEY = 'ms_theme';
-const FONT_KEY = 'ms_font';
+export const THEME_KEY = 'ms_theme';
+export const FONT_KEY = 'ms_font';
+
+/** Apply persisted theme + font size to `<html>` before React paints. Also used
+ *  from the inline bootstrap in index.html (keep keys in sync). */
+export function applyDocumentPreferences(): void {
+  try {
+    const root = document.documentElement;
+    root.classList.add('theme-bootstrapping');
+    root.classList.toggle('light', localStorage.getItem(THEME_KEY) === 'light');
+    const fs = localStorage.getItem(FONT_KEY);
+    if (fs) {
+      const n = parseInt(fs, 10);
+      if (Number.isFinite(n) && n > 0) {
+        root.style.setProperty('--body-size', `${n}px`);
+      }
+    }
+  } catch { /**/ }
+}
+
+/** Re-enable theme crossfades after the first frame (see .theme-bootstrapping). */
+export function endThemeBootstrap(): void {
+  requestAnimationFrame(() => {
+    document.documentElement.classList.remove('theme-bootstrapping');
+  });
+}
 
 export function loadTheme(): 'light' | 'dark' {
   return (localStorage.getItem(THEME_KEY) as 'light' | 'dark') ?? 'dark';
