@@ -54,6 +54,8 @@
      exact source.) Keep R≈G with blue only a hair lower: warm-neutral
      slate, never brown. Gold is the only saturated hue. */
 
+  color-scheme: dark;
+
   /* Atmosphere — the page is a soft radial field with film grain, never flat */
   --page-field: radial-gradient(135% 95% at 50% -12%, #1c1c1a 0%, #181816 55%, #121211 100%);
   --grain:      rgba(250, 250, 248, 0.012);
@@ -206,6 +208,7 @@
 }
 
 :root.light {
+  color-scheme: light;
   /* ── PALETTE · light (the v3 "private editorial room") ───────────────────
      Flat warm paper — NO gradient or grain; the page is the field and only
      covers cast shadow. Hex values resampled by Laura from Library-View.png. */
@@ -256,6 +259,11 @@
 
 html { scroll-behavior: smooth; }
 ::selection { background: var(--ann-highlight); color: inherit; }
+/* Suppress the 500ms field crossfade on first paint when bootstrapping saved theme. */
+html.theme-bootstrapping body {
+  transition: none;
+}
+
 body {
   /* The warm radial field with film grain over it — the "atmosphere".
      Grain layer first (on top), then the page-field gradient beneath. */
@@ -580,7 +588,7 @@ html.light[data-mode="reader"] #topbar #topbar-chapter { opacity: 0.6; }
 }
 .chapter-link:hover, .chapter-link:active { color: var(--ink); background: var(--surface-high); }
 .chapter-link.active {
-  color: #f6f1e9; font-weight: 600;
+  font-weight: 600;
   box-shadow: inset 2px 0 0 var(--brand);
 }
 .ch-num { display: block; font-size: 10px; color: var(--ink-faint); margin-bottom: 2px; letter-spacing: 0.1em; }
@@ -1295,9 +1303,9 @@ html.shell-scroll-lock body {
 }
 
 /* ── Settings popover (theme · text size · sync) ───────────────────────────────
-   position:fixed (set inline off the trigger) so it never clips inside the rail's
-   overflow. Clean --raised surface — no tan/cream — and a sharp gold-selected
-   segmented control instead of pill buttons. */
+   Portaled to document.body; position:fixed (inline off the trigger) so it never
+   clips inside a rail (overflow, backdrop-filter containing blocks). Clean
+   --raised surface and a sharp gold-selected segmented control. */
 .settings-menu-backdrop { position: fixed; inset: 0; z-index: 198; }
 .settings-menu {
   z-index: 199; width: 244px; max-width: calc(100vw - 24px);

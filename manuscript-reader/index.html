@@ -4,6 +4,21 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Vellibris</title>
+    <!-- Theme/font before CSS + React — keys must match THEME_KEY / FONT_KEY in engine/storage -->
+    <script>
+      (function () {
+        try {
+          var root = document.documentElement;
+          root.classList.add('theme-bootstrapping');
+          if (localStorage.getItem('ms_theme') === 'light') root.classList.add('light');
+          var fs = localStorage.getItem('ms_font');
+          if (fs) {
+            var n = parseInt(fs, 10);
+            if (n) root.style.setProperty('--body-size', n + 'px');
+          }
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

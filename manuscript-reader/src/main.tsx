@@ -2,11 +2,22 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { App } from './App'
 import './index.css'
-import { hydrateStorage, setPersistErrorHandler, configureSync, setSyncCompleteHandler, performSync, type SyncResult } from './engine/storage'
+import {
+  applyDocumentPreferences,
+  endThemeBootstrap,
+  hydrateStorage,
+  setPersistErrorHandler,
+  configureSync,
+  setSyncCompleteHandler,
+  performSync,
+  type SyncResult,
+} from './engine/storage'
 import { useLibraryStore } from './state/libraryStore'
 import { showToast } from './components/ui/Toast'
 import { supabaseConfigured, getSupabaseClient } from './engine/storage/supabaseClient'
 import { SupabaseSync } from './engine/storage/supabaseSync'
+
+applyDocumentPreferences()
 
 setPersistErrorHandler(() =>
   showToast('Could not save — your device may be out of storage space.', 6000),
@@ -30,6 +41,7 @@ function showSyncToast(r: SyncResult) {
 setSyncCompleteHandler(() => useLibraryStore.getState().refresh())
 
 function start() {
+  endThemeBootstrap()
   // The library store initialized before the cache was hydrated; repopulate it.
   useLibraryStore.getState().refresh()
   ReactDOM.createRoot(document.getElementById('root')!).render(
