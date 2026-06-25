@@ -20,6 +20,8 @@ export interface ReaderExportPayload {
   readerName?: string | null;
   manuscript?: string;
   manuscriptVersionId?: string;
+  snapshotId?: string;
+  snapshotLabel?: string;
   startedAt?: number;
   completedAt?: number | null;
   exportedAt?: number;

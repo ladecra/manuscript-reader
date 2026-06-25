@@ -1,42 +1,43 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { parseReaderExportPayload, type ReaderExportPayload } from '../../engine/sessions';
+import { confirmFeedbackImportIfNeeded, validateFeedbackImport } from '../../engine/feedbackImport';
+import type { SnapshotMeta } from '../../engine/types';
 import { showToast } from '../ui/Toast';
 import { XIcon } from '../ui/Icons';
+import { ShareReaderBody, type ShareReaderMode } from '../share/ShareReaderBody';
+import { useShareSnapshotSelection } from '../../hooks/useShareSnapshotSelection';
 
-const SHARE_MODE_DESC = {
-  reading: 'Clean reading experience. No annotation tools visible.',
-  annotating: 'Full annotation tools included. Your reader exports their feedback as a .json file — import it here to merge their notes.',
-} as const;
-
-type ShareMode = keyof typeof SHARE_MODE_DESC;
 type Tab = 'import' | 'share';
 
 interface AddFeedbackModalProps {
   open: boolean;
   title: string;
-  wordCount: number;
-  chapterCount: number;
   manuscriptAvailable: boolean;
+  liveMarkdown?: string;
+  versions: SnapshotMeta[];
   onClose: () => void;
+  onSaveVersion?: () => void;
   onImport: (payload: ReaderExportPayload) => void;
-  onShareDownload: (withAnnotations: boolean) => void;
+  onShareDownload: (snapshotId: string | null, withAnnotations: boolean) => void | Promise<void>;
 }
 
 export function AddFeedbackModal({
   open,
   title,
-  wordCount,
-  chapterCount,
   manuscriptAvailable,
+  liveMarkdown,
+  versions,
   onClose,
+  onSaveVersion,
   onImport,
   onShareDownload,
 }: AddFeedbackModalProps) {
   const [tab, setTab] = useState<Tab>('import');
   const [dragging, setDragging] = useState(false);
-  const [shareMode, setShareMode] = useState<ShareMode>('annotating');
+  const [shareMode, setShareMode] = useState<ShareReaderMode>('annotating');
   const [building, setBuilding] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { selectedSnapshotId, setSelectedSnapshotId } = useShareSnapshotSelection(versions);
 
   useEffect(() => {
     if (!open) return;
@@ -45,21 +46,27 @@ export function AddFeedbackModal({
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose]);
 
+  const tryImport = useCallback((payload: ReaderExportPayload) => {
+    const validation = validateFeedbackImport(payload, liveMarkdown, versions);
+    if (!confirmFeedbackImportIfNeeded(validation)) return;
+    onImport(payload);
+    onClose();
+  }, [liveMarkdown, versions, onImport, onClose]);
+
   const ingestFile = useCallback((file: File) => {
     const reader = new FileReader();
     reader.onload = (ev) => {
       try {
         const parsed = JSON.parse(ev.target?.result as string);
         const payload = parseReaderExportPayload(parsed);
-        onImport(payload);
-        onClose();
+        tryImport(payload);
       } catch {
         showToast('Could not read feedback file — expected a .json export from the reader.');
       }
       if (fileInputRef.current) fileInputRef.current.value = '';
     };
     reader.readAsText(file, 'UTF-8');
-  }, [onImport, onClose]);
+  }, [tryImport]);
 
   const acceptFiles = useCallback((incoming: FileList | null) => {
     if (!incoming?.length) return;
@@ -73,9 +80,9 @@ export function AddFeedbackModal({
       return;
     }
     setBuilding(true);
-    setTimeout(() => {
+    setTimeout(async () => {
       try {
-        onShareDownload(shareMode === 'annotating');
+        await onShareDownload(selectedSnapshotId, shareMode === 'annotating');
         onClose();
       } finally {
         setBuilding(false);
@@ -146,30 +153,17 @@ export function AddFeedbackModal({
 
           {tab === 'share' && (
             <div>
-              <div id="share-meta" className="share-meta">
-                <strong style={{ color: 'var(--ink)' }}>{title}</strong><br />
-                {wordCount ? `${wordCount.toLocaleString()} words · ` : ''}
-                {chapterCount} chapter{chapterCount !== 1 ? 's' : ''}
-              </div>
-
-              <div className="share-toggle-row">
-                <button
-                  type="button"
-                  className={`share-toggle-btn${shareMode === 'reading' ? ' active' : ''}`}
-                  onClick={() => setShareMode('reading')}
-                >
-                  Reading only
-                </button>
-                <button
-                  type="button"
-                  className={`share-toggle-btn${shareMode === 'annotating' ? ' active' : ''}`}
-                  onClick={() => setShareMode('annotating')}
-                >
-                  With annotation tools
-                </button>
-              </div>
-
-              <p className="share-mode-desc">{SHARE_MODE_DESC[shareMode]}</p>
+              <ShareReaderBody
+                title={title}
+                versions={versions}
+                liveMarkdown={liveMarkdown}
+                manuscriptAvailable={manuscriptAvailable}
+                mode={shareMode}
+                onModeChange={setShareMode}
+                selectedSnapshotId={selectedSnapshotId}
+                onSnapshotChange={setSelectedSnapshotId}
+                onSaveVersion={onSaveVersion}
+              />
 
               <button
                 type="button"

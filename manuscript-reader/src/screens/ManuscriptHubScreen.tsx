@@ -13,7 +13,9 @@ import type { ExportManuscriptMeta } from '../engine/exports/manuscriptMarkdown'
 import { ChapterTree } from '../components/library/ChapterTree';
 import { AddChaptersModal } from '../components/reader/AddChaptersModal';
 import { ReportView } from '../components/reports/ReportView';
-import { exportShareableReader, ShareReaderBuildError } from '../engine/exports/shareableReader';
+import { exportShareableReader, ShareReaderBuildError, type ShareSnapshotStamp } from '../engine/exports/shareableReader';
+import { loadSnapshot } from '../engine/storage';
+import { ShareReaderModal } from '../components/share/ShareReaderModal';
 import { showToast } from '../components/ui/Toast';
 import { PencilIcon, ChevronLeftIcon, DotsIcon, DownloadIcon, LayersIcon, PlusIcon, XIcon } from '../components/ui/Icons';
 import { CoverImage } from '../components/ui/CoverImage';
@@ -41,6 +43,8 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
   const [tocCompact, setTocCompact] = useState(false);
   const [openChapterMenu, setOpenChapterMenu] = useState<number | null>(null);
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
+  const [shareReaderOpen, setShareReaderOpen] = useState(false);
+  const [shareReaderInitialMode, setShareReaderInitialMode] = useState<'reading' | 'annotating'>('annotating');
 
   const title = manuscript?.metadata.title ?? '';
   const combinedMarkdown = manuscript?.metadata.combinedMarkdown;
@@ -184,19 +188,44 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
     }).catch(e => { console.error('Revision log export error:', e); showToast('Export failed — see console.'); });
   }, [manuscript, edits, exportMeta]);
 
-  // Share a read-only reader file with a beta reader (optionally seeded with the
-  // author's own annotations). The other half of the feedback loop.
-  const handleShareReader = useCallback((withAnnotations: boolean) => {
-    const md = manuscript?.metadata.combinedMarkdown;
-    if (!md) { showToast('Re-import this file to share it.'); return; }
+  // Share a frozen version with a beta reader (optional annotation tools).
+  const handleShareReaderDownload = useCallback(async (snapshotId: string | null, withAnnotations: boolean) => {
+    if (!manuscript) return;
+    let markdown: string | undefined;
+    let stamp: ShareSnapshotStamp | undefined;
+    if (snapshotId) {
+      const snap = await loadSnapshot(manuscript.id, snapshotId);
+      if (!snap?.markdown) {
+        showToast('Could not load that version — re-import the manuscript.');
+        return;
+      }
+      markdown = snap.markdown;
+      stamp = {
+        snapshotId: snap.id,
+        versionId: snap.versionId,
+        label: snap.label,
+        createdAt: snap.createdAt,
+      };
+    } else {
+      markdown = manuscript.metadata.combinedMarkdown;
+      if (!markdown) {
+        showToast('Re-import this file to share it.');
+        return;
+      }
+    }
     try {
-      exportShareableReader(exportMeta().title, md, withAnnotations);
+      exportShareableReader(exportMeta().title, markdown, withAnnotations, stamp);
       showToast('Reader file downloaded.');
     } catch (e) {
       console.error('Share reader build failed:', e);
       showToast(e instanceof ShareReaderBuildError ? e.message : 'Could not generate file.');
     }
   }, [manuscript, exportMeta]);
+
+  const openShareReader = useCallback((mode: 'reading' | 'annotating') => {
+    setShareReaderInitialMode(mode);
+    setShareReaderOpen(true);
+  }, []);
 
   // Persist the Details form (publishing metadata + title-page fields), then re-open
   // so the page and any export see the fresh manuscript.
@@ -460,12 +489,13 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
                 annotations={annotations}
                 readerCount={readerCount}
                 manuscriptTitle={title}
-                wordCount={wordCount ?? 0}
-                chapterCount={chapterCount ?? chapters.length}
                 manuscriptAvailable={manuscriptAvailable}
+                versions={versions}
+                liveMarkdown={combinedMarkdown}
                 onRead={onRead}
                 onAnnotate={() => enterReader(resumeChapter?.index ?? chapters[0]?.index ?? 1, 'annotate')}
-                onShareReader={handleShareReader}
+                onShareDownload={handleShareReaderDownload}
+                onSaveVersion={handleSaveVersion}
               />
             )}
 
@@ -499,7 +529,7 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
                 onExportReportHtml={handleExportReportHtml}
                 onExportReportJson={handleExportReportJson}
                 onExportRevisionLog={handleExportRevisionLog}
-                onShareReader={handleShareReader}
+                onOpenShareReader={openShareReader}
               />
             )}
           </div>
@@ -530,6 +560,19 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
           <span className="hub-mobile-bar-chevron" aria-hidden="true">{mobileToolsOpen ? '↓' : '↑'}</span>
         </button>
       </div>
+      <ShareReaderModal
+        key={shareReaderOpen ? shareReaderInitialMode : 'closed'}
+        open={shareReaderOpen}
+        title={title}
+        versions={versions}
+        liveMarkdown={combinedMarkdown}
+        manuscriptAvailable={manuscriptAvailable}
+        initialMode={shareReaderInitialMode}
+        onClose={() => setShareReaderOpen(false)}
+        onSaveVersion={handleSaveVersion}
+        onDownload={handleShareReaderDownload}
+      />
+
       <AddChaptersModal
         open={addChaptersOpen}
         manuscriptTitle={title}
@@ -874,7 +917,7 @@ function ExportCard({
 function ExportsTab({
   manuscriptAvailable, annCount, editCount, hasPublishing, onGoToDetails,
   onExportManuscript, onExportReportDocx, onExportReportHtml, onExportReportJson, onExportRevisionLog,
-  onShareReader,
+  onOpenShareReader,
 }: {
   manuscriptAvailable: boolean; annCount: number; editCount: number;
   hasPublishing: boolean; onGoToDetails: () => void;
@@ -883,7 +926,7 @@ function ExportsTab({
   onExportReportHtml: () => void;
   onExportReportJson: () => void;
   onExportRevisionLog: () => void;
-  onShareReader: (withAnnotations: boolean) => void;
+  onOpenShareReader: (mode: 'reading' | 'annotating') => void;
 }) {
   const noManuscript = !manuscriptAvailable;
   const noManuscriptHint = 'Re-import this manuscript to export it';
@@ -943,11 +986,11 @@ function ExportsTab({
         <div className="hub-export-section-label">Share with a reader</div>
         <div className="hub-export-cards">
           <ExportCard chip="READER" title="Reading-only copy" disabled={noManuscript} disabledHint={noManuscriptHint}
-            desc="A clean, read-only reader file — no annotation tools. Send it to anyone."
-            onClick={() => onShareReader(false)} />
+            desc="A clean reader file from a saved version — no annotation tools."
+            onClick={() => onOpenShareReader('reading')} />
           <ExportCard chip="READER" title="Copy with annotation tools" disabled={noManuscript} disabledHint={noManuscriptHint}
-            desc="A reader file with full annotation tools — your beta reader marks it up and exports feedback you import back in."
-            onClick={() => onShareReader(true)} />
+            desc="A reader file with annotation tools from a saved version — your beta reader exports feedback you import back in."
+            onClick={() => onOpenShareReader('annotating')} />
         </div>
       </section>
     </div>

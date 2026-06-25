@@ -1,13 +1,16 @@
 import React, { useRef } from 'react';
-import type { Annotation, AnnotationType } from '../../engine/types';
+import type { Annotation, AnnotationType, SnapshotMeta } from '../../engine/types';
 import { ANNOTATION_TYPES, ANNOTATION_LABELS, ANNOTATION_COLORS } from '../../engine/types';
 import type { ReaderExportPayload } from '../../engine/sessions';
 import { parseReaderExportPayload } from '../../engine/sessions';
+import { confirmFeedbackImportIfNeeded, validateFeedbackImport } from '../../engine/feedbackImport';
 import { XIcon } from '../ui/Icons';
 
 interface AnnotationSidebarProps {
   open: boolean;
   annotations: Annotation[];
+  liveMarkdown?: string;
+  versions?: SnapshotMeta[];
   onClose: () => void;
   onDelete: (id: string) => void;
   onJumpTo: (id: string) => void;
@@ -17,6 +20,8 @@ interface AnnotationSidebarProps {
 export function AnnotationSidebar({
   open,
   annotations,
+  liveMarkdown,
+  versions = [],
   onClose,
   onDelete,
   onJumpTo,
@@ -35,7 +40,10 @@ export function AnnotationSidebar({
     reader.onload = (ev) => {
       try {
         const parsed = JSON.parse(ev.target?.result as string);
-        onImport(parseReaderExportPayload(parsed));
+        const payload = parseReaderExportPayload(parsed);
+        const validation = validateFeedbackImport(payload, liveMarkdown, versions);
+        if (!confirmFeedbackImportIfNeeded(validation)) return;
+        onImport(payload);
       } catch {
         alert('Could not read annotation file.');
       }

@@ -15,6 +15,14 @@ export class ShareReaderBuildError extends Error {
   }
 }
 
+/** Frozen version stamped into a shared reader file (Phase 8 share flow). */
+export interface ShareSnapshotStamp {
+  snapshotId: string;
+  versionId: string;
+  label?: string;
+  createdAt: number;
+}
+
 function escHtml(s: string): string {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -488,6 +496,7 @@ function buildAnnotationScript(): string {
     var prog = Math.min(1, Math.max(0, maxProgress));
     var payload = { readerId: readerId, readerName: readerName || null, manuscript: title,
                     manuscriptVersionId: MS_VERSION,
+                    snapshotId: SHARE_SNAPSHOT_ID, snapshotLabel: SHARE_SNAPSHOT_LABEL,
                     startedAt: startedAt, completedAt: prog>=0.985 ? Date.now() : null,
                     exportedAt: Date.now(), progress: prog, annotations: anns };
     var blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
@@ -513,9 +522,19 @@ function buildAnnotationScript(): string {
  * Build a self-contained shareable reader HTML document.
  * @param withAnnotations  When true, embeds the beta-reader annotation runtime.
  */
-export function buildShareableHTML(title: string, markdown: string, withAnnotations = false): string {
+export function buildShareableHTML(
+  title: string,
+  markdown: string,
+  withAnnotations = false,
+  snapshot?: ShareSnapshotStamp,
+): string {
   const mdJson = JSON.stringify(markdown);
   const titleJson = JSON.stringify(title);
+  const snapshotIdJson = JSON.stringify(snapshot?.snapshotId ?? '');
+  const snapshotLabelJson = JSON.stringify(snapshot?.label?.trim() ?? '');
+  const badgeText = snapshot?.label?.trim()
+    ? `Shared reader · ${snapshot.label.trim()}`
+    : 'Shared reader';
   const annotationScript = withAnnotations ? buildAnnotationScript() : '';
 
   return `<!DOCTYPE html>
@@ -614,13 +633,15 @@ body{background:var(--bg);color:var(--on-surface);font-family:'EB Garamond',Geor
 <nav id="chapter-nav"><div class="nav-section-label">Chapters</div><div id="chapter-links"></div></nav>
 <div id="screen-reader"><div id="content"></div><div id="end-mark">End of manuscript</div></div>
 <div id="bottom-strip"><span id="pct-read">0%</span><span class="sep"></span><span id="time-left">—</span><span class="sep"></span><span id="clock-time">—</span></div>
-<div id="shared-badge">Shared reader</div>
+<div id="shared-badge">${escHtml(badgeText)}</div>
 <script>
 (function(){
 'use strict';
 const THEME_KEY='ms_theme';
 const md=${mdJson};
 const title=${titleJson};
+const SHARE_SNAPSHOT_ID=${snapshotIdJson};
+const SHARE_SNAPSHOT_LABEL=${snapshotLabelJson};
 
 function applyTheme(l){document.documentElement.classList.toggle('light',l);try{localStorage.setItem(THEME_KEY,l?'light':'dark')}catch{}}
 applyTheme(localStorage.getItem(THEME_KEY)!=='dark');
@@ -709,8 +730,13 @@ ${annotationScript}
  * Build, validate, and download a shareable reader HTML file.
  * @throws ShareReaderBuildError if the generated file is malformed.
  */
-export function exportShareableReader(title: string, markdown: string, withAnnotations: boolean): void {
-  const html = buildShareableHTML(title, markdown, withAnnotations);
+export function exportShareableReader(
+  title: string,
+  markdown: string,
+  withAnnotations: boolean,
+  snapshot?: ShareSnapshotStamp,
+): void {
+  const html = buildShareableHTML(title, markdown, withAnnotations, snapshot);
   validateShareableReaderHTML(html);
   const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
   const url = URL.createObjectURL(blob);

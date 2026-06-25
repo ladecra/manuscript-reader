@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { Annotation, AnnotationType } from '../../engine/types';
+import type { Annotation, AnnotationType, SnapshotMeta } from '../../engine/types';
 import {
   ANNOTATION_TYPES,
   ANNOTATION_LABELS,
@@ -74,22 +74,24 @@ export function FeedbackTab({
   annotations,
   readerCount,
   manuscriptTitle,
-  wordCount,
-  chapterCount,
   manuscriptAvailable,
+  versions,
+  liveMarkdown,
   onRead,
   onAnnotate,
-  onShareReader,
+  onShareDownload,
+  onSaveVersion,
 }: {
   annotations: Annotation[];
   readerCount: number;
   manuscriptTitle: string;
-  wordCount: number;
-  chapterCount: number;
   manuscriptAvailable: boolean;
+  versions: SnapshotMeta[];
+  liveMarkdown?: string;
   onRead: () => void;
   onAnnotate: () => void;
-  onShareReader: (withAnnotations: boolean) => void;
+  onShareDownload: (snapshotId: string | null, withAnnotations: boolean) => void | Promise<void>;
+  onSaveVersion?: () => void;
 }) {
   const { patchAnnotation, deleteAnnotation, importSession } = useReaderStore();
   const { setPendingChapterIndex, setPendingAnnotationId } = useUIStore();
@@ -204,12 +206,13 @@ export function FeedbackTab({
       <AddFeedbackModal
         open={feedbackModalOpen}
         title={manuscriptTitle}
-        wordCount={wordCount}
-        chapterCount={chapterCount}
         manuscriptAvailable={manuscriptAvailable}
+        liveMarkdown={liveMarkdown}
+        versions={versions}
+        onSaveVersion={onSaveVersion}
         onClose={() => setFeedbackModalOpen(false)}
         onImport={handleImport}
-        onShareDownload={onShareReader}
+        onShareDownload={onShareDownload}
       />
       <div className="hub-stats">
         <div className="lib-stat">
