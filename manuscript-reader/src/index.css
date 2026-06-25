@@ -931,6 +931,22 @@ html.light[data-mode="reader"] #topbar #topbar-chapter { opacity: 0.6; }
   box-shadow: 0 8px 40px -8px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.08);
 }
 #selection-popup.visible { display: flex; }
+/* Mobile: the popup is 460px wide and grows taller when the note field opens, so
+   anchoring it to the selection pushes it off-screen and the Save button drops
+   below the fold (unusable on a small phone). Pin it inside the viewport instead:
+   full width minus margins (centered), pinned near the top so it clears the
+   on-screen keyboard, and scrollable if it's still too tall. Overrides the inline
+   left/top the selection handler sets. */
+@media (max-width: 560px) {
+  #selection-popup {
+    left: 10px !important;
+    right: 10px !important;
+    top: 10px !important;
+    width: auto !important;
+    max-height: calc(100dvh - 20px);
+    overflow-y: auto;
+  }
+}
 
 .popup-grid {
   display: grid;
@@ -1087,9 +1103,13 @@ html.light[data-mode="reader"] #topbar #topbar-chapter { opacity: 0.6; }
   padding-bottom: 8px; border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 }
 :root.light .rp-section-label { border-bottom-color: rgba(33, 29, 21, 0.07); }
-.rp-overview-grid { display: flex; gap: 24px; margin-bottom: 4px; }
+.rp-overview-grid { display: grid; gap: 24px; margin-bottom: 4px; grid-auto-flow: column; padding: 0 20px; text-align: center; }
+/* Narrow screens: a single row of stats overflows — let them wrap into a flex row. */
+@media (max-width: 560px) {
+  .rp-overview-grid { display: flex; flex-wrap: wrap; padding: 0; gap: 18px 24px; text-align: left; }
+}
 .rp-stat { display: flex; flex-direction: column; gap: 2px; }
-.rp-stat-num { font-family: 'Cormorant Garamond', Georgia, serif; font-size: 30px; font-weight: 300; color: var(--ink); line-height: 1; }
+.rp-stat-num { font-family: 'Cormorant Garamond', Georgia, serif; font-size: 40px; font-weight: 300; color: var(--ink); line-height: 1; }
 .rp-stat-label { font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--dim); }
 .rp-type-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .rp-type-dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; opacity: 0.75; }
@@ -1098,6 +1118,33 @@ html.light[data-mode="reader"] #topbar #topbar-chapter { opacity: 0.6; }
 :root.light .rp-type-bar-track { background: rgba(33, 29, 21, 0.09); }
 .rp-type-bar-fill { height: 100%; transition: width 0.6s; }
 .rp-type-val { font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 10px; color: var(--dim); min-width: 56px; text-align: right; }
+/* Insights — the ranked "look here first" strip at the top of the report. */
+.rp-insights { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.rp-insight {
+  display: flex; align-items: flex-start; gap: 12px; width: 100%; text-align: left;
+  padding: 12px 14px; background: var(--raised); border: 1px solid var(--line);
+  border-left: 2px solid var(--muted); cursor: pointer;
+  transition: border-color 0.18s, background 0.18s;
+}
+.rp-insight:hover:not(:disabled) { border-color: var(--muted); background: rgba(255, 255, 255, 0.02); }
+:root.light .rp-insight:hover:not(:disabled) { background: rgba(33, 29, 21, 0.02); }
+.rp-insight:disabled { cursor: default; }
+/* Tier accent on the left edge — agreement is the strongest signal, prose the most neutral. */
+.rp-insight[data-tier="consensus"] { border-left-color: var(--ink); }
+.rp-insight[data-tier="reaction"] { border-left-color: var(--ann-question-solid); }
+.rp-insight[data-tier="prose"] { border-left-color: var(--dim); }
+.rp-insight-main { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+.rp-insight-tier {
+  font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 9px; font-weight: 600;
+  letter-spacing: 0.14em; text-transform: uppercase; color: var(--dim);
+}
+.rp-insight-headline { font-family: 'EB Garamond', Georgia, serif; font-size: 14px; color: var(--ink); line-height: 1.4; }
+.rp-insight-detail { font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 11px; color: var(--dim); line-height: 1.5; }
+.rp-insight-tag {
+  flex-shrink: 0; font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 10px;
+  color: var(--muted); padding: 2px 8px; border: 1px solid var(--line); white-space: nowrap;
+}
+
 .rp-finding { margin-bottom: 20px; }
 .rp-finding-head { display: flex; align-items: center; gap: 7px; margin-bottom: 4px; }
 .rp-finding-dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; opacity: 0.75; }
@@ -2790,7 +2837,6 @@ mark[data-ann]:hover { filter: brightness(1.2); }
 .hub-form { display: flex; flex-direction: column; gap: 22px; max-width: 540px; }
 
 .hub-report {
-  max-width: 620px;
   display: flex; flex-direction: column;
   margin-top: 4px;
   background: var(--raised); border: 1px solid var(--line);

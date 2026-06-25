@@ -35,7 +35,7 @@ interface ManuscriptHubScreenProps {
 export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps) {
   const { manuscript, chapters, annotations: rawAnnotations, edits, sessions, openManuscript } = useReaderStore();
   const { library, updateManuscript, replaceMarkdown, appendChapters, getReadingPosition, updateProgress, cycleStatus } = useLibraryStore();
-  const { setPendingChapterIndex, setPendingReaderIntent, hubPane: pane, setHubPane } = useUIStore();
+  const { setPendingChapterIndex, setPendingReaderIntent, setPendingAnnotationId, hubPane: pane, setHubPane } = useUIStore();
   const { versions: versionsByMs, refresh: refreshVersions, saveVersion, relabel, remove: removeVersion } = useSnapshotStore();
   const [editStructure, setEditStructure] = useState(false);
   const [chapterEdits, setChapterEdits] = useState<ChapterEdit[]>([]);
@@ -116,8 +116,17 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
     onRead();
   }, [setPendingChapterIndex, setPendingReaderIntent, onRead]);
 
-  // Report chips send the author into the prose at a chapter (read posture).
-  const jumpToChapter = useCallback((index: number) => enterReader(index), [enterReader]);
+  // Report jumps land the author in the prose. Annotation-derived items (findings,
+  // consensus, reaction insights) open Annotations mode — and, when we know the
+  // specific annotation, scroll to that mark; prose/length items just land in
+  // reading at the chapter's start.
+  const jumpToChapter = useCallback(
+    (index: number, opts?: { annotationId?: string; annotate?: boolean }) => {
+      setPendingAnnotationId(opts?.annotationId ?? null);
+      enterReader(index, opts?.annotate ? 'annotate' : undefined);
+    },
+    [enterReader, setPendingAnnotationId],
+  );
 
   const startOver = useCallback(() => {
     if (manuscript) updateProgress(manuscript.id, 0);
@@ -519,14 +528,14 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
                     type="button"
                     className="library-new-btn"
                     disabled={annotations.length === 0}
-                    title={annotations.length === 0 ? 'Annotate in the reader to generate a report' : undefined}
+                    title={annotations.length === 0 ? 'Prose analysis shows here now; add a note or import reader feedback to download the full report' : undefined}
                     onClick={() => setReportExportOpen(true)}
                   >
                     <DownloadIcon size={13} />
                     Download report
                   </button>
                 </div>
-                <p className="hub-panel-lead">Where readers slowed, agreed, and reacted — every figure traces to a reader action.</p>
+                <p className="hub-panel-lead">Prose measured against its own average, and reader signals traced to specific actions — pointers worth a second look, never verdicts.</p>
                 <div className="hub-report"><ReportView signals={signals} onJump={jumpToChapter} /></div>
                 <ExportChoiceModal
                   open={reportExportOpen}

@@ -113,6 +113,14 @@ export const ANNOTATION_TYPES: AnnotationType[] = [
   'highlight', 'note', 'bookmark', 'question', 'continuity', 'structural', 'pacing', 'voice',
 ];
 
+/** Editorial *concern* types — developmental flags that ask for revision
+ *  attention (the work of editing), as opposed to engagement marks
+ *  (highlight/bookmark) or neutral notes. Shared by the report engine, insights,
+ *  and the panel so "developmental density" is computed exactly one way. */
+export const DEVELOPMENTAL_TYPES: AnnotationType[] = ['question', 'continuity', 'structural', 'pacing', 'voice'];
+/** Engagement marks — where readers leaned in, not where work is needed. */
+export const ENGAGEMENT_TYPES: AnnotationType[] = ['highlight', 'bookmark'];
+
 export const ANNOTATION_LABELS: Record<AnnotationType, string> = {
   highlight:  'Highlight',
   note:       'Note',
@@ -248,6 +256,7 @@ export interface Report {
   typeTotals: Record<AnnotationType, number>;
   chapters: ChapterStat[];      // per-chapter stats, in order
   hotspots: ChapterStat[];
+  developmentalHotspots: ChapterStat[]; // chapters by developmental-flag density (concern types per 1k words) — the editorial-work lens, distinct from hotspots/engagement
   silent: ChapterStat[];
   questionClusters: ChapterStat[];
   continuityFlags: ChapterStat[];
@@ -548,6 +557,36 @@ export interface EditorialSignals {
 
   // ── Cross-version (Phase 8) ──
   revisionImpact: null;         // placeholder until version snapshots exist; always null for now
+}
+
+// ─── Ranked insights (the evidence-linked layer the panel + exports lead with) ─
+// A small, ranked list of "look here first" pointers, projected from the
+// EditorialSignals substrate by engine/insights/rankInsights.ts. The ONE source
+// of truth for the panel's Insights block and the exports' lead/takeaways, so
+// download and on-screen never diverge. Each insight is a librarian pointer
+// backed by numbers — counts vs this manuscript's own average, or reader actions
+// — never an editorial verdict. Evidence stays STRUCTURED (numbers, not
+// pre-formatted strings) so each surface formats for its own medium; the prose
+// lives only in `headline`/`detail`.
+export type InsightTier = 'consensus' | 'reaction' | 'prose';
+
+export interface ManuscriptInsight {
+  id: string;
+  tier: InsightTier;
+  headline: string;                  // one line, no hype
+  detail?: string;                   // optional second line of context
+  chapter: number | null;            // jump target (the low end of any range)
+  chapterRange: [number, number] | null;
+  evidence: InsightEvidence;
+}
+
+export interface InsightEvidence {
+  kind: 'prose-length' | 'cluster' | 'agreement';
+  label: string;                     // short structured tag for a chip, e.g. "2.1× avg", "3/4 readers", "5 questions"
+  ratio?: number;                    // prose-length: chapter words / mean chapter words
+  count?: number;                    // cluster: annotations of the signal in range
+  readers?: [number, number];        // agreement: [annotated, reached]
+  annotationIds?: string[];          // cluster: representative annotation ids for jump/export
 }
 
 // ─── Prose analysis (Phase A — deterministic metrics on the TEXT itself) ──────

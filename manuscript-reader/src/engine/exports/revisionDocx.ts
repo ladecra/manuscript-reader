@@ -13,6 +13,8 @@ import type { Annotation, Chapter, EditorialSignals } from '../types';
 import { ANNOTATION_TYPES, ANNOTATION_LABELS } from '../types';
 import { ANN_COLOR_DOCX as HEX, DOCX_INK as INK, DOCX_HEAD as HEAD, DOCX_BODY as BODY, DOCX_META as META, DOCX_RULE as RULE, DOCX_QUOTE as QUOTE, DOCX_LABEL as LABEL, DOCX_PAPER as PAPER } from './exportPalette';
 import { proseChaptersWithText, proseChapterLengthOutlier, proseChapterLengthRatio } from './proseReportSection';
+import { rankInsights } from '../insights/rankInsights';
+import type { InsightTier } from '../types';
 const SERIF = 'Georgia', SANS = 'Arial';
 const NONE = { style: BorderStyle.NONE };
 const noBorders = { top: NONE, bottom: NONE, left: NONE, right: NONE };
@@ -209,31 +211,23 @@ function buildDoc(data: {
   children.push(gap(0, 360));
 
   // ════════ KEY TAKEAWAYS ════════
+  // The same ranked insights the in-app panel leads with (rankInsights over these
+  // signals) — so the download and the screen never tell different stories. The
+  // engagement summary stays as a closing line of context, not a ranked pointer.
   children.push(label('Key Takeaways', { before: 200, after: 140 }));
-  const takeaways: { color: string; title: string; desc: string }[] = [];
-  if (rep.questionClusters.length) {
-    const top = rep.questionClusters[0];
-    const q = top.counts.question ?? 0;
-    takeaways.push({ color: HEX.question, title: `High Question Density in Chapter ${top.index}`,
-      desc: `Readers raised ${q} question${q !== 1 ? 's' : ''} in this chapter — among the highest in the manuscript. Worth checking for confusion or unanswered setups.` });
-  }
-  if (rep.hotspots.length) {
-    const h = rep.hotspots[0];
-    takeaways.push({ color: HEX.highlight, title: 'Major Hotspot Detected',
-      desc: `Chapter ${h.index} drew ${h.count} annotations (${h.density.toFixed(1)} per 1,000 words) — a concentration that suggests a section that challenged or engaged readers.` });
-  }
-  if (rep.continuityFlags.length) {
-    const chs = rep.continuityFlags.map(c => c.index).slice(0, 4).join(', ');
-    takeaways.push({ color: HEX.continuity, title: 'Continuity Concerns to Review',
-      desc: `Continuity was flagged in chapter${rep.continuityFlags.length !== 1 ? 's' : ''} ${chs}. Consider a focused continuity pass across these.` });
-  }
+  const tierColor: Record<InsightTier, string> = { consensus: INK, reaction: HEX.question, prose: META };
+  const takeaways: { color: string; title: string; desc: string }[] = rankInsights(signals).map(i => ({
+    color: tierColor[i.tier],
+    title: i.headline,
+    desc: i.detail ?? '',
+  }));
   takeaways.push({ color: HEX.bookmark, title: `Reader Engagement: ${rep.label}`, desc: rep.blurb });
   takeaways.forEach(t => {
     children.push(new Paragraph({
       children: [new TextRun({ text: `●  ${t.title}`, font: SANS, size: 18, bold: true, color: t.color })],
       spacing: { before: 160, after: 40 },
     }));
-    children.push(new Paragraph({
+    if (t.desc) children.push(new Paragraph({
       children: [new TextRun({ text: t.desc, font: SERIF, size: 19, color: BODY })],
       indent: { left: 200 }, spacing: { after: 80 },
     }));

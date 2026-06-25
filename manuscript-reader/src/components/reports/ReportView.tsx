@@ -1,11 +1,19 @@
-import type { EditorialSignals, ChapterStat, ProseAnalysis, ChapterProse } from '../../engine/types';
-import { ANNOTATION_TYPES, ANNOTATION_LABELS, ANNOTATION_COLORS } from '../../engine/types';
+import type { EditorialSignals, ChapterStat, ProseAnalysis, ChapterProse, ManuscriptInsight } from '../../engine/types';
+import { ANNOTATION_TYPES, ANNOTATION_LABELS, ANNOTATION_COLORS, DEVELOPMENTAL_TYPES } from '../../engine/types';
+import { rankInsights } from '../../engine/insights/rankInsights';
 
 // The Manuscript Intelligence content, rendered inline on the manuscript hub's
 // Report tab. (It used to live in a reader drawer; the drawer is gone — intelligence
 // lives on the hub now, never over the reading view.) Pure presentation over a
 // precomputed EditorialSignals; jumping a chapter is delegated to the host.
-export function ReportView({ signals, onJump }: { signals: EditorialSignals | null; onJump: (index: number) => void }) {
+// A jump may request Annotations mode (annotate) and a specific mark to scroll to
+// (annotationId); prose/length jumps pass neither and land in reading at the chapter.
+export type JumpFn = (index: number, opts?: { annotationId?: string; annotate?: boolean }) => void;
+
+// Sum of a chapter's developmental-concern annotations (the chip count for the
+// Developmental flags finding) — same type set the engine ranks density by.
+const devCount = (c: ChapterStat) => DEVELOPMENTAL_TYPES.reduce((s, t) => s + (c.counts[t] ?? 0), 0);
+export function ReportView({ signals, onJump }: { signals: EditorialSignals | null; onJump: JumpFn }) {
   const report = signals?.report ?? null;
   const prose = signals?.prose ?? null;
   const hasAnnotations = !!report && report.totalAnns > 0;
@@ -22,11 +30,17 @@ export function ReportView({ signals, onJump }: { signals: EditorialSignals | nu
     );
   }
 
+  // The ranked "look here first" layer — projected from the same signals the
+  // sections below render in full, so the panel and the downloaded report lead
+  // with the identical pointers. Legitimately empty on an even, unannotated draft.
+  const insights = signals ? rankInsights(signals) : [];
+
   // Prose analysis is text-derived, so it's present the moment a manuscript loads —
   // it leads, before any annotation-derived findings. The annotation sections only
   // render once there's at least one annotation.
   return (
     <>
+      {insights.length > 0 && <InsightsSection insights={insights} onJump={onJump} />}
       {hasProse && <ProseSection prose={prose!} onJump={onJump} />}
       {hasAnnotations && <ReportBody signals={signals!} onJump={onJump} />}
       {!hasAnnotations && hasProse && (
@@ -40,7 +54,7 @@ export function ReportView({ signals, onJump }: { signals: EditorialSignals | nu
   );
 }
 
-function ReportBody({ signals, onJump }: { signals: EditorialSignals; onJump: (i: number) => void }) {
+function ReportBody({ signals, onJump }: { signals: EditorialSignals; onJump: JumpFn }) {
   const report = signals.report;
   const maxT = Math.max(1, ...ANNOTATION_TYPES.map(t => report.typeTotals[t] ?? 0));
 
@@ -99,10 +113,21 @@ function ReportBody({ signals, onJump }: { signals: EditorialSignals; onJump: (i
 
       {/* ── Findings ── */}
       <Section title="Findings">
+        {report.developmentalHotspots.length > 0 && (
+          <Finding
+            color="var(--ann-structural-solid)"
+            title="Developmental flags"
+            desc="Chapters densest in editorial concerns — questions, continuity, structural, pacing, voice. Where the revision work concentrates, regardless of where readers leaned in."
+            chips={report.developmentalHotspots}
+            chipLabel={c => `${devCount(c)}`}
+            onJump={onJump}
+          />
+        )}
+
         <Finding
           color="var(--ann-question-solid)"
           title="Hotspots"
-          desc="Chapters drawing the densest feedback — usually where something is working hard, for better or worse."
+          desc="Chapters drawing the densest feedback overall — engagement and concern together, usually where something is working hard."
           chips={report.hotspots}
           chipLabel={c => `${c.count}`}
           onJump={onJump}
@@ -142,6 +167,56 @@ function ReportBody({ signals, onJump }: { signals: EditorialSignals; onJump: (i
   );
 }
 
+// ── Insights (the ranked "look here first" strip) ─────────────────────────────
+// Evidence-backed pointers, most-actionable first (consensus → reaction → prose),
+// each clickable into the prose. Tone is a librarian's pointer, never a verdict —
+// the copy lives in the engine (rankInsights); this only renders it.
+const TIER_LABEL: Record<ManuscriptInsight['tier'], string> = {
+  consensus: 'Reader agreement',
+  reaction: 'Reader reactions',
+  prose: 'Prose',
+};
+
+function InsightsSection({ insights, onJump }: { insights: ManuscriptInsight[]; onJump: JumpFn }) {
+  return (
+    <Section title="Worth a look">
+      <div className="rp-finding-desc">
+        Ranked pointers from the findings below — where the signal is strongest. The same items lead your downloaded report.
+      </div>
+      <div className="rp-insights">
+        {insights.map((i, idx) => {
+          // Stacked same-rationale rows (e.g. two consensus chapters) read as
+          // repetition — show the explanatory line only on the first of a run.
+          const showDetail = !!i.detail && insights[idx - 1]?.detail !== i.detail;
+          return (
+            <button
+              key={i.id}
+              className="rp-insight"
+              data-tier={i.tier}
+              onClick={() => i.chapter != null && onJump(i.chapter, {
+                // Reaction/consensus trace to reader actions → open Annotations
+                // mode (and the specific mark when we have one). Prose is text-
+                // derived → land in reading at the chapter start.
+                annotate: i.tier !== 'prose',
+                annotationId: i.evidence.annotationIds?.[0],
+              })}
+              disabled={i.chapter == null}
+              title={i.chapter != null ? `Jump to Chapter ${i.chapter}` : undefined}
+            >
+              <span className="rp-insight-main">
+                <span className="rp-insight-tier">{TIER_LABEL[i.tier]}</span>
+                <span className="rp-insight-headline">{i.headline}</span>
+                {showDetail && <span className="rp-insight-detail">{i.detail}</span>}
+              </span>
+              <span className="rp-insight-tag">{i.evidence.label}</span>
+            </button>
+          );
+        })}
+      </div>
+    </Section>
+  );
+}
+
 // ── Prose (text-derived, Tier 1) ──────────────────────────────────────────────
 // Factual measurements of the prose itself, framed only against this manuscript's
 // own averages — never an external "correct" style, never a judgment. Leads with
@@ -152,7 +227,7 @@ function ReportBody({ signals, onJump }: { signals: EditorialSignals; onJump: (i
 // manuscript's mean. Neutral threshold — flag the genuinely off, stay quiet otherwise.
 const LONG = 1.4, SHORT = 0.6;
 
-function ProseSection({ prose, onJump }: { prose: ProseAnalysis; onJump: (i: number) => void }) {
+function ProseSection({ prose, onJump }: { prose: ProseAnalysis; onJump: JumpFn }) {
   const { baselines: b, chapters } = prose;
 
   return (
@@ -195,7 +270,7 @@ function ProseSection({ prose, onJump }: { prose: ProseAnalysis; onJump: (i: num
   );
 }
 
-function ProseRow({ c, meanChapterWords, onJump }: { c: ChapterProse; meanChapterWords: number; onJump: (i: number) => void }) {
+function ProseRow({ c, meanChapterWords, onJump }: { c: ChapterProse; meanChapterWords: number; onJump: JumpFn }) {
   const ratio = meanChapterWords > 0 ? c.words / meanChapterWords : 1;
   const outlier = ratio >= LONG || ratio <= SHORT;
   return (
@@ -215,7 +290,7 @@ function ProseRow({ c, meanChapterWords, onJump }: { c: ChapterProse; meanChapte
   );
 }
 
-function ReaderConsensus({ signals, onJump }: { signals: EditorialSignals; onJump: (i: number) => void }) {
+function ReaderConsensus({ signals, onJump }: { signals: EditorialSignals; onJump: JumpFn }) {
   const { readerCount, completionRate, versionsRead, readerAgreement } = signals;
   const finishedPct = Math.round(completionRate * 100);
   const topAgreement = readerAgreement.slice(0, 5);
@@ -256,7 +331,7 @@ function ReaderConsensus({ signals, onJump }: { signals: EditorialSignals; onJum
                 <button
                   key={a.chapterIndex}
                   className="rp-chip"
-                  onClick={() => onJump(a.chapterIndex)}
+                  onClick={() => onJump(a.chapterIndex, { annotate: true })}
                   title={`Jump to ${a.chapterTitle || `Ch. ${a.chapterIndex}`} · ${a.readersWhoAnnotated} of ${reached} readers reacted`}
                 >
                   <span className="rp-chip-name">
@@ -294,7 +369,7 @@ function Finding({
   desc: string;
   chips: ChapterStat[];
   chipLabel?: (c: ChapterStat) => string;
-  onJump: (i: number) => void;
+  onJump: JumpFn;
 }) {
   return (
     <div className="rp-finding">
@@ -310,7 +385,7 @@ function Finding({
               key={c.index}
               className="rp-chip"
               data-jump={c.index}
-              onClick={() => onJump(c.index)}
+              onClick={() => onJump(c.index, { annotate: true })}
               title={`Jump to ${c.title}`}
             >
               <span className="rp-chip-name">

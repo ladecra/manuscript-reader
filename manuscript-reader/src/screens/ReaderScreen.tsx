@@ -402,6 +402,9 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   const activeEditBlockRef = useRef<HTMLElement | null>(null);
   const pendingFullDomCommitRef = useRef(false);
   const editingChapterRef = useRef<typeof editingChapter>(null);
+  // Latches a hub jump (chapter/annotation/posture) so it survives StrictMode's
+  // double entrance-effect; cleared after the synchronous double-invoke settles.
+  const pendingJumpRef = useRef<{ chapterIdx: number | null; annId: string | null; intent: 'annotate' | 'edit' | null } | null>(null);
   useEffect(() => { editModeRef.current = editMode; }, [editMode]);
   useEffect(() => { editingChapterRef.current = editingChapter; }, [editingChapter]);
   useEffect(() => { annSidebarOpenRef.current = annSidebarOpen; }, [annSidebarOpen]);
@@ -484,15 +487,29 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
       return;
     }
 
-    // A jump sent from the hub (report chip, Feedback "go to passage", etc.):
-    // land at that chapter or annotation instead of resuming. Consumed once.
-    const pendingIdx = useUIStore.getState().pendingChapterIndex;
-    const pendingAnnId = useUIStore.getState().pendingAnnotationId;
-    if (pendingIdx != null || pendingAnnId != null) {
+    // A jump sent from the hub (report chip, insight, Feedback "go to passage"):
+    // land at that chapter/annotation instead of resuming. StrictMode runs this
+    // entrance effect twice on mount; if we cleared the store on the first run, the
+    // second run would rebuild the DOM (line above) and fall through to the
+    // resume-at-last-position path, clobbering the jump. So latch the jump in a ref
+    // both runs read, and clear it only after the synchronous double-invoke settles.
+    const storeIdx = useUIStore.getState().pendingChapterIndex;
+    const storeAnn = useUIStore.getState().pendingAnnotationId;
+    if (storeIdx != null || storeAnn != null) {
+      pendingJumpRef.current = {
+        chapterIdx: storeIdx,
+        annId: storeAnn,
+        intent: useUIStore.getState().pendingReaderIntent,
+      };
       useUIStore.getState().setPendingChapterIndex(null);
       useUIStore.getState().setPendingAnnotationId(null);
-      const chapterIdx = pendingIdx;
-      const annId = pendingAnnId;
+      useUIStore.getState().setPendingReaderIntent(null);
+      setTimeout(() => { pendingJumpRef.current = null; }, 0);
+    }
+
+    const jump = pendingJumpRef.current;
+    if (jump) {
+      const { chapterIdx, annId, intent } = jump;
       c.querySelectorAll('p, blockquote, ul, ol').forEach(el => el.classList.add('visible'));
       if (editModeRef.current) c.classList.add('edit-mode');
       syncAnnotationDOM();
@@ -508,15 +525,10 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
           else window.scrollTo(0, 0);
         }
       }));
-      // The hub may have asked us to land in a particular posture (edit / annotate
-      // the chapter), not just read it. Apply it once; the editMode/sidebar effects
-      // pick up the store change and toggle the affordance.
-      const intent = useUIStore.getState().pendingReaderIntent;
-      if (intent) {
-        useUIStore.getState().setPendingReaderIntent(null);
-        if (intent === 'edit') useUIStore.getState().enterEditMode();
-        else useUIStore.getState().openAnnSidebar();
-      }
+      // Land in the requested posture (annotate / edit), not just reading. The
+      // editMode/sidebar effects pick up the store change and toggle the affordance.
+      if (intent === 'edit') useUIStore.getState().enterEditMode();
+      else if (intent === 'annotate') useUIStore.getState().openAnnSidebar();
       return;
     }
 
@@ -1174,7 +1186,7 @@ function AnnotationEditPopup({ annId, note, onSave, onDelete, onClose }: { annId
           style={{ width: '100%', minHeight: '64px', background: 'none', border: 'none', borderBottom: '1px solid var(--border)', color: 'var(--ink)', fontFamily: "'EB Garamond', Georgia, serif", fontSize: '15px', lineHeight: '1.5', outline: 'none', resize: 'none', padding: '0 0 8px' }}
         />
         <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '10px' }}>
-          <button style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: "'Hanken Grotesk', system-ui, sans-serif", fontSize: '10px', letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--border)' }} onClick={onDelete}>Delete</button>
+          <button style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: "'Hanken Grotesk', system-ui, sans-serif", fontSize: '10px', letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--dim)' }} onClick={onDelete}>Delete</button>
           <button style={{ background: 'none', border: '1px solid var(--ink)', fontFamily: "'Hanken Grotesk', system-ui, sans-serif", fontSize: '10px', fontWeight: 500, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--ink)', padding: '5px 14px', cursor: 'pointer' }} onClick={() => onSave(text.trim())}>Save</button>
         </div>
       </div>
