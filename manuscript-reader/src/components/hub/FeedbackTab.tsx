@@ -190,7 +190,7 @@ export function FeedbackTab({
       <div className="hub-overview-head">
         <h2 className="hub-panel-title">Feedback</h2>
         <div className="hub-feedback-head-actions">
-          <button type="button" className="library-new-btn" onClick={() => setFeedbackModalOpen(true)}>
+          <button type="button" className="btn-cta-gold" onClick={() => setFeedbackModalOpen(true)}>
             <PlusIcon size={13} /> Add or share feedback
           </button>
           <button

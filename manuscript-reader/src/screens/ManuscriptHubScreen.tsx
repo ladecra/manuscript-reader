@@ -354,25 +354,28 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
               >
                 {status ?? 'Draft'}
               </button>
-              <div className="hub-hero-stats" aria-label="Manuscript summary">
-                {wordCount != null && wordCount > 0 && (
-                  <div className="hub-stat">
-                    <span className="hub-stat-value">{wordCount.toLocaleString()}</span>
-                    <span className="hub-stat-label">Words</span>
-                  </div>
-                )}
+            </div>
+            {/* Stats are a direct child of .hub-hero (not nested in the text
+                column) so they can span the full hero width on mobile instead of
+                bunching into the narrow column beside the cover. */}
+            <div className="hub-hero-stats" aria-label="Manuscript summary">
+              {wordCount != null && wordCount > 0 && (
                 <div className="hub-stat">
-                  <span className="hub-stat-value">{chapterCount ?? 0}</span>
-                  <span className="hub-stat-label">Chapters</span>
+                  <span className="hub-stat-value">{wordCount.toLocaleString()}</span>
+                  <span className="hub-stat-label">Words</span>
                 </div>
-                <div className="hub-stat">
-                  <span className="hub-stat-value">{annotations.length > 0 ? annotations.length : '—'}</span>
-                  <span className="hub-stat-label">Annotations</span>
-                </div>
-                <div className="hub-stat">
-                  <span className="hub-stat-value hub-stat-value--meta">{hubLastOpenedLabel(manuscript.metadata.lastOpened)}</span>
-                  <span className="hub-stat-label">Last opened</span>
-                </div>
+              )}
+              <div className="hub-stat">
+                <span className="hub-stat-value">{chapterCount ?? 0}</span>
+                <span className="hub-stat-label">Chapters</span>
+              </div>
+              <div className="hub-stat">
+                <span className="hub-stat-value">{annotations.length > 0 ? annotations.length : '—'}</span>
+                <span className="hub-stat-label">Annotations</span>
+              </div>
+              <div className="hub-stat">
+                <span className="hub-stat-value hub-stat-value--meta">{hubLastOpenedLabel(manuscript.metadata.lastOpened)}</span>
+                <span className="hub-stat-label">Last opened</span>
               </div>
             </div>
           </header>
@@ -526,7 +529,7 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
                   <h2 className="hub-panel-title">Manuscript Intelligence</h2>
                   <button
                     type="button"
-                    className="library-new-btn"
+                    className="btn-cta-gold"
                     disabled={annotations.length === 0}
                     title={annotations.length === 0 ? 'Prose analysis shows here now; add a note or import reader feedback to download the full report' : undefined}
                     onClick={() => setReportExportOpen(true)}
@@ -853,7 +856,7 @@ function VersionsTab({ versions, manuscriptAvailable, onSaveVersion, onRelabel, 
     <div className="hub-panel">
       <div className="hub-overview-head">
         <h2 className="hub-panel-title">Versions</h2>
-        <button type="button" className="library-new-btn" onClick={onSaveVersion} disabled={!manuscriptAvailable}>
+        <button type="button" className="btn-cta-gold" onClick={onSaveVersion} disabled={!manuscriptAvailable}>
           <PlusIcon size={13} /> Save current as version
         </button>
       </div>

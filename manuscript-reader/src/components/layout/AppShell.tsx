@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ChevronLeftIcon, ChevronDownIcon, LibraryIcon, StarIcon, PlusIcon, BookIcon, QuillIcon } from '../ui/Icons';
+import { SettingsMenu } from '../ui/SettingsMenu';
 
 /** How many manuscripts to surface in the rail's Recent Files shelf. */
 const RECENT_FILES_LIMIT = 4;
@@ -197,6 +198,7 @@ export function AppShell({
         </div>
 
         <div className="app-shell-footer">
+          <SettingsMenu variant="rail-item" />
           {supabaseConfigured() && (
             <div className="app-shell-user-section">
               {authOpen && (
@@ -234,7 +236,7 @@ export function AppShell({
 
           <button
             type="button"
-            className="btn-icon"
+            className="btn-icon app-shell-collapse-btn"
             title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             onClick={() => setCollapsed(c => !c)}
