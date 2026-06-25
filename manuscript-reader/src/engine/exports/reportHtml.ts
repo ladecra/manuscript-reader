@@ -8,6 +8,8 @@ import type { Annotation, AnnotationCluster, AnnotationType, Chapter, ChapterSta
 import { ANNOTATION_TYPES, ANNOTATION_COLORS as COLOR } from '../types';
 import { ANN_LABEL_PLURAL as LABEL, INK, HEAD, MUTED as META, DIM as LBL, RULE, PAGE as PAPER, GOOGLE_FONTS_LINK } from './exportPalette';
 import { buildProseSectionHtml } from './proseReportSection';
+import { rankInsights } from '../insights/rankInsights';
+import type { InsightTier } from '../types';
 
 // ── Editorial signal presentation ─────────────────────────────────────────────
 // The engine decides which clusters exist (report.ts); this maps each signal to
@@ -409,6 +411,15 @@ body {
 .engagement-lead { font-family: 'EB Garamond', Georgia, serif; font-size: 13px; color: var(--desc); line-height: 1.5; margin-bottom: 16px; }
 .engagement-lead strong { color: var(--ink); font-weight: 600; }
 
+/* insights lead — ranked "look here first" rows */
+.insight-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 22px; }
+.insight-row { display: flex; align-items: flex-start; gap: 14px; padding: 11px 14px; border: 1px solid var(--rule); border-left: 2px solid var(--accent); }
+.insight-text { flex: 1; min-width: 0; }
+.insight-tier { font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 8.5px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--desc); margin-bottom: 3px; }
+.insight-headline { font-family: 'EB Garamond', Georgia, serif; font-size: 14px; color: var(--ink); line-height: 1.4; }
+.insight-detail { font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 11px; color: var(--desc); line-height: 1.5; margin-top: 3px; }
+.insight-tag { flex-shrink: 0; font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 10px; color: var(--ink); padding: 2px 8px; border: 1px solid var(--rule); white-space: nowrap; }
+
 /* editorial signal cards */
 .signal-card {
   border-left: 2.5px solid var(--sc); background: var(--card);
@@ -531,6 +542,26 @@ function buildHtml(opts: {
   ].filter(Boolean).join('&nbsp;&nbsp;·&nbsp;&nbsp;');
 
   const proseHtml = signals.prose ? buildProseSectionHtml(signals.prose) : '';
+
+  // Insights lead — the same ranked pointers the in-app panel opens with, so the
+  // downloaded report and the screen lead with one story. Leads page 1; omitted
+  // when nothing is genuinely off (an even, lightly-annotated draft).
+  const insights = rankInsights(signals);
+  const tierLabel: Record<InsightTier, string> = { consensus: 'Reader agreement', reaction: 'Reader reactions', prose: 'Prose' };
+  const tierAccent: Record<InsightTier, string> = { consensus: 'var(--ink)', reaction: COLOR.question, prose: 'var(--desc)' };
+  const insightsHtml = insights.length ? `
+  <div class="sec-head mb4">Worth a Look First</div>
+  <div class="insight-list">
+    ${insights.map(i => `
+    <div class="insight-row" style="--accent:${tierAccent[i.tier]}">
+      <div class="insight-text">
+        <div class="insight-tier">${esc(tierLabel[i.tier])}</div>
+        <div class="insight-headline">${esc(i.headline)}</div>
+        ${i.detail ? `<div class="insight-detail">${esc(i.detail)}</div>` : ''}
+      </div>
+      <div class="insight-tag">${esc(i.evidence.label)}</div>
+    </div>`).join('')}
+  </div>` : '';
 
   // At a Glance cards
   const glanceItems = [
@@ -716,6 +747,8 @@ ${GOOGLE_FONTS_LINK}
   <h1 class="report-title">${esc(title)}</h1>
   <p class="report-meta">${metaParts}</p>
   <hr class="rule" />
+
+  ${insightsHtml}
 
   ${proseHtml}
 

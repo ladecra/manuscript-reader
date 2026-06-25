@@ -1,5 +1,5 @@
 import type { Annotation, AnnotationCluster, AnnotationType, Chapter, ChapterStat, Report } from './types';
-import { ANNOTATION_TYPES } from './types';
+import { ANNOTATION_TYPES, DEVELOPMENTAL_TYPES } from './types';
 import { computeChapterWords } from './ingestion/parseMarkdown';
 
 function emptyCounts(): Record<AnnotationType, number> {
@@ -173,6 +173,18 @@ export function computeReport(annotations: Annotation[], chapters: Chapter[], co
   const questionClusters = allStats.filter(c => (c.counts.question ?? 0) >= 2).sort((a, b) => (b.counts.question ?? 0) - (a.counts.question ?? 0));
   const continuityFlags = allStats.filter(c => (c.counts.continuity ?? 0) >= 1).sort((a, b) => (b.counts.continuity ?? 0) - (a.counts.continuity ?? 0));
 
+  // Developmental-flag density: editorial *concern* annotations (question,
+  // continuity, structural, pacing, voice) per 1,000 words. The "where is the
+  // developmental work" lens — deliberately distinct from `hotspots` (which count
+  // engagement marks too) so a chapter dense in pacing/voice/continuity notes
+  // surfaces even when it drew few highlights. Same threshold shape as hotspots.
+  const devCount = (c: ChapterStat) => DEVELOPMENTAL_TYPES.reduce((s, t) => s + (c.counts[t] ?? 0), 0);
+  const devDensity = (c: ChapterStat) => (c.words > 0 ? (devCount(c) / c.words) * 1000 : 0);
+  const avgDevDensity = withWords.length ? withWords.reduce((s, c) => s + devDensity(c), 0) / withWords.length : 0;
+  const developmentalHotspots = hasWordData
+    ? allStats.filter(c => devCount(c) >= 2 && devDensity(c) >= avgDevDensity * 1.35).sort((a, b) => devDensity(b) - devDensity(a))
+    : allStats.filter(c => devCount(c) > 0).sort((a, b) => devCount(b) - devCount(a)).slice(0, 3);
+
   // One entry per distinct reader identity (not per name string), so the count
   // is correct even when readers share a name or leave it blank.
   const readers = [...identityName.values()];
@@ -208,6 +220,7 @@ export function computeReport(annotations: Annotation[], chapters: Chapter[], co
     typeTotals,
     chapters: allStats,
     hotspots,
+    developmentalHotspots,
     silent,
     questionClusters,
     continuityFlags,

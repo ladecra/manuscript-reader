@@ -16,6 +16,7 @@
     "check-edit-needle": "tsx fixtures/check-edit-needle.mjs",
     "check-change-list": "tsx fixtures/check-change-list.mjs",
     "check-prose": "tsx fixtures/check-prose.mjs",
+    "check-insights": "tsx fixtures/check-insights.mjs",
     "check-epub": "tsx fixtures/check-epub.mjs"
   },
   "dependencies": {
