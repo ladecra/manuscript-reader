@@ -77,6 +77,16 @@ function chapterBlockFor(container: HTMLElement, chapterId: string): HTMLElement
   return (el as HTMLElement) ?? null;
 }
 
+// Parser puts `id="ch-N"` on the `.chapter-marker` span, not on the following H1.
+function chapterIdForBlock(block: HTMLElement): string | null {
+  let prev: Element | null = block.previousElementSibling;
+  while (prev) {
+    if (prev.id?.startsWith('ch-')) return prev.id;
+    prev = prev.previousElementSibling;
+  }
+  return null;
+}
+
 function markInRoot(root: HTMLElement, anchor: TextAnchor, id: string, type: AnnotationType): HTMLElement | null {
   const full = root.textContent ?? '';
   const loc = locateAnchor(full, anchor);
@@ -556,7 +566,8 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
       // the openManuscript reload below picks it up. Structural edits don't map
       // to a single paragraph, so the record is the whole chapter body's
       // before/after, attributed to the chapter from its heading id.
-      const owner = chapters.find(ch => ch.id === (heading as HTMLElement).id);
+      const markerId = chapterIdForBlock(block);
+      const owner = markerId ? chapters.find(ch => ch.id === markerId) : undefined;
       // Anchor on the trimmed body at its true offset (bodyStart points at the
       // leading blank line), so the quote aligns with the source for re-location.
       const quote = original.trim();
@@ -686,14 +697,9 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
       if (!usesTouchFriendlyEditing()) return; // desktop: caret already placed by browser
       const block = (e.target as HTMLElement)?.closest?.('.chapter-block') as HTMLElement | null;
       if (!block) return;
-      // Walk back from the block to find the chapter span (id="ch-N")
-      let prev: Element | null = block.previousElementSibling;
-      while (prev) {
-        if (prev.id && prev.id.startsWith('ch-')) break;
-        prev = prev.previousElementSibling;
-      }
-      if (!prev) return;
-      const ch = chapters.find(ch => ch.id === prev!.id);
+      const markerId = chapterIdForBlock(block);
+      if (!markerId) return;
+      const ch = chapters.find(ch => ch.id === markerId);
       if (!ch) return;
       const html = block.innerHTML.replace(/<mark\b[^>]*>([\s\S]*?)<\/mark>/gi, '$1');
       // Capture where the tap landed as a block-relative character offset (so TipTap
