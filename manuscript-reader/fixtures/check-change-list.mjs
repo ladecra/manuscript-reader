@@ -64,6 +64,18 @@ check('narrowed: does NOT show the whole chapter', narrow[0].current.length < CH
 check('narrowed: includes the changed words + context', narrow[0].current.includes('trembling hand') && narrow[0].previous.includes('steady hand'));
 check('narrowed: ellipsis flags set (context trimmed both sides)', narrow[0].startEllipsis && narrow[0].endEllipsis);
 
+// Two whole-chapter commits in one session, scenes far apart → separate margin cards.
+const CH_A = `${CH} She walked the cliff path at dusk.`;
+const CH_B = CH_A.replace('a steady hand', 'a trembling hand');
+const CH_C = CH_B.replace('cliff path', 'narrow ridge');
+const twoScenes = buildChangeList([
+  edit('s1', 'ch-1', CH_A, CH_B, 100),
+  edit('s2', 'ch-1', CH_B, CH_C, 200),
+]);
+check('two scene edits in one chapter → 2 entries', twoScenes.length === 2);
+check('first scene: steady → trembling', twoScenes[0]?.current.includes('trembling hand'));
+check('second scene: cliff → ridge', twoScenes[1]?.current.includes('narrow ridge'));
+
 console.log('\n' + '═'.repeat(60));
 console.log(failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

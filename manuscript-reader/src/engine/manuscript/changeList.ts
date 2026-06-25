@@ -6,8 +6,10 @@
 //
 // This pure pass turns Edit[] into ChangeEntry[]:
 //   • Coalesce chains — an edit whose original matches a prior edit's replacement
-//     (same chapter) continues that chain; the entry keeps the chain's FIRST
-//     "previously" and LAST "current".
+//     (same chapter) continues that chain when the two edits' changed regions
+//     overlap in the shared "before" text. Whole-chapter commits (Manuscript mode)
+//     share the same before/after snapshot between scenes, so without the overlap
+//     guard unrelated scene edits would collapse into one unreadable entry.
 //   • Drop noise — entries whose rendered text didn't actually change (pure
 //     formatting), and empty results.
 // Matching is on the RENDERED text (editRenderedNeedle), so formatting churn
@@ -17,6 +19,24 @@ import type { Edit, ChangeEntry } from '../types';
 import { editRenderedNeedle } from './editRenderedText';
 
 const CTX_WORDS = 4; // words of unchanged context kept around the changed region
+
+/** Word-index span of the passage that differs between two rendered strings. */
+function changeWordSpan(before: string, after: string): { lo: number; hi: number } {
+  const a = before.split(' ');
+  const b = after.split(' ');
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  let j = 0;
+  while (j < a.length - i && j < b.length - i && a[a.length - 1 - j] === b[b.length - 1 - j]) j++;
+  return { lo: i, hi: Math.max(a.length - j, b.length - j) };
+}
+
+function wordSpansOverlap(a: { lo: number; hi: number }, b: { lo: number; hi: number }): boolean {
+  if (a.lo < b.hi && b.lo < a.hi) return true;
+  // Refinements one word apart (e.g. "busy" then "busy enough") should still chain.
+  const gap = a.hi <= b.lo ? b.lo - a.hi : a.lo - b.hi;
+  return gap <= CTX_WORDS;
+}
 
 // Narrow a before→after pair to the region that actually differs: trim the common
 // leading/trailing words (a desktop edit commits a whole chapter block, but only a
@@ -78,7 +98,17 @@ export function buildChangeList(edits: Edit[]): ChangeEntry[] {
     let open = openByChapter.get(chapterKey);
     if (!open) { open = new Map(); openByChapter.set(chapterKey, open); }
 
-    const prior = origNeedle ? open.get(origNeedle) : undefined;
+    let prior = origNeedle ? open.get(origNeedle) : undefined;
+    if (prior) {
+      // Whole-chapter commits share identical before snapshots; only chain when the
+      // cumulative change so far and this edit touch the same passage.
+      const priorSpan = changeWordSpan(editRenderedNeedle(prior.firstOriginal), origNeedle);
+      const nextSpan = changeWordSpan(origNeedle, replNeedle);
+      if (!wordSpansOverlap(priorSpan, nextSpan)) {
+        open.delete(origNeedle);
+        prior = undefined;
+      }
+    }
     if (prior) {
       // Continue the chain: this edit started from what the prior edit produced.
       open.delete(prior.currentNeedle);
