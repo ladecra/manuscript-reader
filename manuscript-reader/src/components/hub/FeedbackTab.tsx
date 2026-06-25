@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import type { Annotation, AnnotationType } from '../../engine/types';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { Annotation, AnnotationType, SnapshotMeta } from '../../engine/types';
 import {
   ANNOTATION_TYPES,
   ANNOTATION_LABELS,
@@ -7,9 +7,18 @@ import {
 } from '../../engine/types';
 import { useReaderStore } from '../../state/readerStore';
 import { useUIStore } from '../../state/uiStore';
-import { XIcon } from '../ui/Icons';
+import type { ReaderExportPayload } from '../../engine/sessions';
+import { showToast } from '../ui/Toast';
+import { ChevronDownIcon, FilterSlidersIcon, PlusIcon } from '../ui/Icons';
+import { AddFeedbackModal } from './AddFeedbackModal';
 
 type SortMode = 'manuscript' | 'recent' | 'type';
+
+const SORT_LABELS: Record<SortMode, string> = {
+  manuscript: 'Manuscript order',
+  recent: 'Most recent',
+  type: 'Type',
+};
 
 function typeRank(t: AnnotationType): number {
   const i = ANNOTATION_TYPES.indexOf(t);
@@ -31,43 +40,119 @@ function allTypesEnabled(): Record<AnnotationType, boolean> {
   return Object.fromEntries(ANNOTATION_TYPES.map(t => [t, true])) as Record<AnnotationType, boolean>;
 }
 
+function FilterToggle({
+  checked,
+  onChange,
+  label,
+  dotColor,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  label: string;
+  dotColor?: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={checked}
+      className={`hub-filter-toggle${checked ? ' hub-filter-toggle--on' : ''}`}
+      onClick={() => onChange(!checked)}
+    >
+      <span className="hub-filter-toggle-box" aria-hidden="true">
+        {checked && <span className="hub-filter-toggle-mark" />}
+      </span>
+      {dotColor && (
+        <span className="hub-filter-toggle-dot" style={{ background: dotColor }} aria-hidden="true" />
+      )}
+      <span className="hub-filter-toggle-label">{label}</span>
+    </button>
+  );
+}
+
 export function FeedbackTab({
   annotations,
   readerCount,
+  manuscriptTitle,
+  manuscriptAvailable,
+  versions,
+  liveMarkdown,
   onRead,
+  onAnnotate,
+  onShareDownload,
+  onSaveVersion,
 }: {
   annotations: Annotation[];
   readerCount: number;
+  manuscriptTitle: string;
+  manuscriptAvailable: boolean;
+  versions: SnapshotMeta[];
+  liveMarkdown?: string;
   onRead: () => void;
+  onAnnotate: () => void;
+  onShareDownload: (snapshotId: string | null, withAnnotations: boolean) => void | Promise<void>;
+  onSaveVersion?: () => void;
 }) {
-  const { patchAnnotation, deleteAnnotation } = useReaderStore();
+  const { patchAnnotation, deleteAnnotation, importSession } = useReaderStore();
   const { setPendingChapterIndex, setPendingAnnotationId } = useUIStore();
 
   const [sort, setSort] = useState<SortMode>('manuscript');
   const [typeEnabled, setTypeEnabled] = useState(allTypesEnabled);
-  const [hideAddressed, setHideAddressed] = useState(false);
+  const [hideResolved, setHideResolved] = useState(false);
+  const [hideOpen, setHideOpen] = useState(false);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [sortOpen, setSortOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftNote, setDraftNote] = useState('');
+  const [rowMenuId, setRowMenuId] = useState<string | null>(null);
+  const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
+
+  const filterRef = useRef<HTMLDivElement>(null);
+  const sortRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setFilterOpen(false);
+        setSortOpen(false);
+        setRowMenuId(null);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  useEffect(() => {
+    if (!filterOpen && !sortOpen && !rowMenuId) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (filterOpen && filterRef.current && !filterRef.current.contains(t)) setFilterOpen(false);
+      if (sortOpen && sortRef.current && !sortRef.current.contains(t)) setSortOpen(false);
+      if (rowMenuId) {
+        const el = document.querySelector(`[data-ann-menu="${rowMenuId}"]`);
+        if (el && !el.contains(t)) setRowMenuId(null);
+      }
+    };
+    window.addEventListener('mousedown', onDown);
+    return () => window.removeEventListener('mousedown', onDown);
+  }, [filterOpen, sortOpen, rowMenuId]);
 
   const visible = useMemo(() => {
     let list = annotations.filter(a => typeEnabled[a.type] !== false);
-    if (hideAddressed) list = list.filter(a => a.status !== 'resolved');
+    if (hideResolved) list = list.filter(a => a.status !== 'resolved');
+    if (hideOpen) list = list.filter(a => a.status === 'resolved');
     return [...list].sort((a, b) => compareAnnotations(a, b, sort));
-  }, [annotations, typeEnabled, hideAddressed, sort]);
-
-  const typeCounts = useMemo(() => {
-    const m = Object.fromEntries(ANNOTATION_TYPES.map(t => [t, 0])) as Record<AnnotationType, number>;
-    for (const a of annotations) m[a.type] += 1;
-    return m;
-  }, [annotations]);
+  }, [annotations, typeEnabled, hideResolved, hideOpen, sort]);
 
   const goToPassage = (ann: Annotation) => {
+    setRowMenuId(null);
     setPendingChapterIndex(ann.chapterIndex);
     setPendingAnnotationId(ann.id);
     onRead();
   };
 
   const startEdit = (ann: Annotation) => {
+    setRowMenuId(null);
     setEditingId(ann.id);
     setDraftNote(ann.note);
   };
@@ -83,23 +168,52 @@ export function FeedbackTab({
     setDraftNote('');
   };
 
-  const toggleAddressed = (ann: Annotation) => {
-    const resolved = ann.status === 'resolved';
-    patchAnnotation(ann.id, { status: resolved ? undefined : 'resolved' });
+  const setResolved = (ann: Annotation, resolved: boolean) => {
+    patchAnnotation(ann.id, { status: resolved ? 'resolved' : undefined });
   };
 
   const toggleType = (t: AnnotationType) => {
     setTypeEnabled(prev => ({ ...prev, [t]: !prev[t] }));
   };
 
+  const filterActive = hideResolved || hideOpen || ANNOTATION_TYPES.some(t => !typeEnabled[t]);
+
+  const handleImport = (payload: ReaderExportPayload) => {
+    const { imported, session } = importSession(payload);
+    const who = session?.readerName ? ` from ${session.readerName}` : '';
+    const far = session ? (session.completedAt ? ' · finished' : ` · read ${Math.round(session.progress * 100)}%`) : '';
+    showToast(`${imported} annotation${imported !== 1 ? 's' : ''} imported${who}${far}.`);
+  };
+
   return (
     <div className="hub-panel">
       <div className="hub-overview-head">
         <h2 className="hub-panel-title">Feedback</h2>
-        <button type="button" className="btn-outline" style={{ fontSize: '12px' }} onClick={onRead}>
-          Annotate in reader →
-        </button>
+        <div className="hub-feedback-head-actions">
+          <button type="button" className="library-new-btn" onClick={() => setFeedbackModalOpen(true)}>
+            <PlusIcon size={13} /> Add or share feedback
+          </button>
+          <button
+            type="button"
+            className="btn-outline hub-feedback-annotate-btn"
+            onClick={onAnnotate}
+            disabled={!manuscriptAvailable}
+          >
+            Annotate in reader →
+          </button>
+        </div>
       </div>
+      <AddFeedbackModal
+        open={feedbackModalOpen}
+        title={manuscriptTitle}
+        manuscriptAvailable={manuscriptAvailable}
+        liveMarkdown={liveMarkdown}
+        versions={versions}
+        onSaveVersion={onSaveVersion}
+        onClose={() => setFeedbackModalOpen(false)}
+        onImport={handleImport}
+        onShareDownload={onShareDownload}
+      />
       <div className="hub-stats">
         <div className="lib-stat">
           <span className="lib-stat-num">{annotations.length}</span>
@@ -115,59 +229,77 @@ export function FeedbackTab({
         <div className="hub-empty">
           <p>No annotations yet.</p>
           <p className="hub-empty-sub">
-            Open the reader to annotate, or import a beta reader&apos;s feedback file from the reader&apos;s
-            annotations panel.
+            Open the reader to annotate, or use Add or share feedback to import a beta reader&apos;s .json file.
           </p>
         </div>
       ) : (
         <>
           <div className="hub-feedback-toolbar">
-            <label className="hub-feedback-sort-label">
-              Sort
-              <select
-                className="library-sort-select hub-feedback-sort"
-                value={sort}
-                onChange={e => setSort(e.target.value as SortMode)}
-                aria-label="Sort annotations"
+            <div className="hub-feedback-filter" ref={filterRef}>
+              <button
+                type="button"
+                className={`hub-feedback-filter-btn${filterOpen ? ' hub-feedback-filter-btn--open' : ''}${filterActive ? ' hub-feedback-filter-btn--active' : ''}`}
+                aria-expanded={filterOpen}
+                aria-haspopup="true"
+                onClick={() => { setSortOpen(false); setFilterOpen(o => !o); }}
               >
-                <option value="manuscript">Manuscript order</option>
-                <option value="recent">Most recent</option>
-                <option value="type">Type</option>
-              </select>
-            </label>
-            <label className="hub-feedback-check">
-              <input
-                type="checkbox"
-                checked={hideAddressed}
-                onChange={e => setHideAddressed(e.target.checked)}
-              />
-              Hide addressed
-            </label>
-          </div>
-
-          <fieldset className="hub-feedback-types">
-            <legend className="hub-feedback-types-legend">Show types</legend>
-            <div className="hub-feedback-type-grid">
-              {ANNOTATION_TYPES.map(t => (
-                <label key={t} className="hub-feedback-type-check">
-                  <input
-                    type="checkbox"
-                    checked={typeEnabled[t] !== false}
-                    onChange={() => toggleType(t)}
-                  />
-                  <span
-                    className="hub-feedback-type-dot"
-                    style={{ background: ANNOTATION_COLORS[t] }}
-                    aria-hidden="true"
-                  />
-                  {ANNOTATION_LABELS[t]}
-                  {typeCounts[t] > 0 && (
-                    <span className="hub-feedback-type-count">{typeCounts[t]}</span>
-                  )}
-                </label>
-              ))}
+                <span className="hub-feedback-toolbar-label">Filter</span>
+                <FilterSlidersIcon size={15} />
+              </button>
+              {filterOpen && (
+                <div className="hub-feedback-popover" role="dialog" aria-label="Filter annotations">
+                  <div className="hub-feedback-popover-section">
+                    <div className="hub-feedback-popover-heading">Status</div>
+                    <FilterToggle checked={hideOpen} onChange={setHideOpen} label="Hide open" />
+                    <FilterToggle checked={hideResolved} onChange={setHideResolved} label="Hide resolved" />
+                  </div>
+                  <div className="hub-feedback-popover-section">
+                    <div className="hub-feedback-popover-heading">Types</div>
+                    <div className="hub-feedback-popover-types">
+                      {ANNOTATION_TYPES.map(t => (
+                        <FilterToggle
+                          key={t}
+                          checked={typeEnabled[t] !== false}
+                          onChange={() => toggleType(t)}
+                          label={ANNOTATION_LABELS[t]}
+                          dotColor={ANNOTATION_COLORS[t]}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
-          </fieldset>
+
+            <div className="hub-feedback-sort" ref={sortRef}>
+              <button
+                type="button"
+                className={`hub-feedback-sort-btn${sortOpen ? ' hub-feedback-sort-btn--open' : ''}`}
+                aria-expanded={sortOpen}
+                aria-haspopup="listbox"
+                onClick={() => { setFilterOpen(false); setSortOpen(o => !o); }}
+              >
+                <span className="hub-feedback-toolbar-label">Sort</span>
+                <span className="hub-feedback-sort-value">{SORT_LABELS[sort]}</span>
+                <ChevronDownIcon size={10} />
+              </button>
+              {sortOpen && (
+                <ul className="hub-feedback-popover hub-feedback-sort-menu" role="listbox" aria-label="Sort order">
+                  {(Object.keys(SORT_LABELS) as SortMode[]).map(mode => (
+                    <li key={mode} role="option" aria-selected={sort === mode}>
+                      <button
+                        type="button"
+                        className={`hub-feedback-sort-option${sort === mode ? ' hub-feedback-sort-option--active' : ''}`}
+                        onClick={() => { setSort(mode); setSortOpen(false); }}
+                      >
+                        {SORT_LABELS[mode]}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
 
           {visible.length === 0 ? (
             <div className="hub-empty hub-empty--compact">
@@ -178,6 +310,7 @@ export function FeedbackTab({
               {visible.map(a => {
                 const resolved = a.status === 'resolved';
                 const editing = editingId === a.id;
+                const menuOpen = rowMenuId === a.id;
                 return (
                   <article
                     key={a.id}
@@ -190,36 +323,67 @@ export function FeedbackTab({
                     />
                     <div className="hub-ann-body">
                       <div className="hub-ann-head">
-                        <div className="hub-ann-meta">
-                          {ANNOTATION_LABELS[a.type]}
-                          {a.chapterTitle ? ` · ${a.chapterTitle}` : ''}
-                          {a.readerName ? ` · ${a.readerName}` : ''}
+                        <div className="hub-ann-meta-line">
+                          <span className="hub-ann-meta-text">
+                            {ANNOTATION_LABELS[a.type]}
+                            {a.chapterTitle ? ` · ${a.chapterTitle}` : ''}
+                            {a.readerName ? ` · ${a.readerName}` : ''}
+                          </span>
+                          <span className="hub-ann-meta-sep" aria-hidden="true"> · </span>
+                          <button type="button" className="hub-ann-passage-link" onClick={() => goToPassage(a)}>
+                            Go to passage →
+                          </button>
                         </div>
-                        <label className="hub-ann-addressed">
-                          <input
-                            type="checkbox"
-                            checked={resolved}
-                            onChange={() => toggleAddressed(a)}
-                          />
-                          Addressed
-                        </label>
+                        <div className="hub-ann-edit-wrap" data-ann-menu={a.id}>
+                          <button
+                            type="button"
+                            className={`hub-ann-edit-trigger${menuOpen ? ' hub-ann-edit-trigger--open' : ''}`}
+                            aria-expanded={menuOpen}
+                            onClick={() => setRowMenuId(menuOpen ? null : a.id)}
+                          >
+                            Edit
+                          </button>
+                          {menuOpen && (
+                            <div className="hub-ann-edit-menu" role="menu">
+                              <button type="button" role="menuitem" className="hub-ann-edit-menu-item" onClick={() => startEdit(a)}>
+                                {a.note ? 'Edit note' : 'Add note'}
+                              </button>
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="hub-ann-edit-menu-item hub-ann-edit-menu-item--danger"
+                                onClick={() => { deleteAnnotation(a.id); setRowMenuId(null); }}
+                              >
+                                Delete
+                              </button>
+                              <div className="hub-ann-edit-menu-status">
+                                <span className="hub-ann-edit-menu-status-label">Status</span>
+                                <div className="hub-ann-status-options">
+                                  <button
+                                    type="button"
+                                    className={`hub-ann-status-opt${!resolved ? ' hub-ann-status-opt--selected' : ''}`}
+                                    onClick={() => setResolved(a, false)}
+                                  >
+                                    Open
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className={`hub-ann-status-opt hub-ann-status-opt--resolved${resolved ? ' hub-ann-status-opt--selected' : ''}`}
+                                    onClick={() => setResolved(a, true)}
+                                  >
+                                    Resolved
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       </div>
 
                       {a.quote && (
-                        <button
-                          type="button"
-                          className="hub-ann-quote hub-ann-quote--link"
-                          onClick={() => goToPassage(a)}
-                        >
-                          &ldquo;{a.quote.length > 200 ? `${a.quote.slice(0, 200)}…` : a.quote}&rdquo;
-                          <span className="hub-ann-goto">Go to passage</span>
-                        </button>
-                      )}
-
-                      {!a.quote && (
-                        <button type="button" className="hub-ann-goto-only" onClick={() => goToPassage(a)}>
-                          Go to passage
-                        </button>
+                        <div className="hub-ann-quote">
+                          &ldquo;{a.quote.length > 280 ? `${a.quote.slice(0, 280)}…` : a.quote}&rdquo;
+                        </div>
                       )}
 
                       {editing ? (
@@ -244,23 +408,6 @@ export function FeedbackTab({
                       ) : (
                         a.note && <div className="hub-ann-note">{a.note}</div>
                       )}
-
-                      <div className="hub-ann-actions">
-                        {!editing && (
-                          <button type="button" className="hub-ann-action" onClick={() => startEdit(a)}>
-                            {a.note ? 'Edit note' : 'Add note'}
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          className="hub-ann-action hub-ann-action--danger"
-                          onClick={() => deleteAnnotation(a.id)}
-                          aria-label="Delete annotation"
-                        >
-                          <XIcon size={12} />
-                          Delete
-                        </button>
-                      </div>
                     </div>
                   </article>
                 );

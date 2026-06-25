@@ -20,11 +20,22 @@ export interface ReaderExportPayload {
   readerName?: string | null;
   manuscript?: string;
   manuscriptVersionId?: string;
+  snapshotId?: string;
+  snapshotLabel?: string;
   startedAt?: number;
   completedAt?: number | null;
   exportedAt?: number;
   progress?: number;
   annotations: Annotation[];
+}
+
+/** Parse a beta-reader .json export (full payload or legacy annotations array). */
+export function parseReaderExportPayload(raw: unknown): ReaderExportPayload {
+  if (Array.isArray(raw)) return { annotations: raw as Annotation[] };
+  if (raw && typeof raw === 'object' && Array.isArray((raw as ReaderExportPayload).annotations)) {
+    return raw as ReaderExportPayload;
+  }
+  throw new Error('invalid');
 }
 
 /**

@@ -7,6 +7,7 @@
 import type { Annotation, AnnotationCluster, AnnotationType, Chapter, ChapterStat, EditorialSignals } from '../types';
 import { ANNOTATION_TYPES, ANNOTATION_COLORS as COLOR } from '../types';
 import { ANN_LABEL_PLURAL as LABEL, INK, HEAD, MUTED as META, DIM as LBL, RULE, PAGE as PAPER, GOOGLE_FONTS_LINK } from './exportPalette';
+import { buildProseSectionHtml } from './proseReportSection';
 
 // ── Editorial signal presentation ─────────────────────────────────────────────
 // The engine decides which clusters exist (report.ts); this maps each signal to
@@ -474,6 +475,22 @@ body {
 /* footer */
 .page-footer { margin-top: 28px; text-align: center; font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 9px; color: var(--lbl); letter-spacing: .06em; }
 
+/* prose section (text-derived metrics) */
+.prose-glance { display: flex; gap: 20px; flex-wrap: wrap; margin: 14px 0 18px; }
+.prose-stat { display: flex; flex-direction: column; gap: 2px; min-width: 72px; }
+.prose-stat-num { font-family: 'EB Garamond', Georgia, serif; font-size: 22px; color: var(--ink); line-height: 1; }
+.prose-stat-lab { font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 8px; letter-spacing: .14em; text-transform: uppercase; color: var(--lbl); }
+.prose-table { width: 100%; border-collapse: collapse; margin-bottom: 8px; font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 10px; }
+.prose-table th {
+  text-align: left; font-size: 8px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--lbl); font-weight: 600; padding: 0 8px 8px 0; border-bottom: 1px solid var(--rule);
+}
+.prose-table th:not(:first-child) { text-align: right; }
+.prose-table td { padding: 7px 8px 7px 0; border-bottom: 1px solid var(--rule); color: var(--desc); vertical-align: baseline; }
+.prose-table td:not(:first-child) { text-align: right; font-variant-numeric: tabular-nums; color: var(--head); }
+.prose-ch { color: var(--meta) !important; text-align: left !important; max-width: 200px; }
+.prose-rel { color: var(--lbl); font-size: 9px; }
+
 /* section spacing */
 .mb4  { margin-bottom: 4px; }
 .mb12 { margin-bottom: 12px; }
@@ -512,6 +529,8 @@ function buildHtml(opts: {
     `${rep.totalAnns} annotation${rep.totalAnns !== 1 ? 's' : ''}`,
     `Generated ${dateStr}`,
   ].filter(Boolean).join('&nbsp;&nbsp;·&nbsp;&nbsp;');
+
+  const proseHtml = signals.prose ? buildProseSectionHtml(signals.prose) : '';
 
   // At a Glance cards
   const glanceItems = [
@@ -698,8 +717,10 @@ ${GOOGLE_FONTS_LINK}
   <p class="report-meta">${metaParts}</p>
   <hr class="rule" />
 
+  ${proseHtml}
+
   <!-- At a Glance -->
-  <div class="sec-head mb4">At a Glance</div>
+  <div class="sec-head mb4${proseHtml ? ' mt28' : ''}">At a Glance</div>
   ${glanceHtml}
 
   <!-- Density by chapter -->

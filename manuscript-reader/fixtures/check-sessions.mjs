@@ -8,6 +8,8 @@ import { readFile, readdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { mergeReaderSessions, sessionFromImportPayload } from '../src/engine/sessions.ts';
+import { validateFeedbackImport } from '../src/engine/feedbackImport.ts';
+import { manuscriptVersionId } from '../src/engine/manuscript/manuscriptVersion.ts';
 import { computeEditorialSignals } from '../src/engine/editorialSignals.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -82,6 +84,28 @@ for (const file of files) {
   // legacy payload (no identity/progress) never throws and degrades.
   const legacy = sessionFromImportPayload({ annotations: [{ id: 'x' }] }, fx.manuscriptId);
   check('legacy payload degrades (synth id, progress 0)', legacy.progress === 0 && legacy.id.startsWith(`session-${fx.manuscriptId}-`));
+}
+
+// ── feedbackImport: version alignment ───────────────────────────────────────
+console.log('\n' + '─'.repeat(60));
+console.log('FIXTURE: feedbackImport (synthetic)');
+{
+  const mdA = '# One\n\nAlpha prose here.';
+  const mdB = '# One\n\nBeta prose here.';
+  const vA = manuscriptVersionId(mdA);
+  const vB = manuscriptVersionId(mdB);
+  const snapshots = [
+    { id: 'snap-a', manuscriptId: 'm1', versionId: vA, label: 'Draft A', createdAt: 1, trigger: 'manual', wordCount: 10, chapterCount: 1 },
+    { id: 'snap-b', manuscriptId: 'm1', versionId: vB, label: 'Draft B', createdAt: 2, trigger: 'manual', wordCount: 10, chapterCount: 1 },
+  ];
+  const payload = { annotations: [], manuscriptVersionId: vA };
+  const match = validateFeedbackImport(payload, mdA, snapshots);
+  const mismatch = validateFeedbackImport(payload, mdB, snapshots);
+  const unknown = validateFeedbackImport({ annotations: [] }, mdA, snapshots);
+  console.log('  assertions:');
+  check('match when feedback version = live', match.alignment === 'match');
+  check('mismatch when live differs', mismatch.alignment === 'mismatch' && mismatch.feedbackSnapshot?.id === 'snap-a');
+  check('unknown without version stamp', unknown.alignment === 'unknown');
 }
 
 console.log('\n' + '═'.repeat(60));

@@ -72,7 +72,7 @@ export function App() {
     setScreen, toggleNav, setReaderMode, setHubPane,
   } = useUIStore();
   const readerMode = readerModeOf({ editMode, annSidebarOpen, changesOpen });
-  const { library, upsertManuscript, cycleStatus, toggleFavorite, deleteManuscript, replaceMarkdown, getReadingPosition } = useLibraryStore();
+  const { library, upsertManuscript, updateManuscript, cycleStatus, toggleFavorite, deleteManuscript, replaceMarkdown, getReadingPosition } = useLibraryStore();
   const { manuscript, annotations, edits, openManuscript, closeManuscript, undoEdit, redoEdit, setEditReturnScroll, undoStack, redoStack } = useReaderStore();
   const { toastState, showToast } = useToast();
 
@@ -348,6 +348,7 @@ export function App() {
                   onRead={handleReadFromLibrary}
                   onNew={() => setLoadModalOpen(true)}
                   onDelete={deleteManuscript}
+                  onUpdateManuscript={updateManuscript}
                   onCycleStatus={cycleStatus}
                   onToggleFavorite={toggleFavorite}
                   getReadingPosition={getReadingPosition}

@@ -1,41 +1,45 @@
 import { useState } from 'react';
-import { XIcon } from '../ui/Icons';
-import { ShareReaderBody, type ShareReaderMode } from '../share/ShareReaderBody';
-import { useShareSnapshotSelection } from '../../hooks/useShareSnapshotSelection';
 import type { SnapshotMeta } from '../../engine/types';
+import { XIcon } from '../ui/Icons';
+import { ShareReaderBody, type ShareReaderMode } from './ShareReaderBody';
+import { useShareSnapshotSelection } from '../../hooks/useShareSnapshotSelection';
 
-interface ShareModalProps {
+interface ShareReaderModalProps {
   open: boolean;
   title: string;
   versions: SnapshotMeta[];
   liveMarkdown?: string;
   manuscriptAvailable: boolean;
+  initialMode?: ShareReaderMode;
   onClose: () => void;
   onSaveVersion?: () => void;
   onDownload: (snapshotId: string | null, withAnnotations: boolean) => void | Promise<void>;
 }
 
-export function ShareModal({
+export function ShareReaderModal({
   open,
   title,
   versions,
   liveMarkdown,
   manuscriptAvailable,
+  initialMode = 'annotating',
   onClose,
   onSaveVersion,
   onDownload,
-}: ShareModalProps) {
-  const [mode, setMode] = useState<ShareReaderMode>('reading');
+}: ShareReaderModalProps) {
+  const [mode, setMode] = useState<ShareReaderMode>(initialMode);
   const [building, setBuilding] = useState(false);
   const { selectedSnapshotId, setSelectedSnapshotId } = useShareSnapshotSelection(versions);
 
   if (!open) return null;
 
   const handleDownload = () => {
+    if (!manuscriptAvailable) return;
     setBuilding(true);
     setTimeout(async () => {
       try {
         await onDownload(selectedSnapshotId, mode === 'annotating');
+        onClose();
       } finally {
         setBuilding(false);
       }
@@ -44,14 +48,13 @@ export function ShareModal({
 
   return (
     <div
-      id="share-modal"
       className="modal-overlay visible"
-      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="modal-card" onMouseDown={(e) => e.stopPropagation()}>
+      <div className="modal-card" onMouseDown={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Share this version">
         <div className="modal-header">
           <span className="modal-title">Share this version</span>
-          <button className="modal-close" onClick={onClose} aria-label="Close">
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Close">
             <XIcon size={14} />
           </button>
         </div>
@@ -72,7 +75,7 @@ export function ShareModal({
 
         <div className="modal-footer">
           <button
-            id="share-download-btn"
+            type="button"
             className="modal-primary-btn"
             onClick={handleDownload}
             disabled={building || !manuscriptAvailable}

@@ -9,6 +9,7 @@ import { applyMarkdownPromoteInBlock, lineTextBeforeCaretInChapterBlock } from '
 import { useReaderStore } from '../state/readerStore';
 import { useUIStore } from '../state/uiStore';
 import { useLibraryStore } from '../state/libraryStore';
+import { useSnapshotStore } from '../state/snapshotStore';
 import { parseMarkdown } from '../engine/ingestion/parseMarkdown';
 import { chapterForOffset } from '../engine/manuscript/chapterForOffset';
 import { ChapterNav } from '../components/reader/ChapterNav';
@@ -290,6 +291,11 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   );
   const { navOpen, annSidebarOpen, annSidebarCollapsed, editMode, changesOpen, closeNav, closeAnnSidebar, collapseAnnSidebar, toggleAnnSidebar, closeAllPanels } = useUIStore();
   const { updateProgress, getReadingPosition, appendChapters, replaceMarkdown } = useLibraryStore();
+  const { versions: versionsByMs, refresh: refreshVersions } = useSnapshotStore();
+  const shareVersions = manuscript ? versionsByMs[manuscript.id] ?? [] : [];
+  useEffect(() => {
+    if (manuscript) refreshVersions(manuscript.id);
+  }, [manuscript, refreshVersions]);
 
   const [activeChapterIdx, setActiveChapterIdx] = useState(0);
   const [scrollPct, setScrollPct] = useState(0);
@@ -996,7 +1002,10 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
       <ChapterNav open={navOpen} chapters={chapters} activeChapterIndex={activeChapterIdx} onClose={closeNav} onJump={jumpToChapter} onAddChapters={() => setAddChaptersOpen(true)} />
       {/* Narrow / touch only — desktop (≥1200px) uses the margin column instead. */}
       <AnnotationSidebar
-        open={annSidebarOpen && !annSidebarCollapsed} annotations={annotations} onClose={collapseAnnSidebar}
+        open={annSidebarOpen && !annSidebarCollapsed} annotations={annotations}
+        liveMarkdown={manuscript.metadata.combinedMarkdown}
+        versions={shareVersions}
+        onClose={collapseAnnSidebar}
         onDelete={id => { deleteAnnotation(id); removeMark(id); showToast('Annotation removed.'); }}
         onJumpTo={jumpToAnnotation}
         onImport={(payload) => {

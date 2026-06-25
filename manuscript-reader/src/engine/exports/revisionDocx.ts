@@ -12,6 +12,7 @@ import {
 import type { Annotation, Chapter, EditorialSignals } from '../types';
 import { ANNOTATION_TYPES, ANNOTATION_LABELS } from '../types';
 import { ANN_COLOR_DOCX as HEX, DOCX_INK as INK, DOCX_HEAD as HEAD, DOCX_BODY as BODY, DOCX_META as META, DOCX_RULE as RULE, DOCX_QUOTE as QUOTE, DOCX_LABEL as LABEL, DOCX_PAPER as PAPER } from './exportPalette';
+import { proseChaptersWithText, proseChapterLengthOutlier, proseChapterLengthRatio } from './proseReportSection';
 const SERIF = 'Georgia', SANS = 'Arial';
 const NONE = { style: BorderStyle.NONE };
 const noBorders = { top: NONE, bottom: NONE, left: NONE, right: NONE };
@@ -78,6 +79,67 @@ function buildDoc(data: {
     spacing: { after: 200 },
     border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: RULE, space: 12 } },
   }));
+
+  // ════════ PROSE (text-derived; present even with zero annotations) ════════
+  const proseRows = signals.prose ? proseChaptersWithText(signals.prose) : [];
+  if (proseRows.length) {
+    const b = signals.prose!.baselines;
+    children.push(label('Prose', { before: 320, after: 60 }));
+    children.push(new Paragraph({
+      children: [new TextRun({
+        text: 'Measured from the text itself — every figure is a count, compared only to this manuscript\'s own average. Nothing here is a judgment.',
+        font: SERIF, size: 19, color: BODY,
+      })],
+      spacing: { after: 160 },
+    }));
+    const proseGlance = [
+      { n: b.totalWords.toLocaleString(), lab: 'Words', sub: `${b.chapterCount} chapters`, color: META },
+      { n: Math.round(b.meanChapterWords).toLocaleString(), lab: 'Avg Chapter', sub: 'words', color: META },
+      { n: `${Math.round(b.dialogueRatio * 100)}%`, lab: 'Dialogue', sub: 'of all words', color: META },
+      { n: String(b.meanSentenceWords), lab: 'Avg Sentence', sub: 'words', color: META },
+    ];
+    const proseCardW = Math.floor(9360 / proseGlance.length);
+    children.push(new Table({
+      width: { size: 9360, type: WidthType.DXA },
+      columnWidths: proseGlance.map(() => proseCardW),
+      borders: noBorders,
+      rows: [new TableRow({ children: proseGlance.map(g => new TableCell({
+        width: { size: proseCardW, type: WidthType.DXA },
+        borders: { top: { style: BorderStyle.SINGLE, size: 12, color: g.color }, bottom: { style: BorderStyle.SINGLE, size: 2, color: RULE }, left: NONE, right: { style: BorderStyle.SINGLE, size: 6, color: 'FFFFFF' } },
+        shading: { type: ShadingType.CLEAR, fill: PAPER, color: 'auto' },
+        margins: { top: 120, bottom: 120, left: 120, right: 120 },
+        children: [
+          new Paragraph({ children: [new TextRun({ text: g.n, font: SERIF, size: 36, color: INK })], spacing: { after: 24 } }),
+          new Paragraph({ children: [new TextRun({ text: g.lab.toUpperCase(), font: SANS, size: 13, bold: true, color: META, characterSpacing: 16 })], spacing: { after: 16 } }),
+          new Paragraph({ children: [new TextRun({ text: g.sub, font: SANS, size: 14, color: LABEL })] }),
+        ],
+      })) })],
+    }));
+    children.push(gap(0, 200));
+    children.push(new Paragraph({
+      children: [new TextRun({ text: 'CHAPTER', font: SANS, size: 14, bold: true, color: LABEL, characterSpacing: 14 }),
+        new TextRun({ text: '     ', font: SANS, size: 14 }),
+        new TextRun({ text: 'LENGTH', font: SANS, size: 14, bold: true, color: LABEL, characterSpacing: 14 }),
+        new TextRun({ text: '     DIALOGUE     SENTENCE', font: SANS, size: 14, bold: true, color: LABEL, characterSpacing: 14 })],
+      spacing: { after: 80 },
+    }));
+    for (const c of proseRows) {
+      const ratio = proseChapterLengthRatio(c.words, b.meanChapterWords);
+      const rel = proseChapterLengthOutlier(ratio) ? `  ·  ${ratio.toFixed(1)}× avg` : '';
+      const chName = c.title ? stripChapterPrefix(c.title) : `Chapter ${c.index}`;
+      const line = `${chName.slice(0, 36)}${chName.length > 36 ? '…' : ''}`;
+      children.push(new Paragraph({
+        children: [
+          new TextRun({ text: line, font: SERIF, size: 19, color: HEAD }),
+          new TextRun({ text: `   ${c.words.toLocaleString()}${rel}`, font: SANS, size: 16, color: META }),
+          new TextRun({ text: `   ${Math.round(c.dialogueRatio * 100)}%`, font: SANS, size: 16, color: META }),
+          new TextRun({ text: `   ${c.meanSentenceWords}w`, font: SANS, size: 16, color: META }),
+        ],
+        spacing: { after: 40 },
+      }));
+    }
+    children.push(gap(0, 360));
+  }
 
   // ════════ AT A GLANCE ════════
   children.push(label('At a Glance', { before: 320, after: 140 }));
