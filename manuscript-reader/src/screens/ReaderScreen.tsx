@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useCallback, useState, useMemo } from 'react';
-import type { AnnotationType, TextAnchor, Chapter, ChangeEntry, ChangeKind } from '../engine/types';
+import type { Annotation, AnnotationType, TextAnchor, Chapter, ChangeEntry, ChangeKind } from '../engine/types';
 import { buildAnchor, locateAnchor, anchorFromQuote } from '../engine/annotations/anchor';
 import { buildChangeList, hasMeaningfulEdits } from '../engine/manuscript/changeList';
 import { buildRenderedMarkAnchor } from '../engine/manuscript/editRenderedMark';
@@ -11,7 +11,7 @@ import { useReaderStore } from '../state/readerStore';
 import { useUIStore } from '../state/uiStore';
 import { useLibraryStore } from '../state/libraryStore';
 import { useSnapshotStore } from '../state/snapshotStore';
-import { parseMarkdown } from '../engine/ingestion/parseMarkdown';
+import { getParsedManuscript } from '../engine/ingestion/parseCache';
 import { chapterForOffset } from '../engine/manuscript/chapterForOffset';
 import { ChapterNav } from '../components/reader/ChapterNav';
 import { AnnotationSidebar } from '../components/reader/AnnotationSidebar';
@@ -370,6 +370,11 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   const contentRef = useRef<HTMLDivElement>(null);
   const scrollSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const entranceObs = useRef<IntersectionObserver | null>(null);
+  // In-flight mark-application rAF (annotation highlights OR change-marks). Marking
+  // is chunked across frames so a large annotation/edit set never blocks first paint;
+  // this lets a posture change cancel a stale loop before it paints onto a DOM the
+  // new posture has just stripped.
+  const pendingMarkRaf = useRef<number | null>(null);
 
   const { manuscript, chapters, annotations: rawAnnotations, edits, addAnnotation, updateAnnotation, deleteAnnotation, importSession, openManuscript, recordEdit, pushEditTransition, setEditReturnScroll } = useReaderStore();
   // Re-home annotations to their live chapter (positional ids drift on edits), so
@@ -440,20 +445,52 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     if (chapters.length > 0) onChapterLabelChange(`Chapter ${chapters[0].index}`);
   }, [chapters, onChapterLabelChange]);
 
+  const cancelPendingMarks = useCallback(() => {
+    if (pendingMarkRaf.current != null) { cancelAnimationFrame(pendingMarkRaf.current); pendingMarkRaf.current = null; }
+  }, []);
+
+  // Wrap one annotation's quote in a clickable <mark>. The per-annotation unit of
+  // both the synchronous priority placement and the chunked background pass.
+  const applyHighlightMark = useCallback((c: HTMLElement, ann: Annotation) => {
+    if (!ann.quote) return;
+    const mark = markByAnchor(c, ann.anchor ?? anchorFromQuote(ann.quote), ann.id, ann.type);
+    if (mark) mark.addEventListener('click', e => {
+      if (editModeRef.current) return; // in edit mode a click just places the caret
+      e.stopPropagation(); setEditingAnn({ id: ann.id, note: ann.note });
+    });
+  }, [setEditingAnn]);
+
   // Re-apply highlights (declared before the effects that call it, to avoid a
   // use-before-declaration in the render/edit re-render paths).
-  const reapplyHighlights = useCallback(() => {
+  //
+  // markByAnchor scans rendered chapter text per annotation, so applying hundreds
+  // synchronously dominates hub→reader and Manuscript→Reading. Instead we chunk the
+  // work across animation frames so the mode/chrome paints first and marks trail by
+  // a frame or two. A `priorityId` (the annotation a hub jump wants to scroll to) is
+  // placed synchronously up front so the scroll-into-view can find it immediately.
+  const reapplyHighlights = useCallback((priorityId?: string) => {
     const c = contentRef.current; if (!c) return;
+    cancelPendingMarks();
     stripAnnotationMarks(c);
-    annotations.forEach(ann => {
-      if (!ann.quote) return;
-      const mark = markByAnchor(c, ann.anchor ?? anchorFromQuote(ann.quote), ann.id, ann.type);
-      if (mark) mark.addEventListener('click', e => {
-        if (editModeRef.current) return; // in edit mode a click just places the caret
-        e.stopPropagation(); setEditingAnn({ id: ann.id, note: ann.note });
-      });
-    });
-  }, [annotations]);
+
+    let pending = annotations;
+    if (priorityId) {
+      const pri = annotations.find(a => a.id === priorityId);
+      if (pri) { applyHighlightMark(c, pri); pending = annotations.filter(a => a.id !== priorityId); }
+    }
+    if (pending.length === 0) return;
+
+    let i = 0;
+    const batch = 24;
+    const run = () => {
+      pendingMarkRaf.current = null;
+      const end = Math.min(i + batch, pending.length);
+      for (; i < end; i++) applyHighlightMark(c, pending[i]);
+      if (i < pending.length) pendingMarkRaf.current = requestAnimationFrame(run);
+    };
+    // Defer even the first chunk so the posture change paints before any marking.
+    pendingMarkRaf.current = requestAnimationFrame(run);
+  }, [annotations, applyHighlightMark, cancelPendingMarks]);
 
   // Coalesced change list — built in layout effect (reads live chapter text from the
   // DOM ref; not valid during render). Empty while Changes mode is closed.
@@ -487,13 +524,14 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     let i = 0;
     const batch = 16;
     const run = () => {
+      pendingMarkRaf.current = null;
       const end = Math.min(i + batch, changeEntries.length);
       for (; i < end; i++) {
         const entry = changeEntries[i];
         const mark = markChangeByAnchor(c, entry, collapsedFor);
         if (mark) mark.addEventListener('click', e => { e.stopPropagation(); setSelectedEditId(entry.id); });
       }
-      if (i < changeEntries.length) requestAnimationFrame(run);
+      if (i < changeEntries.length) pendingMarkRaf.current = requestAnimationFrame(run);
     };
     run();
   }, [changeEntries]);
@@ -504,20 +542,21 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   // two sets never coexist, and there's no separate effect double-applying on mount.
   // Reads modes from refs so toggling a mode doesn't re-run the content-render
   // effects that depend on this callback's identity.
-  const syncAnnotationDOM = useCallback(() => {
+  const syncAnnotationDOM = useCallback((priorityId?: string) => {
     const c = contentRef.current; if (!c) return;
+    cancelPendingMarks();                    // abort any in-flight chunked pass
     stripAnnotationMarks(c);
     stripChangeMarks(c);
     if (editModeRef.current) return;        // editing surface: no marks
     if (changesOpenRef.current) reapplyChangeMarks();
-    else reapplyHighlights();
-  }, [reapplyHighlights, reapplyChangeMarks]);
+    else reapplyHighlights(priorityId);
+  }, [reapplyHighlights, reapplyChangeMarks, cancelPendingMarks]);
 
   // Render content + entrance observer + restore position
   useEffect(() => {
     if (!manuscript?.metadata.combinedMarkdown || !contentRef.current) return;
     const c = contentRef.current;
-    const { html } = parseMarkdown(manuscript.metadata.combinedMarkdown);
+    const { html } = getParsedManuscript(manuscript.metadata.combinedMarkdown);
     c.innerHTML = html;
     totalWords.current = manuscript.metadata.combinedMarkdown.trim().split(/\s+/).filter(Boolean).length;
 
@@ -558,7 +597,9 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
       const { chapterIdx, annId, intent } = jump;
       c.querySelectorAll('p, blockquote, ul, ol').forEach(el => el.classList.add('visible'));
       if (editModeRef.current) c.classList.add('edit-mode');
-      syncAnnotationDOM();
+      // Place the jump target's mark synchronously (priority) so the scroll below
+      // can find it; the rest of the marks fill in across the next frames.
+      syncAnnotationDOM(annId ?? undefined);
       requestAnimationFrame(() => requestAnimationFrame(() => {
         const mark = annId ? c.querySelector(`mark[data-ann="${CSS.escape(annId)}"]`) : null;
         if (mark) {
@@ -606,8 +647,15 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     // Opening Changes: wait until the layout effect builds changeEntries — otherwise
     // we strip annotation marks twice and run zero change-marks on an empty list.
     if (changesOpen && changeEntries.length === 0 && hasMeaningfulEdits(edits)) return;
-    syncAnnotationDOM();
+    // On a jump-mount this effect runs right after the content effect; pass the
+    // jump target as priority so its mark is placed synchronously (and not clobbered
+    // back to a deferred pass) before the scroll-into-view fires. pendingJumpRef is
+    // still latched here and null on every later posture/data change.
+    syncAnnotationDOM(pendingJumpRef.current?.annId ?? undefined);
   }, [annotations, editMode, changesOpen, changeEntries, syncAnnotationDOM, edits]);
+
+  // Cancel any in-flight chunked marking when the reader unmounts.
+  useEffect(() => () => cancelPendingMarks(), [cancelPendingMarks]);
 
   // ── Edit mode ──────────────────────────────────────────────────────────────
   // Re-render the current source in place (no persist): used to discard stray
@@ -616,7 +664,7 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     const c = contentRef.current; const md = manuscript?.metadata.combinedMarkdown;
     if (!c || !md) return;
     const sy = window.scrollY;
-    c.innerHTML = parseMarkdown(md).html;
+    c.innerHTML = getParsedManuscript(md).html;
     c.querySelectorAll('p, blockquote, ul, ol').forEach(el => el.classList.add('visible'));
     c.classList.toggle('edit-mode', editModeRef.current);
     syncAnnotationDOM();
@@ -643,7 +691,7 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
       const updated = replaceMarkdown(manuscript.id, newMd);
       if (updated) {
         setEditReturnScroll(window.scrollY);
-        openManuscript(updated, parseMarkdown(newMd).chapters);
+        openManuscript(updated, getParsedManuscript(newMd).chapters);
         showToast('Edit saved.');
       } else if (!editModeRef.current) rerenderInPlace();
       return;
@@ -716,7 +764,7 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
         renderedMarkAnchor,
       });
       setEditReturnScroll(window.scrollY);
-      const { chapters: newChapters } = parseMarkdown(updated.metadata.combinedMarkdown!);
+      const { chapters: newChapters } = getParsedManuscript(updated.metadata.combinedMarkdown!);
       openManuscript(updated, newChapters); // → render effect restores scroll, re-anchors
       // Make the edit reversible: snapshot full before/after + the record it made.
       if (edit) pushEditTransition(norm, res.markdown, edit);
@@ -773,7 +821,7 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     const updated = replaceMarkdown(manuscript.id, res.markdown);
     if (updated) {
       setEditReturnScroll(returnScrollY);
-      openManuscript(updated, parseMarkdown(res.markdown).chapters);
+      openManuscript(updated, getParsedManuscript(res.markdown).chapters);
       setEditingChapter(null);
       showToast('Chapter saved.');
     } else {
@@ -1127,7 +1175,7 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     if (!manuscript) return;
     const updated = appendChapters(manuscript.id, chunk);
     if (!updated) { showToast('Manuscript not cached — reload files first.'); setAddChaptersOpen(false); return; }
-    const { chapters: newChapters } = parseMarkdown(updated.metadata.combinedMarkdown!);
+    const { chapters: newChapters } = getParsedManuscript(updated.metadata.combinedMarkdown!);
     const added = newChapters.length - chapters.length;
     openManuscript(updated, newChapters);
     setAddChaptersOpen(false);

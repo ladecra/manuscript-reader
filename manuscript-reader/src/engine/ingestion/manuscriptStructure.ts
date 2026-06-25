@@ -12,12 +12,14 @@
 // ready (`frontMatter`/`backMatter`) for when capture lands.
 
 import type { ManuscriptStructure, ChapterSection, StructuralBlock } from '../types';
-import { parseMarkdown } from './parseMarkdown';
+import { getParsedManuscript } from './parseCache';
 
 const TITLE_COMMENT = /<!--\s*title:\s*([\s\S]*?)\s*-->/i;
 
 export function buildManuscriptStructure(md: string): ManuscriptStructure {
-  const { chapters, blocks } = parseMarkdown(md);
+  // Cached parse: the hub builds the structural model on the same source it (and
+  // the reader) already parsed for html/chapters — reuse it instead of re-parsing.
+  const { chapters, blocks } = getParsedManuscript(md);
 
   const titleMatch = TITLE_COMMENT.exec(md);
   const title = titleMatch ? titleMatch[1].trim() : (chapters[0]?.title ?? '');
