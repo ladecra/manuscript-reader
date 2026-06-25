@@ -206,6 +206,10 @@ export interface Edit {
    *  edited span by surrounding source context so the edit can be re-found in a
    *  later draft. quote === originalText. */
   anchor: TextAnchor;
+  /** Where the post-edit passage sits in RENDERED chapter prose at commit time.
+   *  Drives fast change-marks in the reader (same model as annotations). Optional
+   *  on legacy records — the change list can rebuild from live chapter text. */
+  renderedMarkAnchor?: TextAnchor;
   originalText: string;     // the source-markdown span before the edit
   replacementText: string;  // the source-markdown span after the edit
   createdAt: number;        // Unix ms
@@ -234,6 +238,10 @@ export interface ChangeEntry {
   editCount: number;        // how many raw edits collapsed into this entry
   firstAt: number;
   lastAt: number;
+  /** Net word delta on rendered before→after for this chain (chapter-scale rollup). */
+  netWordDelta: number;
+  /** Locates `current` in rendered prose — avoids DOM search on mode switch. */
+  renderedMarkAnchor?: TextAnchor;
 }
 
 // ─── Report ──────────────────────────────────────────────────────────────────

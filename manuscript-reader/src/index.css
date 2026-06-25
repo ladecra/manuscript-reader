@@ -896,10 +896,30 @@ html.light[data-mode="reader"] #topbar #topbar-chapter { opacity: 0.6; }
   font-style: normal; font-size: 8px; letter-spacing: 0.14em; text-transform: uppercase;
   color: var(--dim); margin-bottom: 3px;
 }
+.changes-margin-prev strong {
+  font-style: normal; font-weight: 600; color: var(--ink);
+}
 @keyframes change-expand { from { opacity: 0; transform: translateY(-2px); } to { opacity: 1; transform: none; } }
 .changes-margin-empty {
   font-family: 'Hanken Grotesk', system-ui, sans-serif;
   font-size: 11px; color: var(--dim); font-style: italic; padding-left: 14px; line-height: 1.6;
+}
+.changes-margin-chapter { margin-top: 2px; }
+.changes-margin-chapter-head {
+  padding: 8px 0 4px 14px;
+  border-top: 1px solid var(--border);
+}
+.changes-margin-chapter:first-of-type .changes-margin-chapter-head { border-top: none; }
+.changes-margin-chapter-title {
+  display: block;
+  font-family: var(--font-ui); font-size: 9px; font-weight: 600;
+  letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink);
+}
+.changes-margin-chapter-summary {
+  display: block; margin-top: 3px;
+  font-family: var(--font-ui); font-size: 9px; line-height: 1.45;
+  color: var(--dim); letter-spacing: 0.02em; font-weight: 400;
+  text-transform: none;
 }
 
 @media (min-width: 1200px) {
@@ -908,7 +928,7 @@ html.light[data-mode="reader"] #topbar #topbar-chapter { opacity: 0.6; }
     grid-column: 3; margin: 0; max-width: 300px; padding: 0 0 0 40px;
     align-self: start; position: sticky; top: calc(var(--topbar-h) + 24px);
     max-height: calc(100vh - var(--topbar-h) - 56px); overflow-y: auto; scrollbar-width: none;
-    opacity: 0; pointer-events: none; transition: opacity 0.55s ease;
+    opacity: 0; pointer-events: none; transition: opacity 0.15s ease;
   }
   #reader-body.changes-open #changes-margin.open { opacity: 1; pointer-events: auto; }
 }

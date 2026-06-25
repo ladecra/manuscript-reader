@@ -1,7 +1,8 @@
-import React, { useEffect, useRef, useCallback, useState, useMemo } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useCallback, useState, useMemo } from 'react';
 import type { AnnotationType, TextAnchor, Chapter, ChangeEntry, ChangeKind } from '../engine/types';
 import { buildAnchor, locateAnchor, anchorFromQuote } from '../engine/annotations/anchor';
-import { buildChangeList } from '../engine/manuscript/changeList';
+import { buildChangeList, hasMeaningfulEdits } from '../engine/manuscript/changeList';
+import { buildRenderedMarkAnchor } from '../engine/manuscript/editRenderedMark';
 import { resolveAnnotationChapters } from '../engine/annotations/chapterResolve';
 import { applyBlockEdit, htmlToMarkdownBlocks, sameProse, serializeContentDomToMarkdown } from '../engine/manuscript/blockEdit';
 import { matchMarkdownBlockPrefix } from '../engine/manuscript/editMarkdownShortcut';
@@ -21,6 +22,7 @@ import { AnnMarginColumn } from '../components/reader/AnnMarginColumn';
 import { ChangesMarginColumn } from '../components/reader/ChangesMarginColumn';
 import { showToast } from '../components/ui/Toast';
 import { usesTouchFriendlyEditing } from '../lib/touchEditing';
+import { buildCollapsedTextIndex, type CollapsedTextIndex } from '../lib/collapsedTextIndex';
 
 const EMPTY_CHANGES: ChangeEntry[] = []; // stable ref when Changes mode is closed
 
@@ -63,41 +65,9 @@ function textOffsetToRange(container: HTMLElement, start: number, end: number): 
   return null;
 }
 
-// Map a span in whitespace-collapsed text (like editRenderedNeedle) back to a DOM
-// Range — paragraph boundaries in the HTML often omit the spaces markdown has.
-function findCollapsedNeedleRange(root: HTMLElement, needle: string): Range | null {
-  const normNeedle = needle.replace(/\s+/g, ' ').trim();
-  if (normNeedle.length < 4) return null;
-
-  const map: { node: Text; offset: number }[] = [];
-  let lastWasSpace = false;
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  let node: Text | null;
-  while ((node = walker.nextNode() as Text | null)) {
-    for (let i = 0; i < node.nodeValue!.length; i++) {
-      const ch = node.nodeValue![i];
-      if (/\s/.test(ch)) {
-        if (lastWasSpace) continue;
-        lastWasSpace = true;
-        map.push({ node, offset: i });
-      } else {
-        lastWasSpace = false;
-        map.push({ node, offset: i });
-      }
-    }
-  }
-  const collapsed = map.map(m => (/\s/.test(m.node.nodeValue![m.offset]) ? ' ' : m.node.nodeValue![m.offset])).join('');
-  const hitStart = collapsed.indexOf(normNeedle);
-  if (hitStart === -1) return null;
-  const hitEnd = hitStart + normNeedle.length;
-  if (hitEnd > map.length) return null;
-
-  const range = document.createRange();
-  const startM = map[hitStart];
-  const endM = map[hitEnd - 1];
-  range.setStart(startM.node, startM.offset);
-  range.setEnd(endM.node, endM.offset + 1);
-  return range;
+// Map a span in whitespace-collapsed text back to a DOM Range (see collapsedTextIndex).
+function findCollapsedNeedleRange(root: HTMLElement, needle: string, cached?: CollapsedTextIndex): Range | null {
+  return (cached ?? buildCollapsedTextIndex(root)).findRange(needle);
 }
 
 function wrapTextInChangeMark(container: HTMLElement, text: string, id: string, kind: ChangeKind): HTMLElement | null {
@@ -274,10 +244,10 @@ function stripChangeMarks(container: HTMLElement) {
   });
 }
 
-function markChangeInRoot(root: HTMLElement, needle: string, id: string, kind: ChangeKind): HTMLElement | null {
+function markChangeInRoot(root: HTMLElement, needle: string, id: string, kind: ChangeKind, collapsed?: CollapsedTextIndex): HTMLElement | null {
   for (const probe of [needle, needle.slice(0, 80), needle.slice(0, 40)]) {
     if (probe.length < 4) break;
-    const range = findCollapsedNeedleRange(root, probe)
+    const range = findCollapsedNeedleRange(root, probe, collapsed)
       ?? (() => {
         const full = root.textContent ?? '';
         const loc = locateAnchor(full, anchorFromQuote(probe));
@@ -299,14 +269,62 @@ function markChangeInRoot(root: HTMLElement, needle: string, id: string, kind: C
   return wrapTextInChangeMark(root, needle, id, kind);
 }
 
-function markChangeByAnchor(container: HTMLElement, entry: ChangeEntry): HTMLElement | null {
-  const needle = entry.current;
-  if (!needle) return null;
+function chapterRenderedTextMap(container: HTMLElement | null): Map<string, string> {
+  const map = new Map<string, string>();
+  if (!container) return map;
+  container.querySelectorAll<HTMLElement>('.chapter-marker[id^="ch-"]').forEach(marker => {
+    const block = chapterBlockFor(container, marker.id);
+    if (block) map.set(marker.id, block.textContent ?? '');
+  });
+  container.querySelectorAll<HTMLElement>('.chapter-block').forEach(block => {
+    const id = chapterIdForBlock(block);
+    if (id && !map.has(id)) map.set(id, block.textContent ?? '');
+  });
+  return map;
+}
+
+function markChangeInRootByAnchor(root: HTMLElement, anchor: TextAnchor, id: string, kind: ChangeKind): HTMLElement | null {
+  const full = root.textContent ?? '';
+  const loc = locateAnchor(full, anchor);
+  if (loc && loc.end > loc.start) {
+    const range = textOffsetToRange(root, loc.start, loc.end);
+    if (range) {
+      try {
+        const mark = document.createElement('mark');
+        mark.dataset.edit = id;
+        mark.className = `change-mark kind-${kind}`;
+        range.surroundContents(mark);
+        return mark;
+      } catch {
+        const wrapped = wrapTextInChangeMark(root, anchor.quote, id, kind);
+        if (wrapped) return wrapped;
+      }
+    }
+  }
+  return wrapTextInChangeMark(root, anchor.quote, id, kind);
+}
+
+function markChangeByAnchor(
+  container: HTMLElement,
+  entry: ChangeEntry,
+  collapsedFor: (root: HTMLElement) => CollapsedTextIndex,
+): HTMLElement | null {
   const chapterId = entry.chapterId || (entry.chapterIndex > 0 ? `ch-${entry.chapterIndex}` : '');
   const scope = chapterId ? chapterBlockFor(container, chapterId) : null;
-  const roots = scope ? [scope, container] : [container];
+  const roots: HTMLElement[] = scope ? [scope] : [container];
+
+  if (entry.renderedMarkAnchor?.quote) {
+    const anchor = { ...entry.renderedMarkAnchor, chapterId: entry.renderedMarkAnchor.chapterId || chapterId };
+    for (const root of roots) {
+      const mark = markChangeInRootByAnchor(root, anchor, entry.id, entry.kind);
+      if (mark) return mark;
+    }
+  }
+
+  const needle = entry.current;
+  if (!needle) return null;
   for (const root of roots) {
-    const mark = markChangeInRoot(root, needle, entry.id, entry.kind);
+    const mark = markChangeInRoot(root, needle, entry.id, entry.kind, collapsedFor(root));
     if (mark) return mark;
   }
   return null;
@@ -437,19 +455,47 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     });
   }, [annotations]);
 
-  // Coalesced, noise-filtered change list (chains repeated edits to one passage,
-  // drops formatting-only churn). Computed LAZILY — only while Changes mode is
-  // open — so entering the reader (reading/annotating/editing) never pays for it.
-  const changeEntries = useMemo(() => (changesOpen ? buildChangeList(edits) : EMPTY_CHANGES), [changesOpen, edits]);
+  // Coalesced change list — built in layout effect (reads live chapter text from the
+  // DOM ref; not valid during render). Empty while Changes mode is closed.
+  const [changeEntries, setChangeEntries] = useState<ChangeEntry[]>(EMPTY_CHANGES);
+  useLayoutEffect(() => {
+    if (!changesOpen) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset when leaving Changes mode
+      setChangeEntries(EMPTY_CHANGES);
+      return;
+    }
+    const chapterText = chapterRenderedTextMap(contentRef.current);
+    setChangeEntries(buildChangeList(edits, {
+      chapterRenderedText: id => chapterText.get(id),
+      chapters,
+    }));
+  }, [changesOpen, edits, manuscript?.metadata.combinedMarkdown, chapters]);
 
   // Changes mode: wrap each changed passage in a change-mark, clickable to select
-  // its margin card. Re-locates from the live rendered text (chapter-scoped).
+  // its margin card. One collapsed-text index per chapter root (not per entry).
   const reapplyChangeMarks = useCallback(() => {
     const c = contentRef.current; if (!c) return;
-    changeEntries.forEach(entry => {
-      const mark = markChangeByAnchor(c, entry);
-      if (mark) mark.addEventListener('click', e => { e.stopPropagation(); setSelectedEditId(entry.id); });
-    });
+    const indexByRoot = new WeakMap<HTMLElement, CollapsedTextIndex>();
+    const collapsedFor = (root: HTMLElement) => {
+      let ix = indexByRoot.get(root);
+      if (!ix) {
+        ix = buildCollapsedTextIndex(root);
+        indexByRoot.set(root, ix);
+      }
+      return ix;
+    };
+    let i = 0;
+    const batch = 16;
+    const run = () => {
+      const end = Math.min(i + batch, changeEntries.length);
+      for (; i < end; i++) {
+        const entry = changeEntries[i];
+        const mark = markChangeByAnchor(c, entry, collapsedFor);
+        if (mark) mark.addEventListener('click', e => { e.stopPropagation(); setSelectedEditId(entry.id); });
+      }
+      if (i < changeEntries.length) requestAnimationFrame(run);
+    };
+    run();
   }, [changeEntries]);
 
   // The single mark applier — mode-aware and self-contained: it always clears BOTH
@@ -556,7 +602,12 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
 
   // Apply the right marks whenever the data or posture changes (incl. toggling
   // Changes mode — changesOpenRef is updated by the effect above, which runs first).
-  useEffect(() => { syncAnnotationDOM(); }, [annotations, editMode, changesOpen, changeEntries, syncAnnotationDOM]);
+  useEffect(() => {
+    // Opening Changes: wait until the layout effect builds changeEntries — otherwise
+    // we strip annotation marks twice and run zero change-marks on an empty list.
+    if (changesOpen && changeEntries.length === 0 && hasMeaningfulEdits(edits)) return;
+    syncAnnotationDOM();
+  }, [annotations, editMode, changesOpen, changeEntries, syncAnnotationDOM, edits]);
 
   // ── Edit mode ──────────────────────────────────────────────────────────────
   // Re-render the current source in place (no persist): used to discard stray
@@ -648,6 +699,13 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
       // leading blank line), so the quote aligns with the source for re-location.
       const quote = original.trim();
       const quoteStart = bodyStart + (original.length - original.trimStart().length);
+      const chapterText = block.textContent ?? '';
+      const renderedMarkAnchor = buildRenderedMarkAnchor(
+        chapterText,
+        quote,
+        newBody,
+        owner?.id ?? '',
+      ) ?? undefined;
       const edit = recordEdit({
         chapterId: owner?.id ?? '',
         chapterIndex: owner?.index ?? 0,
@@ -655,6 +713,7 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
         anchor: buildAnchor(norm, quoteStart, quote),
         originalText: quote,
         replacementText: newBody,
+        renderedMarkAnchor,
       });
       setEditReturnScroll(window.scrollY);
       const { chapters: newChapters } = parseMarkdown(updated.metadata.combinedMarkdown!);

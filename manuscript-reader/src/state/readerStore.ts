@@ -67,6 +67,7 @@ interface ReaderStore {
     anchor: TextAnchor;
     originalText: string;
     replacementText: string;
+    renderedMarkAnchor?: TextAnchor;
   }) => Edit | null;
   /** Push a committed edit onto the undo history (clears the redo branch). */
   pushEditTransition: (before: string, after: string, edit: Edit) => void;

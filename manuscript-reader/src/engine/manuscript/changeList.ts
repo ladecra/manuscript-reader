@@ -14,11 +14,24 @@
 //     formatting), and empty results.
 // Matching is on the RENDERED text (editRenderedNeedle), so formatting churn
 // inside a passage doesn't break the chain.
+//
+// Longer term, snapshot diffs answer "what changed meaningfully between drafts";
+// this list answers "what did I change in this working session" at passage scale.
 
-import type { Edit, ChangeEntry } from '../types';
+import type { Edit, ChangeEntry, TextAnchor, Chapter } from '../types';
 import { editRenderedNeedle } from './editRenderedText';
+import { narrowRenderedPair } from './renderedChangeRegion';
+import { buildRenderedMarkAnchor, renderedWordDelta } from './editRenderedMark';
+import { resolveChangeChapter } from './resolveChangeChapter';
 
 const CTX_WORDS = 4; // words of unchanged context kept around the changed region
+
+export interface BuildChangeListOptions {
+  /** Rendered text per chapter id — used to build anchors for legacy edits. */
+  chapterRenderedText?: (chapterId: string) => string | undefined;
+  /** Live chapter list — resolves legacy rows missing chapterId / index. */
+  chapters?: Chapter[];
+}
 
 /** Word-index span of the passage that differs between two rendered strings. */
 function changeWordSpan(before: string, after: string): { lo: number; hi: number } {
@@ -33,36 +46,14 @@ function changeWordSpan(before: string, after: string): { lo: number; hi: number
 
 function wordSpansOverlap(a: { lo: number; hi: number }, b: { lo: number; hi: number }): boolean {
   if (a.lo < b.hi && b.lo < a.hi) return true;
-  // Refinements one word apart (e.g. "busy" then "busy enough") should still chain.
   const gap = a.hi <= b.lo ? b.lo - a.hi : a.lo - b.hi;
   return gap <= CTX_WORDS;
 }
 
-// Narrow a before→after pair to the region that actually differs: trim the common
-// leading/trailing words (a desktop edit commits a whole chapter block, but only a
-// phrase moved), keeping a few words of context on each side for legibility.
-function narrowChange(prev: string, cur: string): Pick<ChangeEntry, 'previous' | 'current' | 'startEllipsis' | 'endEllipsis'> {
-  const a = prev.split(' ');
-  const b = cur.split(' ');
-  let i = 0;
-  while (i < a.length && i < b.length && a[i] === b[i]) i++;
-  let j = 0;
-  while (j < a.length - i && j < b.length - i && a[a.length - 1 - j] === b[b.length - 1 - j]) j++;
-  const start = Math.max(0, i - CTX_WORDS);
-  const endA = Math.min(a.length, a.length - j + CTX_WORDS);
-  const endB = Math.min(b.length, b.length - j + CTX_WORDS);
-  return {
-    previous: a.slice(start, endA).join(' '),
-    current: b.slice(start, endB).join(' '),
-    startEllipsis: start > 0,
-    endEllipsis: endA < a.length || endB < b.length,
-  };
-}
-
 interface Chain {
-  firstOriginal: string;   // raw source of the chain's first original
-  lastReplacement: string; // raw source of the chain's last replacement
-  currentNeedle: string;   // rendered text the chain currently produces (for linking)
+  firstOriginal: string;
+  lastReplacement: string;
+  currentNeedle: string;
   id: string;
   chapterId: string;
   chapterIndex: number;
@@ -70,6 +61,7 @@ interface Chain {
   editCount: number;
   firstAt: number;
   lastAt: number;
+  renderedMarkAnchor?: TextAnchor;
 }
 
 /** Cheap predicate for "is the Changes tab worth showing?" — early-exits on the
@@ -78,31 +70,37 @@ interface Chain {
  *  paid when the author actually opens Changes mode). */
 export function hasMeaningfulEdits(edits: Edit[]): boolean {
   for (const e of edits) {
-    if (e.originalText === e.replacementText) continue; // identical source → skip the regex work
+    if (e.originalText === e.replacementText) continue;
     if (editRenderedNeedle(e.originalText) !== editRenderedNeedle(e.replacementText)) return true;
   }
   return false;
 }
 
-export function buildChangeList(edits: Edit[]): ChangeEntry[] {
+export function buildChangeList(edits: Edit[], opts?: BuildChangeListOptions): ChangeEntry[] {
+  const needleCache = new Map<string, string>();
+  const needle = (source: string) => {
+    let v = needleCache.get(source);
+    if (v === undefined) {
+      v = editRenderedNeedle(source);
+      needleCache.set(source, v);
+    }
+    return v;
+  };
+
   const ordered = [...edits].sort((a, b) => a.createdAt - b.createdAt);
-  // Open chains per chapter, keyed by the rendered text they currently produce —
-  // so the next edit that starts from that text continues the chain.
   const openByChapter = new Map<string, Map<string, Chain>>();
   const chains: Chain[] = [];
 
   for (const e of ordered) {
-    const origNeedle = editRenderedNeedle(e.originalText);
-    const replNeedle = editRenderedNeedle(e.replacementText);
+    const origNeedle = needle(e.originalText);
+    const replNeedle = needle(e.replacementText);
     const chapterKey = e.chapterId || `idx-${e.chapterIndex}`;
     let open = openByChapter.get(chapterKey);
     if (!open) { open = new Map(); openByChapter.set(chapterKey, open); }
 
     let prior = origNeedle ? open.get(origNeedle) : undefined;
     if (prior) {
-      // Whole-chapter commits share identical before snapshots; only chain when the
-      // cumulative change so far and this edit touch the same passage.
-      const priorSpan = changeWordSpan(editRenderedNeedle(prior.firstOriginal), origNeedle);
+      const priorSpan = changeWordSpan(needle(prior.firstOriginal), origNeedle);
       const nextSpan = changeWordSpan(origNeedle, replNeedle);
       if (!wordSpansOverlap(priorSpan, nextSpan)) {
         open.delete(origNeedle);
@@ -110,7 +108,6 @@ export function buildChangeList(edits: Edit[]): ChangeEntry[] {
       }
     }
     if (prior) {
-      // Continue the chain: this edit started from what the prior edit produced.
       open.delete(prior.currentNeedle);
       prior.lastReplacement = e.replacementText;
       prior.currentNeedle = replNeedle;
@@ -119,6 +116,7 @@ export function buildChangeList(edits: Edit[]): ChangeEntry[] {
       prior.lastAt = e.createdAt;
       prior.chapterIndex = e.chapterIndex;
       prior.chapterTitle = e.chapterTitle;
+      if (e.renderedMarkAnchor) prior.renderedMarkAnchor = e.renderedMarkAnchor;
       if (replNeedle) open.set(replNeedle, prior);
     } else {
       const chain: Chain = {
@@ -132,6 +130,7 @@ export function buildChangeList(edits: Edit[]): ChangeEntry[] {
         editCount: 1,
         firstAt: e.createdAt,
         lastAt: e.createdAt,
+        renderedMarkAnchor: e.renderedMarkAnchor,
       };
       chains.push(chain);
       if (replNeedle) open.set(replNeedle, chain);
@@ -140,21 +139,39 @@ export function buildChangeList(edits: Edit[]): ChangeEntry[] {
 
   return chains
     .flatMap<ChangeEntry>(c => {
-      const previousFull = editRenderedNeedle(c.firstOriginal);
-      const currentFull = editRenderedNeedle(c.lastReplacement);
-      // Drop net no-ops (formatting / whitespace / escape cleanup) — rendered prose
-      // unchanged. Keep revisions, additions, AND deletions.
+      const previousFull = needle(c.firstOriginal);
+      const currentFull = needle(c.lastReplacement);
       if (previousFull === currentFull) return [];
       const kind: ChangeEntry['kind'] = previousFull === '' ? 'added' : currentFull === '' ? 'deleted' : 'revised';
-      // Narrow revisions to the changed region; additions/deletions show in full.
       const span = kind === 'revised'
-        ? narrowChange(previousFull, currentFull)
+        ? narrowRenderedPair(previousFull, currentFull)
         : { previous: previousFull, current: currentFull, startEllipsis: false, endEllipsis: false };
+
+      let { chapterId, chapterIndex, chapterTitle } = c;
+      if (opts?.chapters?.length) {
+        ({ chapterId, chapterIndex, chapterTitle } = resolveChangeChapter(
+          { chapterId: c.chapterId, chapterIndex: c.chapterIndex, chapterTitle: c.chapterTitle },
+          opts.chapters,
+        ));
+      }
+      const resolvedChapterId = chapterId || (chapterIndex > 0 ? `ch-${chapterIndex}` : '');
+
+      let renderedMarkAnchor = c.renderedMarkAnchor;
+      if (!renderedMarkAnchor && resolvedChapterId && opts?.chapterRenderedText) {
+        const chText = opts.chapterRenderedText(resolvedChapterId);
+        if (chText) {
+          renderedMarkAnchor = buildRenderedMarkAnchor(chText, c.firstOriginal, c.lastReplacement, resolvedChapterId)
+            ?? undefined;
+        }
+      }
+
       return [{
         id: c.id, kind,
-        chapterId: c.chapterId, chapterIndex: c.chapterIndex, chapterTitle: c.chapterTitle,
+        chapterId, chapterIndex, chapterTitle,
         ...span,
         editCount: c.editCount, firstAt: c.firstAt, lastAt: c.lastAt,
+        netWordDelta: renderedWordDelta(c.firstOriginal, c.lastReplacement),
+        renderedMarkAnchor,
       }];
     })
     .sort((a, b) => a.chapterIndex - b.chapterIndex || a.firstAt - b.firstAt);
