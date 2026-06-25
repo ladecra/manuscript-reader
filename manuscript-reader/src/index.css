@@ -810,16 +810,34 @@ html.light[data-mode="reader"] #topbar #topbar-chapter { opacity: 0.6; }
   margin: 48px auto 0; max-width: var(--max-w); padding: 0 24px;
 }
 
-/* The change-mark on the prose — dashed underline + faint wash (collapsed state). */
-.change-mark {
+/* The change-mark on the prose — dashed underline + faint wash (Changes mode only). */
+#reader-body.changes-open #content mark.change-mark {
   color: inherit; cursor: pointer; border-radius: 2px;
   background: rgba(189, 161, 98, 0.08);
   text-decoration: underline; text-decoration-style: dashed;
   text-decoration-color: var(--gold-line); text-underline-offset: 3px;
   transition: background var(--transition), text-decoration-color var(--transition);
 }
-.change-mark:hover { background: var(--gold-tint); text-decoration-color: var(--gold-soft); }
-.change-mark.sel { background: var(--gold-tint); text-decoration-color: var(--gold); }
+#reader-body.changes-open #content mark.change-mark.kind-added {
+  background: rgba(120, 150, 100, 0.14);
+  text-decoration-color: rgba(120, 150, 100, 0.55);
+}
+#reader-body.changes-open #content mark.change-mark.kind-revised {
+  background: rgba(189, 161, 98, 0.08);
+  text-decoration-color: var(--gold-line);
+}
+#reader-body.changes-open #content mark.change-mark:hover {
+  background: var(--gold-tint); text-decoration-color: var(--gold-soft);
+}
+#reader-body.changes-open #content mark.change-mark.kind-added:hover {
+  background: rgba(120, 150, 100, 0.22); text-decoration-color: #8a9a6e;
+}
+#reader-body.changes-open #content mark.change-mark.sel {
+  background: var(--gold-tint); text-decoration-color: var(--gold);
+}
+#reader-body.changes-open #content mark.change-mark.kind-added.sel {
+  background: rgba(120, 150, 100, 0.24); text-decoration-color: #8a9a6e;
+}
 
 .changes-margin-head {
   display: flex; align-items: baseline; justify-content: space-between;
