@@ -2771,9 +2771,25 @@ mark[data-ann]:hover { filter: brightness(1.2); }
 :root.light .hub-section-label { border-bottom-color: rgba(33, 29, 21, 0.07); }
 .hub-form { display: flex; flex-direction: column; gap: 22px; max-width: 540px; }
 
-.hub-report { max-width: 620px; }
-.hub-report .rp-section:first-child { padding-top: 0; }
-.hub-report .rp-section { padding-left: 0; padding-right: 0; }
+.hub-report {
+  max-width: 620px;
+  display: flex; flex-direction: column;
+  margin-top: 4px;
+  background: var(--raised); border: 1px solid var(--line);
+}
+.hub-report .rp-empty {
+  padding: 48px 20px;
+  border-bottom: none;
+}
+.hub-report .rp-section {
+  padding: 18px 20px 20px;
+  border-bottom: 1px solid var(--line);
+}
+.hub-report .rp-section:last-child { border-bottom: none; }
+.hub-report .rp-section-label {
+  border-bottom-color: var(--line);
+  margin-bottom: 12px;
+}
 
 .hub-empty {
   border: 1px dashed var(--border); border-radius: var(--radius); padding: 40px 28px; text-align: center;

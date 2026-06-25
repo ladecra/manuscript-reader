@@ -13,6 +13,7 @@ import type { ExportManuscriptMeta } from '../engine/exports/manuscriptMarkdown'
 import { ChapterTree } from '../components/library/ChapterTree';
 import { AddChaptersModal } from '../components/reader/AddChaptersModal';
 import { ReportView } from '../components/reports/ReportView';
+import { ExportChoiceModal } from '../components/reports/ExportChoiceModal';
 import { exportShareableReader, ShareReaderBuildError, type ShareSnapshotStamp } from '../engine/exports/shareableReader';
 import { loadSnapshot } from '../engine/storage';
 import { ShareReaderModal } from '../components/share/ShareReaderModal';
@@ -45,6 +46,7 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
   const [shareReaderOpen, setShareReaderOpen] = useState(false);
   const [shareReaderInitialMode, setShareReaderInitialMode] = useState<'reading' | 'annotating'>('annotating');
+  const [reportExportOpen, setReportExportOpen] = useState(false);
 
   const title = manuscript?.metadata.title ?? '';
   const combinedMarkdown = manuscript?.metadata.combinedMarkdown;
@@ -90,7 +92,7 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
   }, [chapters, tocQuery]);
 
   const signals = useMemo(
-    () => manuscript && annotations.length > 0
+    () => manuscript
       ? computeEditorialSignals({ manuscriptId: manuscript.id, annotations, chapters, sessions, combinedMarkdown })
       : null,
     [manuscript, annotations, chapters, sessions, combinedMarkdown],
@@ -510,11 +512,38 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
             )}
 
             {pane === 'report' && (
-              <>
-                <h2 className="hub-panel-title">Manuscript Intelligence</h2>
+              <div className="hub-panel">
+                <div className="hub-overview-head">
+                  <h2 className="hub-panel-title">Manuscript Intelligence</h2>
+                  <button
+                    type="button"
+                    className="library-new-btn"
+                    disabled={annotations.length === 0}
+                    title={annotations.length === 0 ? 'Annotate in the reader to generate a report' : undefined}
+                    onClick={() => setReportExportOpen(true)}
+                  >
+                    <DownloadIcon size={13} />
+                    Download report
+                  </button>
+                </div>
                 <p className="hub-panel-lead">Where readers slowed, agreed, and reacted — every figure traces to a reader action.</p>
                 <div className="hub-report"><ReportView signals={signals} onJump={jumpToChapter} /></div>
-              </>
+                <ExportChoiceModal
+                  open={reportExportOpen}
+                  heading="Download editorial report"
+                  subject={title}
+                  primaryLabel="Download report"
+                  formats={[
+                    { key: 'docx', label: 'Word', desc: 'Best for sharing, comments, and print.' },
+                    { key: 'html', label: 'Web page', desc: 'Self-contained HTML — opens in any browser.' },
+                  ]}
+                  onClose={() => setReportExportOpen(false)}
+                  onExport={async (key) => {
+                    if (key === 'docx') await handleExportReportDocx();
+                    else handleExportReportHtml();
+                  }}
+                />
+              </div>
             )}
 
             {pane === 'exports' && (
@@ -694,22 +723,24 @@ function PubField({ label, id, value, onChange, placeholder = '', max, wide = fa
       <label className="instrument-field-label" htmlFor={id}>{label}</label>
       <input id={id} className="pub-field-input" type="text" value={value}
         placeholder={placeholder} maxLength={max} onChange={e => onChange(e.target.value)} />
-      <span className="pub-field-counter">{value.length} / {max}</span>
     </div>
   );
 }
 
-function PubTextarea({ label, id, value, onChange, placeholder = '', max, wide = false }: {
+function PubTextarea({ label, id, value, onChange, placeholder = '', max, wide = false, counterNearLimit = false }: {
   label: string; id: string; value: string; onChange: (v: string) => void;
-  placeholder?: string; max: number; wide?: boolean;
+  placeholder?: string; max: number; wide?: boolean; counterNearLimit?: boolean;
 }) {
+  const showCounter = counterNearLimit && value.length >= max * 0.85;
   return (
     <div className={`pub-field${wide ? ' pub-field--wide' : ''}`}>
       <label className="instrument-field-label" htmlFor={id}>{label}</label>
       <textarea id={id} className="pub-field-input pub-field-textarea" value={value}
         placeholder={placeholder} maxLength={max} rows={4}
         onChange={e => onChange(e.target.value)} />
-      <span className="pub-field-counter">{value.length} / {max}</span>
+      {showCounter && (
+        <span className="pub-field-counter" aria-live="polite">{value.length} / {max}</span>
+      )}
     </div>
   );
 }
@@ -758,7 +789,7 @@ function DetailsTab({
       <div className="instrument-group-label pub-section-label">Synopsis</div>
       <div className="pub-form-grid">
         <PubTextarea label="Short synopsis" id="hub-pub-synopsis" value={pub.synopsis ?? ''} onChange={sf('synopsis')} max={1000}
-          placeholder="A short description for your title page and exports (Pandoc: description)." wide />
+          placeholder="A short description for your title page and exports (Pandoc: description)." wide counterNearLimit />
       </div>
 
       <div className="instrument-group-label pub-section-label">Publication</div>
@@ -773,7 +804,7 @@ function DetailsTab({
         <PubField label="Copyright year" id="hub-pub-copyrightYear" value={pub.copyrightYear ?? ''} onChange={sf('copyrightYear')} max={10} placeholder={String(new Date().getFullYear())} />
         <PubField label="Copyright holder" id="hub-pub-copyrightHolder" value={pub.copyrightHolder ?? ''} onChange={sf('copyrightHolder')} max={200} placeholder="Author or estate name" />
         <PubField label="Rights" id="hub-pub-rights" value={pub.rights ?? ''} onChange={sf('rights')} max={200} placeholder="All rights reserved" wide />
-        <PubTextarea label="Dedication" id="hub-pub-dedication" value={pub.dedication ?? ''} onChange={sf('dedication')} max={1000} placeholder="For…" wide />
+        <PubTextarea label="Dedication" id="hub-pub-dedication" value={pub.dedication ?? ''} onChange={sf('dedication')} max={1000} placeholder="For…" wide counterNearLimit />
       </div>
 
       <div className="instrument-group-label pub-section-label">Status</div>
