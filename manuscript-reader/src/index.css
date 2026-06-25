@@ -1103,10 +1103,13 @@ html.light[data-mode="reader"] #topbar #topbar-chapter { opacity: 0.6; }
   padding-bottom: 8px; border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 }
 :root.light .rp-section-label { border-bottom-color: rgba(33, 29, 21, 0.07); }
-.rp-overview-grid { display: grid; gap: 24px; margin-bottom: 4px; grid-auto-flow: column; padding: 0 20px; text-align: center; }
-/* Narrow screens: a single row of stats overflows — let them wrap into a flex row. */
+/* grid-auto-flow:column alone makes auto-width columns that pack to the left;
+   grid-auto-columns:1fr gives every stat an equal share so the row fills evenly. */
+.rp-overview-grid { display: grid; gap: 24px; margin-bottom: 4px; grid-auto-flow: column; grid-auto-columns: 1fr; padding: 0 20px; text-align: center; }
+/* Narrow screens: a single row of 4 stats is cramped — wrap to an even 2-up grid
+   (still centered), rather than a left-packed flex row. */
 @media (max-width: 560px) {
-  .rp-overview-grid { display: flex; flex-wrap: wrap; padding: 0; gap: 18px 24px; text-align: left; }
+  .rp-overview-grid { grid-auto-flow: row; grid-template-columns: repeat(2, 1fr); padding: 0; gap: 18px 24px; }
 }
 .rp-stat { display: flex; flex-direction: column; gap: 2px; }
 .rp-stat-num { font-family: 'Cormorant Garamond', Georgia, serif; font-size: 40px; font-weight: 300; color: var(--ink); line-height: 1; }
@@ -1262,9 +1265,59 @@ html.shell-scroll-lock body {
 .app-shell--collapsed .app-shell-brand { justify-content: center; padding-left: 0; padding-right: 0; }
 
 /* Floating settings control (top-right) on the bare shell screens. */
+/* Floating settings gear, top-right — mobile only. On desktop the rail owns
+   Settings (the app-shell / reader rail "Settings" item), so this is hidden. */
 .app-topctrl {
   position: fixed; top: 14px; right: 22px; z-index: 60;
 }
+@media (min-width: 861px) {
+  .app-topctrl { display: none; }
+}
+
+/* ── Settings popover (theme · text size · sync) ───────────────────────────────
+   position:fixed (set inline off the trigger) so it never clips inside the rail's
+   overflow. Clean --raised surface — no tan/cream — and a sharp gold-selected
+   segmented control instead of pill buttons. */
+.settings-menu-backdrop { position: fixed; inset: 0; z-index: 198; }
+.settings-menu {
+  z-index: 199; width: 244px; max-width: calc(100vw - 24px);
+  padding: 16px;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  box-shadow: 0 16px 44px -12px rgba(35, 33, 28, 0.4);
+  display: flex; flex-direction: column; gap: 16px;
+}
+.settings-menu-section { display: flex; flex-direction: column; gap: 8px; }
+.settings-menu-label {
+  font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 9px; font-weight: 600;
+  letter-spacing: 0.14em; text-transform: uppercase; color: var(--dim);
+}
+.settings-seg { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.settings-seg-opt {
+  border: 1px solid var(--border); background: none; cursor: pointer;
+  padding: 8px 0; border-radius: var(--radius-sm, 6px);
+  font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 12px; font-weight: 500;
+  color: var(--muted);
+  transition: border-color var(--transition), color var(--transition);
+}
+.settings-seg-opt:hover { border-color: var(--muted); color: var(--ink); }
+.settings-seg-opt.selected { border-color: var(--gold); color: var(--ink); }
+.settings-textsize { display: flex; align-items: center; gap: 14px; }
+.settings-step {
+  border: 1px solid var(--border); background: none; cursor: pointer;
+  width: 32px; height: 28px; border-radius: var(--radius-sm, 6px);
+  font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 12px; color: var(--muted);
+  transition: border-color var(--transition), color var(--transition);
+}
+.settings-step:hover { border-color: var(--muted); color: var(--ink); }
+.settings-textsize-val {
+  font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 12px; color: var(--ink);
+  min-width: 20px; text-align: center;
+}
+/* The settings rail item picks up .app-shell-item styling; nudge the cog to sit
+   on the optical baseline of its label like the other rail icons. */
+.app-shell-settings-item { width: 100%; }
 .app-shell-body {
   min-width: 0;
   height: 100%;
@@ -1386,6 +1439,11 @@ html.shell-scroll-lock body {
 @media (min-width: 861px) { .settings-sync-section { display: none; } }
 
 .app-shell-collapse-flip { transform: rotate(180deg); }
+/* Collapse toggle sits at the rail's trailing edge when expanded (the chevron
+   points back toward the content); it re-centers only when the rail is collapsed. */
+.app-shell-collapse-btn { align-self: flex-end; }
+.app-shell--collapsed .app-shell-collapse-btn,
+.reader-rail--collapsed .app-shell-collapse-btn { align-self: center; }
 
 /* User identity chip */
 .app-shell-user-section {
@@ -1424,6 +1482,7 @@ html.shell-scroll-lock body {
   background: var(--surface-high);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm, 4px);
+  box-shadow: 0 12px 32px -8px rgba(0, 0, 0, 0.4);
   padding: 12px;
   z-index: calc(var(--z-popup) - 1);
 }
@@ -1594,7 +1653,8 @@ html.light .reader-rail {
   display: flex; align-items: center; gap: var(--space-5);
   flex-shrink: 0; padding-top: 14px;
 }
-/* Gold CTA — the one filled button in the library (per the v3 brief). */
+/* Gold CTA visual shared by library + hub actions. */
+.btn-cta-gold,
 .library-new-btn {
   flex-shrink: 0; display: inline-flex; align-items: center; gap: 7px;
   height: 40px; padding: 0 18px; border: none; border-radius: var(--radius-chip);
@@ -1602,6 +1662,7 @@ html.light .reader-rail {
   font-family: var(--font-ui); font-size: 12px; font-weight: 600; letter-spacing: 0.02em;
   transition: background var(--transition);
 }
+.btn-cta-gold:hover,
 .library-new-btn:hover { background: var(--gold-soft); }
 
 /* Stats line + search, the quiet row beneath the title. */
@@ -2724,14 +2785,20 @@ mark[data-ann]:hover { filter: brightness(1.2); }
   .pub-form-grid { grid-template-columns: 1fr; }
   .pub-field--wide { grid-column: 1; }
 
-  /* Library header: let the controls wrap below the title instead of
-     overflowing off-screen — the gold "New Manuscript" CTA must stay visible. */
+  /* Library header on mobile: stack into tidy full-width rows instead of a
+     right-aligned zigzag. Title, then sort↔view on one row, then the gold CTA
+     full-width, then a full-width search with the stats line beneath it. */
   .library-header { flex-wrap: wrap; gap: var(--space-3); }
   .library-controls {
     width: 100%; padding-top: 0;
-    flex-wrap: wrap; justify-content: flex-end;
+    flex-wrap: wrap; justify-content: space-between; align-items: center;
+    gap: var(--space-3);
   }
-  .library-new-btn { flex-shrink: 0; }
+  .library-header .library-new-btn { order: 3; width: 100%; justify-content: center; }
+  .library-subbar {
+    flex-direction: column-reverse; align-items: stretch; gap: var(--space-2);
+  }
+  .library-search { width: 100%; }
 }
 
 /* Hub right rail — a quiet sticky column; the manuscript column owns the drama. */
@@ -2867,6 +2934,10 @@ mark[data-ann]:hover { filter: brightness(1.2); }
   display: flex; flex-direction: column; align-items: flex-end; gap: 10px;
 }
 .hub-feedback-annotate-btn { font-size: 12px !important; }
+
+@media (max-width: 900px) {
+  .hub-overview-head { flex-wrap: wrap; }
+}
 .hub-feedback-modal-lead {
   font-family: 'EB Garamond', Georgia, serif; font-size: 15px; color: var(--muted);
   line-height: 1.55; margin: 0 0 16px;
@@ -3105,9 +3176,18 @@ mark[data-ann]:hover { filter: brightness(1.2); }
 
 /* Band 1 — the manuscript hero. Cover + title text side by side; the book is the subject. */
 .hub-hero {
-  display: flex; gap: var(--space-7); align-items: flex-start;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-areas:
+    "cover text"
+    "cover stats";
+  align-items: start;
+  column-gap: var(--space-7); row-gap: 0;
   padding: var(--space-1) 0 0; margin-bottom: var(--space-7);
 }
+.hub-hero-cover-wrap { grid-area: cover; }
+.hub-hero-text { grid-area: text; }
+.hub-hero-stats { grid-area: stats; }
 .hub-hero-cover-wrap {
   position: relative; flex-shrink: 0;
 }
@@ -3411,6 +3491,10 @@ mark[data-ann]:hover { filter: brightness(1.2); }
   /* Hub tools: fixed bottom sheet above the tab bar, slides in on open. */
   .hub .hub-tools {
     position: fixed;
+    /* top:auto is load-bearing — the desktop rule sets top:0, and leaving it set
+       alongside bottom:52px stretches the sheet to full height, dropping its
+       content at the TOP of the screen instead of anchoring it to the bottom. */
+    top: auto;
     bottom: 52px; left: 0; right: 0;
     height: auto; max-height: 70vh; width: auto;
     overflow-y: auto; -webkit-overflow-scrolling: touch;
@@ -3426,6 +3510,16 @@ mark[data-ann]:hover { filter: brightness(1.2); }
   .hub .hub-tools.hub-tools--mobile-hidden {
     display: none;
   }
+  /* Condensed sheet: just the tools, as a 2-up grid. The Working Notes / Recent
+     Activity sections and the saved-status footer are desktop-rail furniture —
+     drop them on mobile so the sheet stays short and anchored to the bottom. */
+  .hub .hub-tools .hub-rail-section,
+  .hub .hub-tools .hub-tools-eyebrow,
+  .hub .hub-tools .hub-tools-footer { display: none; }
+  .hub .hub-tools .hub-tools-group-nav {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 2px 16px;
+  }
+  .hub .hub-tools .instrument-item--tool .instrument-item-chevron { display: none; }
   /* Reader: keep the slide-over drawer. */
   .reader-workspace .hub-tools {
     width: min(288px, 92vw);
@@ -3435,11 +3529,18 @@ mark[data-ann]:hover { filter: brightness(1.2); }
   .hub-continue-aside { max-width: none; }
   /* Suppress flex grow on continue-main — it pushes content apart at narrow widths. */
   .hub-continue-main { flex: none; }
-  .hub-hero-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: none; }
+  .hub-hero-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: none; margin-top: 0; }
   .hub-stat { border-left: none; padding: var(--space-2) 0; border-top: 1px solid var(--line); }
   .hub-stat:nth-child(-n+2) { border-top: none; }
-  /* Hero: keep side-by-side but shrink cover and title for narrow screens. */
-  .hub-hero { gap: var(--space-4); align-items: flex-start; }
+  /* Hero: cover + text side-by-side on row 1, stats span the FULL width on row 2
+     (instead of bunching into the narrow text column beside the cover). */
+  .hub-hero {
+    grid-template-columns: 110px 1fr;
+    grid-template-areas:
+      "cover text"
+      "stats stats";
+    column-gap: var(--space-4); row-gap: var(--space-5);
+  }
   .hub-hero-cover { width: 110px; }
   .hub-hero-title { font-size: clamp(24px, 8vw, 40px); }
   .hub-form-grid { grid-template-columns: 1fr; }

@@ -50,13 +50,13 @@ export function ReaderRail({
 
       <div className="app-shell-footer">
         <div className="reader-rail-settings">
-          <SettingsMenu upward />
+          <SettingsMenu variant="rail-item" />
         </div>
         <div className="reader-rail-sep" aria-hidden="true" />
         {supabaseConfigured() && <RailUserChip collapsed={collapsed} />}
         <button
           type="button"
-          className="btn-icon"
+          className="btn-icon app-shell-collapse-btn"
           title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           onClick={onToggleCollapsed}
