@@ -13,6 +13,7 @@
     "check-snapshots": "tsx fixtures/check-snapshots.mjs",
     "check-snapshot-sync": "tsx fixtures/check-snapshot-sync.mjs",
     "check-delete-sync": "tsx fixtures/check-delete-sync.mjs",
+    "check-position-intent": "tsx fixtures/check-position-intent.mjs",
     "check-snapshot-diff": "tsx fixtures/check-snapshot-diff.mjs",
     "check-edit-needle": "tsx fixtures/check-edit-needle.mjs",
     "check-change-list": "tsx fixtures/check-change-list.mjs",

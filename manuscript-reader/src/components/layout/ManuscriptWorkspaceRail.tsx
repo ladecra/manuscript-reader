@@ -7,8 +7,6 @@ import {
   CheckIcon,
   LayersIcon,
 } from '../ui/Icons';
-import { ANNOTATION_LABELS, ANNOTATION_COLORS } from '../../engine/types';
-
 export type HubPane = 'contents' | 'details' | 'feedback' | 'report' | 'exports' | 'share' | 'versions';
 
 type RailTool = {
@@ -21,11 +19,16 @@ type RailTool = {
 
 export type WorkspaceRailContext = 'hub' | 'reader';
 
-export interface RailAnnotation {
-  id: string;
-  type: string;
-  quote: string;
-  chapterTitle: string;
+/** One "pick up where you left off" row. `chapterLabel` null ⇒ nothing yet
+ *  (renders the quiet empty state); otherwise the whole row resumes that mode. */
+export interface RailWayfindingRow {
+  chapterLabel: string | null;
+  onResume: () => void;
+}
+
+export interface RailWayfinding {
+  annotations: RailWayfindingRow;
+  changes: RailWayfindingRow;
 }
 
 interface ManuscriptWorkspaceRailProps {
@@ -35,7 +38,10 @@ interface ManuscriptWorkspaceRailProps {
   versionCount?: number;
   savedLabel: string;
   readerSubtext?: string;
-  recentAnnotations?: RailAnnotation[];
+  wayfinding?: RailWayfinding;
+  /** The Working Notes scratchpad — controlled value + change handler (hub owns
+   *  persistence). Omitted ⇒ the section shows its quiet placeholder. */
+  note?: { value: string; onChange: (v: string) => void };
   className?: string;
   onTogglePane: (id: HubPane) => void;
   onRead?: () => void;
@@ -59,7 +65,8 @@ export function ManuscriptWorkspaceRail({
   versionCount = 0,
   savedLabel,
   readerSubtext = 'Resume in the reader',
-  recentAnnotations,
+  wayfinding,
+  note,
   className,
   onTogglePane,
   onRead,
@@ -116,40 +123,39 @@ export function ManuscriptWorkspaceRail({
           })}
         </div>
 
-        {recentAnnotations && (
+        {wayfinding && (
           <>
             <section className="hub-rail-section">
-              <div className="instrument-group-label hub-rail-section-label">Working Notes</div>
-              <p className="hub-rail-note-empty">A private scratchpad for this manuscript lives here.</p>
-            </section>
-
-            <section className="hub-rail-section">
               <div className="hub-rail-section-head">
-                <div className="instrument-group-label hub-rail-section-label">Recent Activity</div>
-                {onOpenAnnotations && recentAnnotations.length > 0 && (
+                <div className="instrument-group-label hub-rail-section-label">Pick up where you left off</div>
+                {onOpenAnnotations && wayfinding.annotations.chapterLabel && (
                   <button type="button" className="hub-rail-viewall" onClick={onOpenAnnotations}>View all</button>
                 )}
               </div>
-              {recentAnnotations.length === 0 ? (
-                <p className="hub-rail-note-empty">No annotations yet.</p>
+              <WayfindingItem
+                kind="annotations" lead="Annotations recently added"
+                empty="No annotations yet" row={wayfinding.annotations}
+              />
+              <WayfindingItem
+                kind="changes" lead="Changes under review"
+                empty="No changes to review" row={wayfinding.changes}
+              />
+            </section>
+
+            {/* Working Notes anchors the bottom and flex-fills the rail — a private,
+                open-ended writing space rather than dead air on tall screens. */}
+            <section className="hub-rail-section hub-rail-section--notes">
+              <div className="instrument-group-label hub-rail-section-label">Working Notes</div>
+              {note ? (
+                <textarea
+                  className="hub-rail-notes-field"
+                  value={note.value}
+                  onChange={e => note.onChange(e.target.value)}
+                  placeholder="A private scratchpad for this manuscript…"
+                  spellCheck
+                />
               ) : (
-                <ul className="hub-rail-anns">
-                  {recentAnnotations.map(a => (
-                    <li key={a.id} className="hub-rail-ann">
-                      <span
-                        className="hub-rail-ann-dot"
-                        style={{ background: ANNOTATION_COLORS[a.type as keyof typeof ANNOTATION_COLORS] ?? 'var(--dim)' }}
-                        aria-hidden="true"
-                      />
-                      <span className="hub-rail-ann-body">
-                        <span className="hub-rail-ann-quote">
-                          {a.quote ? `“${a.quote.slice(0, 72)}”` : (ANNOTATION_LABELS[a.type as keyof typeof ANNOTATION_LABELS] ?? a.type)}
-                        </span>
-                        {a.chapterTitle && <span className="hub-rail-ann-meta">{a.chapterTitle}</span>}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
+                <p className="hub-rail-note-empty">A private scratchpad for this manuscript lives here.</p>
               )}
             </section>
           </>
@@ -160,5 +166,30 @@ export function ManuscriptWorkspaceRail({
         <span>{savedLabel}</span>
       </div>
     </aside>
+  );
+}
+
+// A single wayfinding row: when there's recent work it's a button that resumes
+// that mode at its last position; otherwise a quiet empty line. Navigation, not a
+// feed — it points the author back to where they were, not at a timeline.
+function WayfindingItem({ kind, lead, empty, row }: {
+  kind: 'annotations' | 'changes';
+  lead: string;
+  empty: string;
+  row: RailWayfindingRow;
+}) {
+  const Icon = kind === 'annotations' ? PencilIcon : ReportIcon;
+  if (!row.chapterLabel) {
+    return <p className="hub-rail-note-empty">{empty}.</p>;
+  }
+  return (
+    <button type="button" className="hub-rail-wayfind" onClick={row.onResume}>
+      <span className="hub-rail-wayfind-icon"><Icon size={13} /></span>
+      <span className="hub-rail-wayfind-body">
+        <span className="hub-rail-wayfind-lead">{lead}</span>
+        <span className="hub-rail-wayfind-meta">{row.chapterLabel}</span>
+      </span>
+      <span className="instrument-item-chevron"><ChevronRightIcon size={10} /></span>
+    </button>
   );
 }

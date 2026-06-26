@@ -124,6 +124,17 @@ export class IndexedDbProvider implements StorageProvider {
     else await db.put(STORE, dataUrl, key.cover(id));
   }
 
+  async loadNote(id: string): Promise<string> {
+    const db = await this.db();
+    return ((await db.get(STORE, key.note(id))) as string) ?? '';
+  }
+
+  async saveNote(id: string, text: string): Promise<void> {
+    const db = await this.db();
+    if (!text) await db.delete(STORE, key.note(id));
+    else await db.put(STORE, text, key.note(id));
+  }
+
   // ── Version snapshots ──
   // The record (meta + frozen children) and the markdown body live under separate
   // keys so listing never loads bodies, and an identical body (same versionId)

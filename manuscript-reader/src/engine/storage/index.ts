@@ -10,6 +10,7 @@
 // without changing a single caller.
 
 import type { Annotation, Edit, ReaderSession, Snapshot, SnapshotMeta } from '../types';
+import type { WorkMode } from '../reader/positionIntent';
 import type { StorageProvider, StoredManuscript } from './provider';
 import { LocalStorageProvider } from './localStorageProvider';
 import { IndexedDbProvider, indexedDbAvailable } from './indexedDbProvider';
@@ -170,6 +171,7 @@ function applyRemoteTombstone(id: string, deletedAt: number): void {
     persist(async () => {
       await provider.deleteManuscript(id);
       await provider.saveCover(id, null);
+      await provider.saveNote(id, '');
     });
   }
 }
@@ -197,6 +199,7 @@ export function saveLibrary(library: StoredManuscript[]): void {
       persist(async () => {
         await provider.deleteManuscript(m.id);
         await provider.saveCover(m.id, null);
+        await provider.saveNote(m.id, ''); // don't let a re-import resurrect a stale scratchpad
       });
       syncDeleteManuscript(m.id);
     }
@@ -294,6 +297,19 @@ export function saveCover(id: string, dataUrl: string | null): void {
   persist(() => provider.saveCover(id, dataUrl));
 }
 
+// ── Working Notes scratchpad ─────────────────────────────────────────────────
+// A free-text note per manuscript. Loaded on demand (the cover pattern — not held
+// in the startup cache), saved through the serialized write chain. Local-first:
+// not pushed to Supabase yet (a deliberate follow-up). Returns '' when unset.
+
+export function loadNote(id: string): Promise<string> {
+  return provider.loadNote(id);
+}
+
+export function saveNote(id: string, text: string): void {
+  persist(() => provider.saveNote(id, text));
+}
+
 // ── Version snapshots (Phase 8) ──────────────────────────────────────────────
 // The light index is cached (hydrated at startup, kept in sync on save/delete) so
 // the library/hub can list versions synchronously. Frozen bodies are NEVER cached:
@@ -356,6 +372,7 @@ function toSnapshotMeta(s: Snapshot): SnapshotMeta {
 
 export const THEME_KEY = 'ms_theme';
 export const FONT_KEY = 'ms_font';
+const WORK_POS_KEY = 'ms_workpos_v1';
 
 /** Apply persisted theme + font size to `<html>` before React paints. Also used
  *  from the inline bootstrap in index.html (keep keys in sync). */
@@ -392,6 +409,27 @@ export function loadFontSize(): number {
 }
 export function saveFontSize(n: number): void {
   try { localStorage.setItem(FONT_KEY, String(n)); } catch { /**/ }
+}
+
+// ── Mode work bookmarks (local-only, disposable) ─────────────────────────────
+// Where the author was working in Annotations / Changes mode, kept separate from
+// the canonical reading progress. Pure wayfinding (the hub's "resume where you
+// left off" rows read these), so they live in localStorage and are NOT synced —
+// losing them on a new device is fine. Keyed { [manuscriptId]: { [mode]: frac } }.
+
+function readWorkPositions(): Record<string, Partial<Record<WorkMode, number>>> {
+  try { return JSON.parse(localStorage.getItem(WORK_POS_KEY) ?? '{}'); }
+  catch { return {}; }
+}
+
+export function loadWorkPosition(id: string, mode: WorkMode): number {
+  return readWorkPositions()[id]?.[mode] ?? 0;
+}
+
+export function saveWorkPosition(id: string, mode: WorkMode, frac: number): void {
+  const all = readWorkPositions();
+  (all[id] ??= {})[mode] = frac;
+  try { localStorage.setItem(WORK_POS_KEY, JSON.stringify(all)); } catch { /**/ }
 }
 
 // ── Supabase sync ─────────────────────────────────────────────────────────────
