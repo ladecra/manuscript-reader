@@ -14,6 +14,7 @@ import {
 } from '../src/engine/ingestion/preprocessMarkdown.ts';
 import { parseMarkdown, countWords } from '../src/engine/ingestion/parseMarkdown.ts';
 import { buildManuscriptStructure } from '../src/engine/ingestion/manuscriptStructure.ts';
+import { extractFrontMatterCandidates } from '../src/engine/ingestion/frontMatterExtract.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -53,6 +54,7 @@ const files = (await readdir(here))
   .filter(f => /\.(docx|md|txt)$/i.test(f))
   .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 
+let assertFailures = 0;
 for (const f of files) {
   const path = join(here, f);
   const md = extname(f).toLowerCase() === '.docx'
@@ -74,15 +76,40 @@ for (const f of files) {
   // ── Structural model (Stage 0) ──
   const structure = buildManuscriptStructure(md);
   const sceneBreaks = structure.chapters.reduce((n, c) => n + c.sceneBreakCount, 0);
+  const matterTally = (secs) => secs.map(s => `${s.role}${s.title ? `("${s.title}")` : ''}:${s.blocks.length}b`).join('  ') || '(none)';
   console.log('STRUCTURE:');
-  console.log('   front-matter blocks:', structure.frontMatter.length, `[${roleTally(structure.frontMatter)}]`);
+  console.log('   front matter:', structure.frontMatter.length, 'sections', `[${matterTally(structure.frontMatter)}]`);
   console.log('   body chapters:      ', structure.chapters.length, `· scene breaks: ${sceneBreaks}`);
-  console.log('   back-matter blocks: ', structure.backMatter.length, '(dropped upstream — capture is the Stage-0/1 follow-up)');
+  console.log('   back matter: ', structure.backMatter.length, 'sections', `[${matterTally(structure.backMatter)}]`);
   console.log('   block roles (all):  ', roleTally(structure.blocks));
   const withBreaks = structure.chapters.filter(c => c.sceneBreakCount > 0);
   if (withBreaks.length) {
     console.log('   scene breaks by chapter:');
     for (const c of withBreaks) console.log(`      [${String(c.index).padStart(2, '0')}] ${c.sceneBreakCount} · ${c.title}`);
   }
+  // ── Metadata extraction (candidates — non-authoritative) ──
+  const cand = extractFrontMatterCandidates(structure);
+  if (Object.keys(cand).length) {
+    console.log('   extracted candidates:', JSON.stringify(cand));
+  }
+
+  // ── Assertions for the synthetic front/back-matter fixture ──
+  if (f === 'markdown-frontmatter.md') {
+    const fail = [];
+    const frontRoles = structure.frontMatter.map(s => s.role);
+    const backRoles = structure.backMatter.map(s => s.role);
+    if (title !== 'The Lantern Keeper') fail.push(`title=${title}`);
+    if (chapters.length !== 2) fail.push(`chapters=${chapters.length} (TOC not excised?)`);
+    if (sceneBreaks !== 1) fail.push(`sceneBreaks=${sceneBreaks}`);
+    for (const r of ['copyright', 'dedication', 'epigraph', 'foreword']) if (!frontRoles.includes(r)) fail.push(`front missing ${r}`);
+    for (const r of ['acknowledgements', 'about-author']) if (!backRoles.includes(r)) fail.push(`back missing ${r}`);
+    if (cand.isbn !== '978-1-23456-789-0') fail.push(`isbn=${cand.isbn}`);
+    if (cand.copyrightYear !== '2025') fail.push(`copyrightYear=${cand.copyrightYear}`);
+    if (!/Jane Marlowe/.test(cand.author ?? '')) fail.push(`author=${cand.author}`);
+    if (!/Eleanor/.test(cand.dedication ?? '')) fail.push(`dedication=${cand.dedication}`);
+    if (fail.length) { console.log('   ❌ ASSERTIONS FAILED:', fail.join(' · ')); assertFailures += fail.length; }
+    else console.log('   ✅ front/back-matter capture + extraction assertions passed');
+  }
 }
 console.log('');
+if (assertFailures > 0) { console.error(`\n${assertFailures} assertion(s) FAILED`); process.exit(1); }

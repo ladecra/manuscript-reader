@@ -21,6 +21,8 @@
     "check-prose": "tsx fixtures/check-prose.mjs",
     "check-insights": "tsx fixtures/check-insights.mjs",
     "check-epub": "tsx fixtures/check-epub.mjs",
+    "check-docx": "tsx fixtures/check-docx.mjs",
+    "check-smf": "tsx fixtures/check-smf.mjs",
     "check-share-parity": "tsx fixtures/check-share-parity.mjs"
   },
   "dependencies": {

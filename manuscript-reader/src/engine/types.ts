@@ -310,12 +310,27 @@ export interface ParsedManuscript {
 /** What a block IS, structurally. Mirrors exactly the block grammar parseMarkdown emits. */
 export type BlockRole =
   | 'chapter-heading'  // `# ` (or setext ===) — opens a chapter
+  | 'matter-heading'   // the title line of a retained front/back-matter section
   | 'subheading'       // `## ` / `### `
   | 'paragraph'
   | 'blockquote'       // also the epigraph carrier
   | 'scene-break'      // a `<hr>` (`* * *`) inside a chapter
   | 'list'
   | 'code';
+
+/** The classified kind of a retained front/back-matter section. The decision is
+ *  made once at ingestion (from the section's original heading) and frozen into
+ *  the matter fence — a stable, deterministic classification, unlike fuzzy anchor
+ *  matching, so freezing it is safe. Prologue/epilogue are NOT here: they are
+ *  narrative and remain body chapters. */
+export type MatterRole =
+  | 'half-title' | 'title-page' | 'copyright' | 'dedication' | 'epigraph'
+  | 'foreword' | 'preface' | 'introduction'
+  | 'acknowledgements' | 'author-note' | 'afterword' | 'about-author'
+  | 'also-by' | 'colophon' | 'appendix' | 'glossary' | 'notes' | 'other';
+
+/** Which side of the body a matter section sits on. */
+export type MatterRegion = 'front' | 'back';
 
 export interface StructuralBlock {
   role: BlockRole;
@@ -327,9 +342,28 @@ export interface StructuralBlock {
   text: string;
   /** Heading depth for subheadings (2 or 3); undefined otherwise. */
   level?: number;
-  /** 1-based chapter this block belongs to; 0 = before the first chapter (the
-   *  forematter region — sparse today, see the capture gap in the Stage-0 brief). */
+  /** 1-based chapter this block belongs to; 0 = before the first chapter. Body
+   *  blocks only — matter blocks (`region` set) carry 0 and are grouped by `region`. */
   chapterIndex: number;
+  /** Set when this block lives in retained front/back matter (a fenced section —
+   *  foreword, copyright, acknowledgements…), NOT body prose. The discriminant the
+   *  structural model groups on. Body blocks leave this undefined. */
+  region?: MatterRegion;
+  /** On a `matter-heading` block: the classified role of the section it opens. */
+  matterRole?: MatterRole;
+}
+
+/** A retained front/back-matter section: its classified role, display title, and
+ *  prose blocks. The renderer (publish-ready DOCX/EPUB) and the metadata extractor
+ *  consume these; the reader fences them out of the immersive view. */
+export interface MatterSection {
+  role: MatterRole;
+  region: MatterRegion;
+  /** Display heading (the section's original title, e.g. "Acknowledgements"). May
+   *  be '' for an untitled section (a bare epigraph or dedication). */
+  title: string;
+  /** Prose/quote/list blocks belonging to the section (heading excluded). */
+  blocks: StructuralBlock[];
 }
 
 export interface ChapterSection {
@@ -342,14 +376,14 @@ export interface ChapterSection {
 
 export interface ManuscriptStructure {
   title: string;
-  /** Pre-first-chapter region. Sparse today: `structureManuscript` strips most
-   *  front matter upstream (only the title survives, as a comment). Retaining it
-   *  is the key Stage-0/1 follow-up before publish-ready export. */
-  frontMatter: StructuralBlock[];
+  /** Retained front matter (foreword, preface, dedication, epigraph…) as grouped,
+   *  classified sections in document order. Captured by `structureManuscript`'s
+   *  classify-and-keep pass; empty when the manuscript has none. */
+  frontMatter: MatterSection[];
   chapters: ChapterSection[];
-  /** Empty today: back matter is dropped by `structureManuscript` upstream.
-   *  Same capture follow-up as `frontMatter`. */
-  backMatter: StructuralBlock[];
+  /** Retained back matter (acknowledgements, author's note, afterword, about the
+   *  author…), grouped and classified the same way. */
+  backMatter: MatterSection[];
   /** Full document-order substrate the groupings above project from. */
   blocks: StructuralBlock[];
 }

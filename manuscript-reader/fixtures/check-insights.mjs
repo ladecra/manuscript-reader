@@ -71,6 +71,21 @@ console.log('CASE: prose-only with a long outlier (no annotations)');
   check('prose evidence carries a ratio', insights.every(i => typeof i.evidence.ratio === 'number'));
 }
 
+// ── Case 2b: prose-only manuscript with a short outlier (false chapter break) ─
+console.log('\n' + '─'.repeat(60));
+console.log('CASE: prose-only with a short outlier (no annotations)');
+{
+  const md = chapter('One', 100) + chapter('Chapter two', 10) + chapter('Three', 100) + chapter('Four', 100);
+  const sig = computeEditorialSignals({
+    manuscriptId: 'prose-short', annotations: [], chapters: [], sessions: [], combinedMarkdown: md,
+  });
+  const insights = rankInsights(sig);
+  show(insights);
+
+  check('yields a prose insight for the short chapter', insights.some(i => i.chapter === 2));
+  check('short insight uses sub-1× ratio copy', insights.some(i => i.chapter === 2 && i.headline.includes('only 0.1×')));
+}
+
 // ── Case 4: pacing/voice density — surfaced where the cluster model is blind ──
 console.log('\n' + '─'.repeat(60));
 console.log('CASE: developmental density (pacing/voice, no clusters)');

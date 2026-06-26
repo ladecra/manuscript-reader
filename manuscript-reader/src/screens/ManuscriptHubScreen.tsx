@@ -14,6 +14,8 @@ import { ChapterTree } from '../components/library/ChapterTree';
 import { AddChaptersModal } from '../components/reader/AddChaptersModal';
 import { ReportView } from '../components/reports/ReportView';
 import { ExportChoiceModal } from '../components/reports/ExportChoiceModal';
+import { SmfExportModal } from '../components/reports/SmfExportModal';
+import type { ExtentRequest } from '../engine/exports/manuscriptExtent';
 import { exportShareableReader, ShareReaderBuildError, type ShareSnapshotStamp } from '../engine/exports/shareableReader';
 import { loadSnapshot, loadWorkPosition, loadNote, saveNote } from '../engine/storage';
 import { hasMeaningfulEdits } from '../engine/manuscript/changeList';
@@ -49,6 +51,7 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
   const [shareReaderOpen, setShareReaderOpen] = useState(false);
   const [shareReaderInitialMode, setShareReaderInitialMode] = useState<'reading' | 'annotating'>('annotating');
   const [reportExportOpen, setReportExportOpen] = useState(false);
+  const [smfOpen, setSmfOpen] = useState(false);
 
   // Working Notes scratchpad — loaded on demand per manuscript, debounce-saved.
   // Local-first (the storage layer doesn't push it to the cloud yet).
@@ -235,6 +238,18 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
       }
       showToast('Manuscript exported.');
     } catch (e) { console.error('Manuscript export error:', e); showToast('Export failed — see console.'); }
+  }, [manuscript, exportMeta]);
+
+  const handleExportManuscriptSmf = useCallback(async (request: ExtentRequest) => {
+    if (!manuscript) return;
+    const md = manuscript.metadata.combinedMarkdown;
+    if (!md) { showToast('Manuscript not cached — re-import the file to export it.'); return; }
+    try {
+      showToast('Building submission…');
+      const { exportManuscriptSmfDocx } = await import('../engine/exports/manuscriptSmfDocx');
+      await exportManuscriptSmfDocx(exportMeta(), manuscript.id, md, request);
+      showToast('Submission manuscript exported.');
+    } catch (e) { console.error('SMF export error:', e); showToast('Export failed — see console.'); }
   }, [manuscript, exportMeta]);
 
   const handleExportRevisionLog = useCallback(() => {
@@ -639,6 +654,7 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
             )}
 
             {pane === 'exports' && (
+              <>
               <ExportsTab
                 manuscriptAvailable={manuscriptAvailable}
                 annCount={annotations.length}
@@ -646,12 +662,21 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
                 hasPublishing={!!publishing && Object.values(publishing).some(Boolean)}
                 onGoToDetails={() => setHubPane('details')}
                 onExportManuscript={handleExportManuscript}
+                onOpenSmf={() => setSmfOpen(true)}
                 onExportReportDocx={handleExportReportDocx}
                 onExportReportHtml={handleExportReportHtml}
                 onExportReportJson={handleExportReportJson}
                 onExportRevisionLog={handleExportRevisionLog}
                 onOpenShareReader={openShareReader}
               />
+              <SmfExportModal
+                open={smfOpen}
+                subject={title}
+                combinedMarkdown={manuscript?.metadata.combinedMarkdown ?? ''}
+                onClose={() => setSmfOpen(false)}
+                onExport={handleExportManuscriptSmf}
+              />
+              </>
             )}
           </div>
         )}
@@ -1054,12 +1079,13 @@ function ExportCard({
 
 function ExportsTab({
   manuscriptAvailable, annCount, editCount, hasPublishing, onGoToDetails,
-  onExportManuscript, onExportReportDocx, onExportReportHtml, onExportReportJson, onExportRevisionLog,
+  onExportManuscript, onOpenSmf, onExportReportDocx, onExportReportHtml, onExportReportJson, onExportRevisionLog,
   onOpenShareReader,
 }: {
   manuscriptAvailable: boolean; annCount: number; editCount: number;
   hasPublishing: boolean; onGoToDetails: () => void;
   onExportManuscript: (format: 'epub' | 'docx' | 'md') => void | Promise<void>;
+  onOpenSmf: () => void;
   onExportReportDocx: () => void | Promise<void>;
   onExportReportHtml: () => void;
   onExportReportJson: () => void;
@@ -1087,8 +1113,11 @@ function ExportsTab({
             desc="Reflowable ebook for Kindle, Apple Books, and Kobo, with title, copyright, and contents pages — the format retailers ingest."
             onClick={() => onExportManuscript('epub')} />
           <ExportCard chip="DOCX" title="Word document" disabled={noManuscript} disabledHint={noManuscriptHint}
-            desc="Formatted .docx with title, copyright, and dedication pages — chapters, headings, and scene breaks preserved."
+            desc="Publication-grade .docx — 5.5×8.5 trim, running heads, page numbers, and regenerated front matter and contents."
             onClick={() => onExportManuscript('docx')} />
+          <ExportCard chip="SMF" title="Agent submission" disabled={noManuscript} disabledHint={noManuscriptHint}
+            desc="Standard Manuscript Format for queries — 12pt Times, double-spaced. Export the full book or just the first N chapters, pages, or words."
+            onClick={onOpenSmf} />
           <ExportCard chip="MD" title="Markdown" disabled={noManuscript} disabledHint={noManuscriptHint}
             desc="Plain-text Markdown with a YAML metadata block — portable into Pandoc and most ebook toolchains."
             onClick={() => onExportManuscript('md')} />

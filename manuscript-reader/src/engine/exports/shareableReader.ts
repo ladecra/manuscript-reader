@@ -517,13 +517,20 @@ function buildAnnotationScript(): string {
  * Build a self-contained shareable reader HTML document.
  * @param withAnnotations  When true, embeds the beta-reader annotation runtime.
  */
+/** Drop retained front/back-matter regions (copyright, dedication, acknowledgements…)
+ *  from the embedded markdown. Beta reading is body-only: matter prose would otherwise
+ *  render as stray paragraphs, and it has no bearing on the passages readers annotate. */
+function stripMatterRegions(md: string): string {
+  return md.replace(/<!--\s*matter:(?:front|back)[^>]*-->[\s\S]*?<!--\s*\/matter\s*-->\s*/g, '').trim();
+}
+
 export function buildShareableHTML(
   title: string,
   markdown: string,
   withAnnotations = false,
   snapshot?: ShareSnapshotStamp,
 ): string {
-  const mdJson = JSON.stringify(markdown);
+  const mdJson = JSON.stringify(stripMatterRegions(markdown));
   const titleJson = JSON.stringify(title);
   const snapshotIdJson = JSON.stringify(snapshot?.snapshotId ?? '');
   const snapshotLabelJson = JSON.stringify(snapshot?.label?.trim() ?? '');
