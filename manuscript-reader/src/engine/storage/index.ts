@@ -223,6 +223,25 @@ export function manuscriptId(title: string): string {
   return title.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40);
 }
 
+/**
+ * A storage ID for a freshly imported manuscript that is guaranteed not to
+ * collide with any `taken` ID. The slug stays human-readable; on collision we
+ * append a short random suffix rather than overwrite. Title-derived IDs used to
+ * be reused directly, so two different manuscripts that slugified the same (most
+ * commonly the `untitled` bucket — real manuscripts often lack an h1 title)
+ * would silently overwrite each other. Every import is now its own manuscript.
+ */
+export function uniqueManuscriptId(title: string, taken: Iterable<string>): string {
+  const used = taken instanceof Set ? taken : new Set(taken);
+  const base = manuscriptId(title) || 'manuscript';
+  if (!used.has(base)) return base;
+  let id: string;
+  do {
+    id = `${base.slice(0, 33)}-${Math.random().toString(36).slice(2, 8)}`;
+  } while (used.has(id));
+  return id;
+}
+
 // ── Annotations ────────────────────────────────────────────────────────────────
 
 export function loadAnnotations(id: string): Annotation[] {

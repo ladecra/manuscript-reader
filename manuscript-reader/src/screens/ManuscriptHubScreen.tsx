@@ -20,7 +20,7 @@ import { hasMeaningfulEdits } from '../engine/manuscript/changeList';
 import type { WorkMode } from '../engine/reader/positionIntent';
 import { ShareReaderModal } from '../components/share/ShareReaderModal';
 import { showToast } from '../components/ui/Toast';
-import { PencilIcon, ChevronLeftIcon, DotsIcon, DownloadIcon, LayersIcon, PlusIcon, XIcon } from '../components/ui/Icons';
+import { PencilIcon, ChevronLeftIcon, DotsIcon, DownloadIcon, LayersIcon, PlusIcon, XIcon, UndoIcon } from '../components/ui/Icons';
 import { CoverImage } from '../components/ui/CoverImage';
 import { ManuscriptWorkspaceRail, type HubPane } from '../components/layout/ManuscriptWorkspaceRail';
 import { FeedbackTab } from '../components/hub/FeedbackTab';
@@ -110,6 +110,20 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
     if (meta) showToast(`Saved “${meta.label}”.`);
     else showToast('Source text unavailable — re-import to save a version.');
   }, [manuscript, saveVersion]);
+
+  // Make a saved version the live draft again. Restore is itself reversible: we
+  // freeze the current draft first, so nothing is ever silently replaced. Only
+  // the text is restored — live annotations stay put and re-anchor against it.
+  const handleRestoreVersion = useCallback(async (snapshotId: string) => {
+    if (!manuscript) return;
+    const snap = await loadSnapshot(manuscript.id, snapshotId);
+    if (!snap?.markdown) { showToast('Could not load that version.'); return; }
+    saveVersion(manuscript, `Before restore · ${new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`);
+    const updated = replaceMarkdown(manuscript.id, snap.markdown);
+    if (!updated?.metadata.combinedMarkdown) { showToast('Could not restore that version.'); return; }
+    openManuscript(updated, getParsedManuscript(updated.metadata.combinedMarkdown).chapters);
+    showToast(`Restored “${snap.label ?? 'version'}”.`);
+  }, [manuscript, saveVersion, replaceMarkdown, openManuscript]);
   const pageEstimate = useMemo(() => {
     const wc = manuscript?.metadata.wordCount ?? 0;
     return estimateReadingPagePosition(wc, progressFrac);
@@ -583,6 +597,7 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
                 versions={versions}
                 manuscriptAvailable={manuscriptAvailable}
                 onSaveVersion={handleSaveVersion}
+                onRestore={handleRestoreVersion}
                 onRelabel={(snapId, label) => manuscript && relabel(manuscript.id, snapId, label)}
                 onDelete={snapId => manuscript && removeVersion(manuscript.id, snapId)}
               />
@@ -907,10 +922,11 @@ function DetailsTab({
 /** Lists saved versions newest-first, with an inline-editable label, the capture
  *  reason, and a delete. "Save current as version" freezes the live draft. The
  *  before/after compare surface is the separate workspace app (Track B). */
-function VersionsTab({ versions, manuscriptAvailable, onSaveVersion, onRelabel, onDelete }: {
+function VersionsTab({ versions, manuscriptAvailable, onSaveVersion, onRestore, onRelabel, onDelete }: {
   versions: SnapshotMeta[];
   manuscriptAvailable: boolean;
   onSaveVersion: () => void;
+  onRestore: (snapId: string) => void;
   onRelabel: (snapId: string, label: string) => void;
   onDelete: (snapId: string) => void;
 }) {
@@ -943,6 +959,8 @@ function VersionsTab({ versions, manuscriptAvailable, onSaveVersion, onRelabel, 
               key={v.id}
               version={v}
               ordinal={ordinalById.get(v.id) ?? 0}
+              manuscriptAvailable={manuscriptAvailable}
+              onRestore={() => onRestore(v.id)}
               onRelabel={label => onRelabel(v.id, label)}
               onDelete={() => onDelete(v.id)}
             />
@@ -953,9 +971,11 @@ function VersionsTab({ versions, manuscriptAvailable, onSaveVersion, onRelabel, 
   );
 }
 
-function VersionRow({ version, ordinal, onRelabel, onDelete }: {
+function VersionRow({ version, ordinal, manuscriptAvailable, onRestore, onRelabel, onDelete }: {
   version: SnapshotMeta;
   ordinal: number;
+  manuscriptAvailable: boolean;
+  onRestore: () => void;
   onRelabel: (label: string) => void;
   onDelete: () => void;
 }) {
@@ -984,6 +1004,15 @@ function VersionRow({ version, ordinal, onRelabel, onDelete }: {
           {version.trigger === 'import' ? 'Imported baseline' : 'Saved version'} · {when} · {version.wordCount.toLocaleString()} words · {version.chapterCount} ch.
         </div>
       </div>
+      <button
+        type="button"
+        className="hub-version-restore"
+        disabled={!manuscriptAvailable}
+        onClick={() => { if (confirm(`Restore “${version.label ?? `v${ordinal}`}” as the current draft? Your current draft is saved as a version first, so you can switch back.`)) onRestore(); }}
+        title="Make this version the current draft"
+      >
+        <UndoIcon size={13} /> Restore
+      </button>
       <button
         type="button"
         className="hub-version-del"

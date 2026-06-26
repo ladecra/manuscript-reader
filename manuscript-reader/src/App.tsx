@@ -72,7 +72,7 @@ export function App() {
     setScreen, toggleNav, setReaderMode, setHubPane,
   } = useUIStore();
   const readerMode = readerModeOf({ editMode, annSidebarOpen, changesOpen });
-  const { library, upsertManuscript, updateManuscript, cycleStatus, toggleFavorite, deleteManuscript, replaceMarkdown, getReadingPosition } = useLibraryStore();
+  const { library, importManuscript, updateManuscript, cycleStatus, toggleFavorite, deleteManuscript, replaceMarkdown, getReadingPosition } = useLibraryStore();
   const { manuscript, annotations, edits, openManuscript, closeManuscript, undoEdit, redoEdit, setEditReturnScroll, undoStack, redoStack } = useReaderStore();
   const { toastState, showToast } = useToast();
 
@@ -186,12 +186,12 @@ export function App() {
   }, [screen, handleUndo, handleRedo]);
 
   function handleLoad(combinedMarkdown: string) {
-    const ms = upsertManuscript(combinedMarkdown);
+    const ms = importManuscript(combinedMarkdown);
     const { chapters } = getParsedManuscript(combinedMarkdown);
     openManuscript(ms, chapters);
-    // Capture the import baseline (Draft 0) — idempotent, so re-importing an
-    // existing title doesn't stack duplicate baselines. The version history the
-    // revision-impact features depend on can only start if it starts now.
+    // Capture the import baseline (Draft 0) for this fresh manuscript. The
+    // version history the revision-impact features depend on can only start if
+    // it starts now.
     useSnapshotStore.getState().captureBaseline(ms);
     setLoadModalOpen(false);
     setScreen('reader');
