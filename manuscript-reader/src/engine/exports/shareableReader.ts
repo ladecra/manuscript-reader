@@ -7,6 +7,7 @@
 // localStorage to render. Ported faithfully from the v0.9 prototype.
 
 import { ANNOTATION_COLORS } from '../types';
+import { manuscriptVersionIdSource } from '../manuscript/manuscriptVersion';
 
 export class ShareReaderBuildError extends Error {
   constructor(message: string) {
@@ -87,18 +88,12 @@ function buildAnnotationScript(): string {
   function annId(){ return 'a'+Date.now()+Math.random().toString(36).slice(2,6); }
   function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
-  // Content version id of the manuscript this reader is reading. MUST stay
-  // byte-for-byte identical to engine/manuscript/manuscriptVersion.ts so the id
-  // stamped here matches what the app computes for the same source text — that's
-  // what lets us later tell whether two readers reacted to the same draft.
-  function versionId(str){
-    var h1=0xdeadbeef, h2=0x41c6ce57;
-    for(var i=0;i<str.length;i++){ var ch=str.charCodeAt(i); h1=Math.imul(h1^ch,2654435761); h2=Math.imul(h2^ch,1597334677); }
-    h1=Math.imul(h1^(h1>>>16),2246822507); h1^=Math.imul(h2^(h2>>>13),3266489909);
-    h2=Math.imul(h2^(h2>>>16),2246822507); h2^=Math.imul(h1^(h1>>>13),3266489909);
-    var n=4294967296*(2097151&h2)+(h1>>>0);
-    return 'v'+n.toString(36);
-  }
+  // Content version id of the manuscript this reader is reading. This is the app's
+  // own manuscriptVersionId, inlined from its source (engine/manuscript/
+  // manuscriptVersion.ts) — NOT a hand-copy — so the id stamped here is computed by
+  // the exact code the app runs, and can't silently drift. That's what lets us later
+  // tell whether two readers reacted to the same draft. Verified by check-share-parity.
+  var versionId = ${manuscriptVersionIdSource()};
   var MS_VERSION = versionId(md);
 
   var css = [
@@ -545,13 +540,18 @@ export function buildShareableHTML(
 <title>${escHtml(title)}</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;1,400;1,500&display=swap');
-
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;1,400&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=Hanken+Grotesk:ital,wght@0,400;0,500;0,600;1,400&display=swap');
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-:root{--bg:#16150f;--surface:#1e1c16;--surface-high:#2a2720;--paper:#16150f;--primary:#f7f4ec;--on-surface:#e6e1d4;--muted:#b6b1a3;--dim:#8a857a;--border:#3a362d;--brand:#c9a14a;--drop-cap:#f7f4ec;--max-w:680px;--margin:clamp(22px,5vw,64px);--topbar-h:52px;--safe-bottom:env(safe-area-inset-bottom,0px);--ease-expo:cubic-bezier(0.16,1,0.3,1);--ease-std:cubic-bezier(0.4,0,0.2,1)}
-:root.light{--bg:#faf9f6;--surface:#ffffff;--surface-high:#f1eee8;--paper:#fbfaf7;--primary:#1b1a17;--on-surface:#2c2a26;--muted:#6b6760;--dim:#a09b90;--border:#e8e4db;--brand:#1b1a17;--drop-cap:#1b1a17}
+/* Palette mirrors the app reader (src/index.css): cooler slate-charcoal dark with
+   a soft radial field, flat warm paper light, gold as the one accent (incl. the
+   drop cap, in both themes). Var NAMES are kept for this file's existing rules;
+   only the values track the app. Kept in step by eye — see check-share-parity for
+   the version-id contract; this is the visual layer (Slice 2). */
+:root{--page-field:radial-gradient(135% 95% at 50% -12%,#1c1c1a 0%,#181816 55%,#121211 100%);--bg:#181816;--surface:#1e1e1c;--surface-high:#252523;--paper:#161615;--primary:#ecebe6;--on-surface:#ecebe6;--muted:#a4a39c;--dim:#79786f;--border:#2b2b28;--brand:#bfa063;--drop-cap:var(--brand);--body-size:20px;--max-w:680px;--margin:clamp(22px,5vw,64px);--topbar-h:54px;--safe-bottom:env(safe-area-inset-bottom,0px);--ease-expo:cubic-bezier(0.16,1,0.3,1);--ease-std:cubic-bezier(0.4,0,0.2,1)}
+:root.light{--page-field:#fdfbf9;--bg:#fdfbf9;--surface:#faf8f6;--surface-high:#f6f0e9;--paper:#fdfbf9;--primary:#252524;--on-surface:#252524;--muted:#5c5a54;--dim:#8f8c83;--border:#f3f1ed;--brand:#b59757}
 html{scroll-behavior:smooth}
-body{background:var(--bg);color:var(--on-surface);font-family:'EB Garamond',Georgia,serif;-webkit-font-smoothing:antialiased;min-height:100dvh;transition:background .35s,color .35s}
+body{background:var(--page-field);color:var(--on-surface);font-family:'EB Garamond',Georgia,serif;-webkit-font-smoothing:antialiased;min-height:100dvh;transition:background .35s,color .35s}
 ::-webkit-scrollbar{width:3px}::-webkit-scrollbar-track{background:var(--bg)}::-webkit-scrollbar-thumb{background:var(--border)}
 #topbar{position:fixed;top:0;left:0;right:0;height:var(--topbar-h);background:var(--bg);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 var(--margin);z-index:100;transition:transform .4s var(--ease-expo),background .35s,border-color .35s}
 #topbar.hidden{transform:translateY(-110%);pointer-events:none}
@@ -575,22 +575,24 @@ body{background:var(--bg);color:var(--on-surface);font-family:'EB Garamond',Geor
 #nav-overlay.visible{display:block}
 #screen-reader{padding-top:calc(var(--topbar-h) + 44px);padding-bottom:calc(110px + var(--safe-bottom));padding-left:var(--margin);padding-right:var(--margin)}
 #content{max-width:var(--max-w);margin:0 auto}
-.chapter-marker{display:block;font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--dim);margin-top:88px;margin-bottom:14px;scroll-margin-top:calc(var(--topbar-h) + 24px)}
+.chapter-marker{display:block;text-align:center;font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:9px;letter-spacing:.32em;text-transform:uppercase;color:var(--dim);margin-top:120px;margin-bottom:24px;opacity:.5;scroll-margin-top:calc(var(--topbar-h) + 24px)}
 .chapter-marker:first-child{margin-top:0}
-#content h1{font-family:'EB Garamond',Georgia,serif;font-size:clamp(26px,5vw,42px);font-weight:400;line-height:1.18;letter-spacing:-.01em;color:var(--primary);margin-bottom:36px;scroll-margin-top:calc(var(--topbar-h) + 8px)}
+#content h1{font-family:'Cormorant Garamond',Georgia,serif;font-size:clamp(36px,6vw,52px);font-weight:400;line-height:1.08;letter-spacing:.01em;color:var(--primary);text-align:center;margin-bottom:36px;scroll-margin-top:calc(var(--topbar-h) + 8px)}
+#content h1::after{content:'';display:block;width:32px;height:1px;margin:28px auto 0;background:var(--brand);opacity:.4}
 #content h2{font-family:'EB Garamond',Georgia,serif;font-size:clamp(19px,3.5vw,26px);font-weight:400;line-height:1.3;color:var(--primary);margin-top:52px;margin-bottom:8px}
+#content .chapter-block>h2:first-child{text-align:center;font-style:italic;font-weight:400;font-size:clamp(15px,2.4vw,18px);color:var(--muted);letter-spacing:.02em;margin-top:-16px;margin-bottom:44px}
 #content h3{font-family:'EB Garamond',Georgia,serif;font-size:19px;font-weight:500;color:var(--muted);margin-top:36px;margin-bottom:6px}
 #content p,#content blockquote,#content ul,#content ol{opacity:0;transform:translateY(16px);transition:opacity .7s var(--ease-expo),transform .7s var(--ease-expo)}
 #content p.visible,#content blockquote.visible,#content ul.visible,#content ol.visible{opacity:1;transform:translateY(0)}
-#content p{font-size:19px;line-height:1.78;color:var(--on-surface);margin-bottom:1.4em}
-.chapter-block>p:first-of-type::first-letter{font-size:3.8em;line-height:.8;float:left;margin-right:5px;margin-top:5px;color:var(--drop-cap);font-weight:400}
+#content p{font-size:var(--body-size);line-height:1.82;color:var(--on-surface);margin-bottom:1.4em}
+.chapter-block>p:first-of-type::first-letter{font-size:4.2em;line-height:.78;float:left;margin-right:6px;margin-top:6px;color:var(--drop-cap);font-weight:400;font-family:'Cormorant Garamond',Georgia,serif}
 #content em{font-style:italic}
 #content strong{font-weight:500;color:var(--primary)}
-#content blockquote{border-left:1px solid var(--border);margin:36px 0;padding:0 0 0 24px;font-style:italic;color:var(--muted);font-size:19px;line-height:1.78}
-#content hr{border:none;text-align:center;margin:60px 0;color:var(--border);letter-spacing:.6em;font-size:18px;opacity:1!important;transform:none!important}
+#content blockquote{border-left:1px solid var(--border);margin:36px 0;padding:0 0 0 24px;font-style:italic;color:var(--muted);font-size:var(--body-size);line-height:1.78}
+#content hr{border:none;text-align:center;margin:72px 0;color:var(--dim);letter-spacing:.8em;font-size:14px;opacity:.35!important;transform:none!important}
 #content hr::before{content:'· · ·'}
 #content ul,#content ol{margin:0 0 1.4em;padding-left:0;list-style:none}
-#content li{font-size:19px;line-height:1.78;color:var(--on-surface);padding:3px 0 3px 26px;position:relative}
+#content li{font-size:var(--body-size);line-height:1.78;color:var(--on-surface);padding:3px 0 3px 26px;position:relative}
 #content ul li::before{content:'—';position:absolute;left:0;color:var(--border)}
 #content ol{counter-reset:ol-c}
 #content ol li{counter-increment:ol-c}

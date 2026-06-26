@@ -18,7 +18,8 @@
     "check-rendered-mark": "tsx fixtures/check-rendered-mark.mjs",
     "check-prose": "tsx fixtures/check-prose.mjs",
     "check-insights": "tsx fixtures/check-insights.mjs",
-    "check-epub": "tsx fixtures/check-epub.mjs"
+    "check-epub": "tsx fixtures/check-epub.mjs",
+    "check-share-parity": "tsx fixtures/check-share-parity.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",
