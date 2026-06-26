@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type { Manuscript, ManuscriptStatus, PublishingMetadata } from '../engine/types';
 import { MANUSCRIPT_STATUSES } from '../engine/types';
-import { loadLibrary, saveLibrary, manuscriptId, savePosition, loadPosition, type StoredManuscript } from '../engine/storage';
+import { loadLibrary, saveLibrary, manuscriptId, savePosition, loadPosition, clearManuscriptTombstone, type StoredManuscript } from '../engine/storage';
 import { parseMarkdown, countWords } from '../engine/ingestion/parseMarkdown';
 
 function toManuscript(s: StoredManuscript): Manuscript {
@@ -69,6 +69,7 @@ export const useLibraryStore = create<LibraryStore>((_set, _get) => {
         revision: contentChanged ? (prev?.revision ?? 0) + 1 : (prev?.revision ?? 1),
       };
       if (existing >= 0) stored[existing] = flat; else stored.unshift(flat);
+      clearManuscriptTombstone(id);
       saveLibrary(stored);
       const converted = stored.map(toManuscript);
       set({ library: converted });

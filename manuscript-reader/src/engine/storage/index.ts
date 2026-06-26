@@ -25,6 +25,7 @@ const cache = {
   edits: new Map<string, Edit[]>(),
   sessions: new Map<string, ReaderSession[]>(),
   positions: new Map<string, number>(),
+  tombstones: new Map<string, number>(),
   // Snapshots: only the LIGHT index is cached (the cover precedent). Frozen bodies
   // are never held in memory — loadSnapshot fetches them on demand.
   snapshots: new Map<string, SnapshotMeta[]>(),
@@ -47,6 +48,11 @@ function reportPersistError(e: unknown): void {
 let writeChain: Promise<void> = Promise.resolve();
 function persist(op: () => Promise<void>): void {
   writeChain = writeChain.then(op).catch(reportPersistError);
+}
+
+/** Await all queued persistence + sync side-effects (e.g. before a full sync pass). */
+export function flushPendingWrites(): Promise<void> {
+  return writeChain;
 }
 
 // Shallow copies are enough to keep callers from mutating cached records:
@@ -76,6 +82,8 @@ export async function hydrateStorage(): Promise<void> {
     m.progress = pos; // position is the source of truth for reading progress
   }
   cache.library = list;
+  const tombs = await provider.loadTombstones();
+  cache.tombstones = new Map(Object.entries(tombs));
   hydrated = true;
 }
 
@@ -116,6 +124,56 @@ export function loadLibrary(): StoredManuscript[] {
   return cache.library.map(copyMs);
 }
 
+function isManuscriptTombstoned(id: string): boolean {
+  return cache.tombstones.has(id);
+}
+
+function persistTombstones(): void {
+  const rec = Object.fromEntries(cache.tombstones);
+  persist(() => provider.saveTombstones(rec));
+}
+
+/** Record that a manuscript was deleted locally. Survives sync so pulls cannot resurrect it. */
+function recordManuscriptTombstone(id: string): void {
+  const deletedAt = Date.now();
+  cache.tombstones.set(id, deletedAt);
+  persistTombstones();
+  syncPushTombstone(id, deletedAt);
+}
+
+/** User re-imported or recreated a manuscript with this id — allow it in the library again. */
+export function clearManuscriptTombstone(id: string): void {
+  if (!cache.tombstones.has(id)) return;
+  cache.tombstones.delete(id);
+  persistTombstones();
+  syncClearTombstone(id);
+}
+
+function purgeManuscriptCache(id: string): void {
+  cache.annotations.delete(id);
+  cache.edits.delete(id);
+  cache.sessions.delete(id);
+  cache.positions.delete(id);
+  cache.snapshots.delete(id);
+}
+
+/** Apply a tombstone from sync: drop local rows and persist the deletion. */
+function applyRemoteTombstone(id: string, deletedAt: number): void {
+  const prev = cache.tombstones.get(id) ?? 0;
+  if (deletedAt <= prev) return;
+  cache.tombstones.set(id, deletedAt);
+  persistTombstones();
+  const hadLocal = cache.library.some(m => m.id === id);
+  if (hadLocal) {
+    cache.library = cache.library.filter(m => m.id !== id);
+    purgeManuscriptCache(id);
+    persist(async () => {
+      await provider.deleteManuscript(id);
+      await provider.saveCover(id, null);
+    });
+  }
+}
+
 /** Replace the library. Persists only the manuscripts that actually changed (so
  *  frequent metadata saves don't rewrite every manuscript's source text), and
  *  deletes any that were removed. Writes are serialized (see `persist`) so the
@@ -134,6 +192,8 @@ export function saveLibrary(library: StoredManuscript[]): void {
   }
   for (const m of cache.library) {
     if (!nextIds.has(m.id)) {
+      recordManuscriptTombstone(m.id);
+      purgeManuscriptCache(m.id);
       persist(async () => {
         await provider.deleteManuscript(m.id);
         await provider.saveCover(m.id, null);
@@ -403,6 +463,22 @@ export function syncDeleteManuscript(id: string): void {
     .catch(e => console.warn('[sync] delete manuscript', e));
 }
 
+export function syncPushTombstone(id: string, deletedAt: number): void {
+  if (!syncClient) return;
+  const sc = syncClient;
+  writeChain = writeChain
+    .then(() => sc.pushTombstone(id, deletedAt))
+    .catch(e => console.warn('[sync] push tombstone', e));
+}
+
+export function syncClearTombstone(id: string): void {
+  if (!syncClient) return;
+  const sc = syncClient;
+  writeChain = writeChain
+    .then(() => sc.clearTombstone(id))
+    .catch(e => console.warn('[sync] clear tombstone', e));
+}
+
 /** Push a snapshot (index row + content-addressed body) to Supabase. Immutable,
  *  so this is a simple upsert; the body is uploaded once per versionId. */
 export function syncPushSnapshot(snap: Snapshot): void {
@@ -441,6 +517,26 @@ export async function performSync(): Promise<SyncResult> {
   const sc = syncClient;
   const result: SyncResult = { pulled: 0, pushed: 0, failed: false };
 
+  await flushPendingWrites();
+
+  try {
+    const remoteTombs = await sc.fetchTombstones();
+    for (const [id, deletedAt] of Object.entries(remoteTombs)) {
+      applyRemoteTombstone(id, deletedAt);
+    }
+    for (const [id, deletedAt] of cache.tombstones) {
+      if ((remoteTombs[id] ?? 0) >= deletedAt) continue;
+      await sc.pushTombstone(id, deletedAt);
+    }
+  } catch (e) {
+    // Soft failure: local tombstones already block resurrection on this device.
+    // Cross-device delete just won't propagate this pass (e.g. the
+    // manuscript_tombstones table isn't migrated yet). Don't flag the whole sync
+    // as failed — that would show the user a false "changes may not have saved" toast
+    // even though manuscripts and snapshots synced fine.
+    console.warn('[sync] tombstone reconcile failed', e);
+  }
+
   let remoteAll: StoredManuscript[];
   try { remoteAll = await sc.fetchAllMetadata(); }
   catch (e) { console.warn('[sync] fetchAllMetadata failed', e); return { ...result, failed: true }; }
@@ -448,8 +544,20 @@ export async function performSync(): Promise<SyncResult> {
   const remoteMap = new Map(remoteAll.map(m => [m.id, m]));
   const localMap  = new Map(cache.library.map(m => [m.id, m]));
 
+  // Remote still has rows we tombstoned locally — finish the cloud delete.
+  for (const id of cache.tombstones.keys()) {
+    if (!remoteMap.has(id)) continue;
+    try {
+      await sc.deleteManuscript(id);
+    } catch (e) {
+      console.warn('[sync] re-delete tombstoned manuscript', id, e);
+      result.failed = true;
+    }
+  }
+
   // Pull: remote is strictly newer
   for (const remote of remoteAll) {
+    if (isManuscriptTombstoned(remote.id)) continue;
     const local = localMap.get(remote.id);
     if (local && (local.revision ?? 0) >= (remote.revision ?? 0)) continue;
 
@@ -484,6 +592,7 @@ export async function performSync(): Promise<SyncResult> {
 
   // Push: local is strictly newer than remote, or remote doesn't exist yet
   for (const local of cache.library) {
+    if (isManuscriptTombstoned(local.id)) continue;
     const remote = remoteMap.get(local.id);
     if (remote && (local.revision ?? 0) <= (remote.revision ?? 0)) continue;
 
@@ -506,6 +615,7 @@ export async function performSync(): Promise<SyncResult> {
   // (a snapshot absent from remote was created locally, so it has a local body).
   const allMsIds = new Set<string>([...localMap.keys(), ...remoteMap.keys()]);
   for (const msId of allMsIds) {
+    if (isManuscriptTombstoned(msId)) continue;
     try {
       const remoteRecs = await sc.fetchSnapshotRecords(msId);
       const localMetas = cache.snapshots.get(msId) ?? [];

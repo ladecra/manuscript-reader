@@ -16,6 +16,7 @@ const SESSION_KEY = 'ms_sessions_';
 const COVER_KEY = 'ms_cover_';
 const SNAP_KEY = 'ms_snap_';        // ms_snap_{msId}_{snapId} → SnapshotRecord
 const SNAPBODY_KEY = 'ms_snapbody_'; // ms_snapbody_{msId}_{versionId} → markdown
+const TOMBSTONES_KEY = 'ms_tombstones_v1';
 
 function toMeta(rec: SnapshotRecord): SnapshotMeta {
   const { annotations: _a, sessions: _s, ...meta } = rec;
@@ -143,5 +144,14 @@ export class LocalStorageProvider implements StorageProvider {
     localStorage.removeItem(`${SNAP_KEY}${id}_${snapshotId}`);
     const stillUsed = (await this.listSnapshots(id)).some(s => s.versionId === rec.versionId);
     if (!stillUsed) localStorage.removeItem(`${SNAPBODY_KEY}${id}_${rec.versionId}`);
+  }
+
+  async loadTombstones(): Promise<Record<string, number>> {
+    try { return JSON.parse(localStorage.getItem(TOMBSTONES_KEY) ?? '{}'); }
+    catch { return {}; }
+  }
+
+  async saveTombstones(tombstones: Record<string, number>): Promise<void> {
+    localStorage.setItem(TOMBSTONES_KEY, JSON.stringify(tombstones));
   }
 }

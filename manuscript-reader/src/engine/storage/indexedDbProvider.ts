@@ -174,4 +174,14 @@ export class IndexedDbProvider implements StorageProvider {
       await db.delete(STORE, key.snapshotBody(id, rec.versionId));
     }
   }
+
+  async loadTombstones(): Promise<Record<string, number>> {
+    const db = await this.db();
+    return ((await db.get(STORE, key.tombstones())) as Record<string, number>) ?? {};
+  }
+
+  async saveTombstones(tombstones: Record<string, number>): Promise<void> {
+    const db = await this.db();
+    await db.put(STORE, tombstones, key.tombstones());
+  }
 }
