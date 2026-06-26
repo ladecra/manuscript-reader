@@ -25,10 +25,10 @@ import { DEVELOPMENTAL_TYPES, ANNOTATION_LABELS } from '../types';
 // own ×-notation cut (ReportView/proseReportSection mark deviation at 1.4×/0.6×
 // for information). An insight is a "look here" claim, so we only make it when a
 // chapter is genuinely, unmistakably off: ≥2.1× the manuscript's mean chapter
-// length, the classic two-chapters-merged tell. Short chapters are NOT surfaced
-// as insights — a short chapter is rarely a real problem, and we'd rather stay
-// quiet than invent an issue. Empty is the correct, common result.
-const PROSE_OUTLIER = 2.1;
+// length, the classic two-chapters-merged tell. Short chapters surface at ≤0.25×
+// — much stricter than the table's 0.6× — for likely false breaks (orphaned headings).
+const PROSE_OUTLIER_LONG = 2.1;
+const PROSE_OUTLIER_SHORT = 0.25;
 
 // Per-tier caps and overall cap — keep the strip scannable above the fold.
 // Reaction allows clusters PLUS one developmental-density pointer (the pacing/
@@ -197,18 +197,25 @@ function proseInsights(signals: EditorialSignals): ManuscriptInsight[] {
   const rated = prose.chapters
     .filter(c => c.words > 0)
     .map(c => ({ c, ratio: c.words / mean }))
-    .filter(({ ratio }) => ratio >= PROSE_OUTLIER);
+    .filter(
+      ({ ratio }) => ratio >= PROSE_OUTLIER_LONG || ratio <= PROSE_OUTLIER_SHORT,
+    );
 
-  // Longest first — the most likely merge tell leads.
-  rated.sort((a, b) => b.ratio - a.ratio);
+  // Most extreme vs the manuscript mean first (0.1× and 3× both beat 2.1×).
+  rated.sort((a, b) => proseLengthExtremity(b.ratio) - proseLengthExtremity(a.ratio));
 
   return rated.slice(0, MAX_PROSE).map(({ c, ratio }) => {
     const where = chapterName(c.title, c.index);
+    const short = ratio <= PROSE_OUTLIER_SHORT;
     return {
       id: `insight-prose-${c.index}`,
       tier: 'prose' as const,
-      headline: `${where} runs ${ratio.toFixed(1)}× your average chapter length`,
-      detail: 'A chapter this long sometimes hides two chapters that merged — worth checking the chapter break.',
+      headline: short
+        ? `${where} is only ${ratio.toFixed(1)}× your average chapter length`
+        : `${where} runs ${ratio.toFixed(1)}× your average chapter length`,
+      detail: short
+        ? 'A chapter this short is often a false break — a heading or in-text reference split off from the real chapter.'
+        : 'A chapter this long sometimes hides two chapters that merged — worth checking the chapter break.',
       chapter: c.index,
       chapterRange: [c.index, c.index] as [number, number],
       evidence: {
@@ -218,6 +225,10 @@ function proseInsights(signals: EditorialSignals): ManuscriptInsight[] {
       },
     };
   });
+}
+
+function proseLengthExtremity(ratio: number): number {
+  return ratio >= 1 ? ratio : 1 / ratio;
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────

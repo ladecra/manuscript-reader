@@ -4,17 +4,38 @@
 // independent — every downstream stage (publish-ready renderer, tiering, query
 // export) renders from THIS instead of re-parsing markdown.
 //
-// SCOPE TODAY (scaffold): grouping is faithful for the BODY (chapters, scene
-// breaks, block roles). Front/back matter is sparse because the ingestion
-// pipeline (`structureManuscript` in preprocessMarkdown.ts) strips front matter
-// and drops back matter *before* this runs — so there is little left to group.
-// Retaining that matter is the key Stage-0/1 follow-up; the model has the slots
-// ready (`frontMatter`/`backMatter`) for when capture lands.
+// Front/back matter is now CAPTURED (classify-and-keep in preprocessMarkdown):
+// retained sections arrive as `region`-tagged blocks, each opened by a
+// `matter-heading` block carrying the classified `matterRole` + display title.
+// We group those into MatterSections here.
 
-import type { ManuscriptStructure, ChapterSection, StructuralBlock } from '../types';
+import type {
+  ManuscriptStructure, ChapterSection, StructuralBlock, MatterSection, MatterRegion,
+} from '../types';
 import { getParsedManuscript } from './parseCache';
 
 const TITLE_COMMENT = /<!--\s*title:\s*([\s\S]*?)\s*-->/i;
+
+/** Group a region's blocks into sections, one per `matter-heading` marker. */
+function groupMatter(blocks: StructuralBlock[], region: MatterRegion): MatterSection[] {
+  const sections: MatterSection[] = [];
+  let cur: MatterSection | null = null;
+  for (const b of blocks) {
+    if (b.region !== region) continue;
+    if (b.role === 'matter-heading') {
+      cur = { role: b.matterRole ?? 'other', region, title: b.text, blocks: [] };
+      sections.push(cur);
+    } else if (cur) {
+      cur.blocks.push(b);
+    } else {
+      // A region block with no preceding heading (shouldn't happen — the fence
+      // always emits a heading marker first). Open an untitled section to keep it.
+      cur = { role: 'other', region, title: '', blocks: [b] };
+      sections.push(cur);
+    }
+  }
+  return sections;
+}
 
 export function buildManuscriptStructure(md: string): ManuscriptStructure {
   // Cached parse: the hub builds the structural model on the same source it (and
@@ -24,14 +45,14 @@ export function buildManuscriptStructure(md: string): ManuscriptStructure {
   const titleMatch = TITLE_COMMENT.exec(md);
   const title = titleMatch ? titleMatch[1].trim() : (chapters[0]?.title ?? '');
 
-  // Forematter region = everything before the first chapter heading.
-  const frontMatter = blocks.filter(b => b.chapterIndex === 0);
+  const frontMatter = groupMatter(blocks, 'front');
+  const backMatter = groupMatter(blocks, 'back');
 
-  // Body blocks grouped by owning chapter (the chapter-heading block defines the
-  // section via the chapters array, so it isn't repeated in the body list).
+  // Body blocks grouped by owning chapter. Matter blocks (region set) and the
+  // chapter-heading blocks (the chapters array already carries them) are excluded.
   const byChapter = new Map<number, StructuralBlock[]>();
   for (const b of blocks) {
-    if (b.chapterIndex === 0 || b.role === 'chapter-heading') continue;
+    if (b.region || b.role === 'chapter-heading') continue;
     const arr = byChapter.get(b.chapterIndex);
     if (arr) arr.push(b);
     else byChapter.set(b.chapterIndex, [b]);
@@ -52,7 +73,7 @@ export function buildManuscriptStructure(md: string): ManuscriptStructure {
     title,
     frontMatter,
     chapters: chapterSections,
-    backMatter: [], // dropped upstream by structureManuscript — capture is the follow-up
+    backMatter,
     blocks,
   };
 }

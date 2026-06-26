@@ -2,7 +2,13 @@
 // Converts normalized Markdown (post-preprocessMarkdown) into rendered HTML
 // and a structured chapters array.
 
-import type { Chapter, ParsedManuscript, StructuralBlock } from '../types';
+import type { Chapter, ParsedManuscript, StructuralBlock, MatterRegion, MatterRole } from '../types';
+
+// Matter fences emitted by structureManuscript (classify-and-keep). A region wraps
+// retained front/back matter; there is no markdown heading inside, so naive
+// `# `-splitters stay correct — only this parser reads the fence.
+const MATTER_OPEN = /^<!--\s*matter:(front|back)\s+role="([^"]*)"\s+title="([^"]*)"\s*-->$/;
+const MATTER_CLOSE = /^<!--\s*\/matter\s*-->$/;
 
 function escHtml(s: string): string {
   return String(s)
@@ -65,17 +71,42 @@ export function parseMarkdown(md: string): ParsedManuscript {
   // block records its role, source span, plain text, and owning chapter (0 =
   // forematter). The structural model (manuscriptStructure.ts) groups these.
   const blocks: StructuralBlock[] = [];
+  // Retained-matter region state. While set, blocks are tagged with the region and
+  // attributed to no chapter (chapterIndex 0), and `# ` never opens a chapter.
+  let matterRegion: MatterRegion | null = null;
   const block = (role: StructuralBlock['role'], start: number, end: number, text: string, level?: number) =>
-    blocks.push({ role, sourceStart: start, sourceEnd: end, text: text.trim(), level, chapterIndex: chIdx });
+    blocks.push({ role, sourceStart: start, sourceEnd: end, text: text.trim(), level, chapterIndex: matterRegion ? 0 : chIdx, region: matterRegion ?? undefined });
 
   while (i < lines.length) {
     const line = lines[i];
+    const trimmed = line.trim();
+
+    // ── Matter fence open ── (front/back matter retained by classify-and-keep)
+    const mo = trimmed.match(MATTER_OPEN);
+    if (mo) {
+      if (inBlock) { html += '</div>'; inBlock = false; }   // close the last chapter-block (back matter)
+      if (matterRegion) html += '</section>';               // defensively close an unclosed region
+      matterRegion = mo[1] as MatterRegion;
+      const role = mo[2] as MatterRole;
+      const title = mo[3];
+      html += `<section class="ms-matter ms-matter--${matterRegion}" data-matter-role="${role}">`;
+      blocks.push({ role: 'matter-heading', sourceStart: lineStart[i], sourceEnd: lineEnd(i), text: title, chapterIndex: 0, region: matterRegion, matterRole: role });
+      if (title) html += `<h2 class="ms-matter-title"${src(lineStart[i], lineEnd(i))}>${inline(title)}</h2>`;
+      i++;
+      continue;
+    }
+    // ── Matter fence close ──
+    if (MATTER_CLOSE.test(trimmed)) {
+      if (matterRegion) { html += '</section>'; matterRegion = null; }
+      i++;
+      continue;
+    }
 
     // Skip HTML comments (e.g. <!-- title: ... -->)
-    if (/^<!--[\s\S]*?-->\s*$/.test(line.trim())) { i++; continue; }
+    if (/^<!--[\s\S]*?-->\s*$/.test(trimmed)) { i++; continue; }
 
-    // ── Chapter heading (# ) ──
-    if (/^# /.test(line)) {
+    // ── Chapter heading (# ) ── (never inside retained matter)
+    if (!matterRegion && /^# /.test(line)) {
       if (inBlock) html += '</div>';
       chIdx++;
       const title = stripChapterLabel(line.replace(/^# /, '').trim());
@@ -187,8 +218,8 @@ export function parseMarkdown(md: string): ParsedManuscript {
     // ── Blank line ──
     if (line.trim() === '') { i++; continue; }
 
-    // ── Setext h1 (===) → chapter ──
-    if (i + 1 < lines.length && /^={3,}\s*$/.test(lines[i + 1].trim())) {
+    // ── Setext h1 (===) → chapter ── (never inside retained matter)
+    if (!matterRegion && i + 1 < lines.length && /^={3,}\s*$/.test(lines[i + 1].trim())) {
       if (inBlock) html += '</div>';
       chIdx++;
       const title = stripChapterLabel(line.trim());
@@ -220,7 +251,9 @@ export function parseMarkdown(md: string): ParsedManuscript {
       !/^> /.test(lines[i]) &&
       !/^```/.test(lines[i]) &&
       !/^(-{3,}|\*{3,}|_{3,})$/.test(lines[i].trim()) &&
-      !/^={3,}\s*$/.test(lines[i].trim())
+      !/^={3,}\s*$/.test(lines[i].trim()) &&
+      !MATTER_OPEN.test(lines[i].trim()) &&   // never swallow a matter fence — it would
+      !MATTER_CLOSE.test(lines[i].trim())     // strand the region open and hang the parser
     ) {
       para += lines[i] + ' ';
       i++;
@@ -229,9 +262,13 @@ export function parseMarkdown(md: string): ParsedManuscript {
       block('paragraph', lineStart[paraStart], lineEnd(i - 1), para);
       html += `<p${src(lineStart[paraStart], lineEnd(i - 1))}>${inline(para.trim())}</p>`;
     }
+    // Anti-hang guard: a line that matched no handler and yielded no paragraph
+    // (e.g. a stray `# ` inside matter) must still advance the cursor.
+    if (i === paraStart) i++;
   }
 
   if (inBlock) html += '</div>';
+  if (matterRegion) html += '</section>';
 
   return { html, chapters, blocks };
 }
@@ -253,6 +290,7 @@ export function computeChapterWords(md: string): Map<number, number> {
   const result = new Map<number, number>();
   let chIdx = 0;
   let buffer: string[] = [];
+  let inMatter = false;
 
   const flush = () => {
     if (chIdx > 0) {
@@ -267,6 +305,10 @@ export function computeChapterWords(md: string): Map<number, number> {
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+    // Retained front/back matter doesn't count toward any chapter's word total.
+    if (MATTER_OPEN.test(line.trim())) { inMatter = true; continue; }
+    if (MATTER_CLOSE.test(line.trim())) { inMatter = false; continue; }
+    if (inMatter) continue;
     const isSetextH1 = i + 1 < lines.length && /^={3,}\s*$/.test(lines[i + 1].trim());
     if (/^# /.test(line)) {
       flush();

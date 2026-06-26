@@ -9,6 +9,8 @@
 // chapter or recognized narrative opener (Prologue, Part I, etc.) and treats
 // everything before it as forematter — regardless of what those headings say.
 
+import type { MatterRole } from '../types';
+
 // ─── Word/Roman numeral utilities ────────────────────────────────────────────
 
 const NUM_WORDS: Record<string, number> = {
@@ -79,6 +81,78 @@ export function isDropHeading(rawLine: string): boolean {
   if (DROP_HEADINGS.has(s)) return true;
   if (/^(also by|by the same author|other books|praise for|advance praise|reading group|discussion questions|book club|a note from)/.test(s)) return true;
   return false;
+}
+
+// ─── Matter classification (classify-and-keep) ────────────────────────────────
+// Replaces the old strip/drop verdict with a typed role, so front/back matter is
+// RETAINED (as fenced regions) and the publish-ready renderer + metadata extractor
+// can use it. The decision is made once here, at ingestion, where the original
+// heading is available, and frozen into the fence — a deterministic mapping, not a
+// fuzzy match, so freezing it is safe. Prologue/epilogue are deliberately absent:
+// they are narrative and stay body chapters.
+
+const MATTER_ROLE_MAP: Record<string, MatterRole> = {
+  'title page': 'title-page', frontispiece: 'title-page',
+  'half title': 'half-title',
+  copyright: 'copyright',
+  dedication: 'dedication',
+  epigraph: 'epigraph',
+  foreword: 'foreword',
+  preface: 'preface',
+  introduction: 'introduction',
+  acknowledgment: 'acknowledgements', acknowledgments: 'acknowledgements',
+  acknowledgement: 'acknowledgements', acknowledgements: 'acknowledgements',
+  'author note': 'author-note', 'authors note': 'author-note',
+  'a note on the text': 'author-note', 'note on the text': 'author-note',
+  'translator note': 'author-note',
+  afterword: 'afterword',
+  'about the author': 'about-author', 'about the book': 'about-author',
+  colophon: 'colophon',
+  glossary: 'glossary',
+  appendix: 'appendix',
+  notes: 'notes', references: 'notes', bibliography: 'notes', index: 'notes',
+  'dramatis personae': 'notes', 'cast of characters': 'notes',
+  'also by': 'also-by', 'also by the same author': 'also-by',
+};
+
+/** Normalize a heading to the bare section keyword (lowercased, subtitle + non-letters stripped). */
+function matterKey(rawLine: string): string {
+  let s = rawLine.replace(/^#+\s*/, '').toLowerCase();
+  s = s.split(/[–—]|\s-\s|:/)[0];
+  return s.replace(/[^a-z ]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+/** The table of contents — discarded entirely (regenerated from real structure at
+ *  export, never echoed: a frozen TOC is exactly where stale chapter names surface). */
+export function isTocHeading(rawLine: string): boolean {
+  const s = matterKey(rawLine);
+  return s === 'contents' || s === 'table of contents';
+}
+
+/** Classify a heading as a front/back-matter role, or null if it isn't matter. */
+export function classifyMatter(rawLine: string): MatterRole | null {
+  const s = matterKey(rawLine);
+  if (!s) return null;
+  if (MATTER_ROLE_MAP[s]) return MATTER_ROLE_MAP[s];
+  if (/^(also by|other books|by the same author)/.test(s)) return 'also-by';
+  if (/^(praise for|advance praise)/.test(s)) return 'about-author';
+  if (/^(reading group|discussion questions|book club)/.test(s)) return 'notes';
+  if (/^a note from/.test(s)) return 'author-note';
+  return null;
+}
+
+// ── Matter fence emit ─────────────────────────────────────────────────────────
+// A retained section is wrapped in a comment fence carrying its region + role +
+// display title. Deliberately NO markdown heading inside: every naive `# `-splitter
+// (the shared-reader parser, computeChapterWords) then stays correct by construction
+// — they see only comment lines (skipped) and prose. parseMarkdown reads the fence.
+
+interface MatterSpec { region: 'front' | 'back'; role: MatterRole; title: string; body: string[]; }
+
+function emitFence(spec: MatterSpec): string {
+  const title = spec.title.replace(/["<>]/g, '').trim();
+  const body = spec.body.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  return `<!-- matter:${spec.region} role="${spec.role}" title="${title}" -->\n${body}\n<!-- /matter -->`;
 }
 
 /**
@@ -171,6 +245,45 @@ function isChapterLabel(s: string): boolean {
   const t = s.trim();
   if (!t || t.length > 60) return false;
   return CHAPTER_KEYWORD.test(t) || LEADING_NUM.test(t);
+}
+
+// ─── Table-of-contents excision ───────────────────────────────────────────────
+// The TOC is discarded and regenerated from the real chapter structure at export
+// (a frozen TOC is exactly where stale chapter names + meaningless page numbers
+// surface). It must be removed BEFORE the chapter-promotion passes, or its entry
+// lines ("Chapter One", "Chapter Two", dot-leader rows) get promoted to phantom
+// chapters that then masquerade as the start of the body.
+
+/** A line that reads like a TOC entry (scanned only after a "Contents" heading). */
+function isTocEntry(raw: string): boolean {
+  const t = unwrapEmphasis(raw).replace(/^#+\s*/, '').trim();
+  if (!t || t.length > 70) return false;
+  if (/\.{2,}\s*\d+\s*$/.test(t)) return true;                                  // dot leaders → page no
+  if (/\s\d+\s*$/.test(t) && t.split(/\s+/).length <= 10) return true;          // trailing page no
+  if (CHAPTER_KEYWORD.test(t)) return true;                                     // "Chapter One", "Part II"
+  if (/^(\d{1,3}|[ivxlcdm]+)[.):\s]/i.test(t)) return true;                     // "1." / "IV "
+  const words = t.split(/\s+/).filter(Boolean);
+  return words.length <= 10 && !/[.!?]$/.test(t);                              // short, non-sentence
+}
+
+/** Remove a Table of Contents (heading + its entry rows) before promotion runs. */
+export function stripTableOfContents(text: string): string {
+  const lines = text.split('\n');
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const key = unwrapEmphasis(lines[i]).replace(/^#+\s*/, '')
+      .toLowerCase().replace(/[^a-z ]/g, '').replace(/\s+/g, ' ').trim();
+    if (key === 'contents' || key === 'table of contents') {
+      let j = i + 1;
+      while (j < lines.length && !lines[j].trim()) j++;       // skip blanks under the heading
+      const entryStart = j;
+      while (j < lines.length && lines[j].trim() && isTocEntry(lines[j])) j++;
+      if (j > entryStart) { i = j - 1; continue; }            // drop heading + entries
+      // No entry rows followed — leave the line (it's a real "Contents" section).
+    }
+    out.push(lines[i]);
+  }
+  return out.join('\n');
 }
 
 /** Promote heading-less chapter markers to `# ` headings. */
@@ -279,19 +392,40 @@ export function normalizeChapterHeading(raw: string): string {
   return label;
 }
 
-// ─── Structure pass (THE FIX) ─────────────────────────────────────────────────
+// ─── Structure pass (classify-and-keep) ──────────────────────────────────────
+
+/** Split a line range into segments at each `# ` heading. The first segment
+ *  (`heading: null`) holds any content before the first heading. */
+function splitByHeading(lines: string[]): Array<{ heading: string | null; body: string[] }> {
+  const segs: Array<{ heading: string | null; body: string[] }> = [{ heading: null, body: [] }];
+  for (const line of lines) {
+    if (/^# /.test(line)) segs.push({ heading: line, body: [] });
+    else segs[segs.length - 1].body.push(line);
+  }
+  return segs;
+}
+
+const stripComments = (body: string[]): string[] => body.filter(l => !/^\s*<!--/.test(l));
+const hasContent = (body: string[]): boolean => body.some(l => l.trim());
 
 /**
- * Strip forematter and back matter from normalized Markdown.
+ * CLASSIFY-AND-KEEP forematter and back matter in normalized Markdown.
+ *
+ * Supersedes the old strip/drop pass. The body stays the single source of record;
+ * front/back matter is RETAINED as comment-fenced regions (see emitFence) so the
+ * publish-ready renderer and the metadata extractor can use it, while the reader
+ * fences it out of the immersive view. Only the TOC is discarded outright — it is
+ * always regenerated from the real chapter structure.
  *
  * ALGORITHM:
  * 1. If already structured (has <!-- title: --> comment), return as-is.
- * 2. Scan all # headings to find the first NARRATIVE OPENER (explicit chapter
- *    number, "Prologue", "Part I", etc.). Everything before it is forematter.
- * 3. From forematter, extract the book title heuristically.
- * 4. After the first narrative opener, drop any sections whose heading matches
- *    DROP_HEADINGS (back matter).
- * 5. Reconstruct with a <!-- title: --> comment.
+ * 2. Find the first NARRATIVE OPENER (explicit chapter number, "Prologue",
+ *    "Part I", …). Everything before it is front matter.
+ * 3. Extract the book title from the front matter heuristically.
+ * 4. Group the front matter into classified, fenced sections.
+ * 5. From the first narrative opener on, keep narrative sections as body and
+ *    fence DROP/matter-classified sections as back matter (discard the TOC).
+ * 6. Reconstruct: title comment · front fences · body · back fences.
  */
 export function structureManuscript(text: string): string {
   const lines = text.split('\n');
@@ -360,31 +494,54 @@ export function structureManuscript(text: string): string {
     }
   }
 
-  // ── Build sections from firstNarrativeLineIdx onward ──
-  const narrativeLines = lines.slice(firstNarrativeLineIdx);
-  const sections: Array<{ heading: string; body: string[] }> = [];
-  let cur: { heading: string; body: string[] } | null = null;
+  // ── Group the front region into classified, fenced sections ──
+  const frontSpecs: MatterSpec[] = [];
+  for (const seg of splitByHeading(lines.slice(0, firstNarrativeLineIdx))) {
+    if (seg.heading && isTocHeading(seg.heading)) continue; // discard the TOC
+    const headingText = seg.heading ? seg.heading.replace(/^#+\s*/, '').trim() : '';
+    // The book-title heading itself is not a section — its body (author / subtitle)
+    // is kept as title-page material; the renderer regenerates the page from metadata.
+    const isTitleHeading = !!seg.heading && headingText === bookTitle;
+    const named = !!seg.heading && !isTitleHeading;
+    const role: MatterRole = named ? (classifyMatter(seg.heading!) ?? 'title-page') : 'title-page';
+    const title = named ? headingText : '';
+    const body = stripComments(seg.body);
+    if (!title && !hasContent(body)) continue; // nothing worth keeping
+    frontSpecs.push({ region: 'front', role, title, body });
+  }
 
-  for (const line of narrativeLines) {
-    if (/^# /.test(line)) {
-      if (cur) sections.push(cur);
-      cur = { heading: line, body: [] };
-    } else if (cur) {
-      cur.body.push(line);
+  // ── Classify body+back sections (narrative stays body; matter/DROP is fenced) ──
+  type Decided = { kind: 'body' | 'back' | 'drop'; heading: string | null; body: string[]; role: MatterRole };
+  const decided: Decided[] = splitByHeading(lines.slice(firstNarrativeLineIdx)).map(seg => {
+    if (!seg.heading) return { kind: 'body', heading: null, body: seg.body, role: 'other' };
+    if (isTocHeading(seg.heading)) return { kind: 'drop', heading: seg.heading, body: seg.body, role: 'other' };
+    const role = classifyMatter(seg.heading);
+    if (role || isDropHeading(seg.heading)) return { kind: 'back', heading: seg.heading, body: seg.body, role: role ?? 'other' };
+    return { kind: 'body', heading: seg.heading, body: seg.body, role: 'other' };
+  });
+  // Never fence away the entire manuscript: if nothing reads as body, keep it all.
+  const anyBody = decided.some(d => d.kind === 'body' && (!!d.heading || hasContent(d.body)));
+
+  const bodyOut: string[] = [];
+  const backSpecs: MatterSpec[] = [];
+  for (const d of decided) {
+    if (d.kind === 'drop') continue;
+    if (d.kind === 'back' && anyBody) {
+      const title = d.heading!.replace(/^#+\s*/, '').trim();
+      backSpecs.push({ region: 'back', role: d.role, title, body: stripComments(d.body) });
+    } else {
+      if (d.heading) bodyOut.push(d.heading);
+      bodyOut.push(...d.body);
     }
   }
-  if (cur) sections.push(cur);
-
-  // ── Drop known back-matter sections ──
-  const kept = sections.filter(sec => !isDropHeading(sec.heading));
-  const finalSections = kept.length ? kept : sections; // never drop everything
-
-  const body = finalSections
-    .map(sec => sec.heading + '\n' + sec.body.join('\n'))
-    .join('\n');
 
   const titleComment = bookTitle ? `<!-- title: ${bookTitle} -->\n\n` : '';
-  return (titleComment + body).trim();
+  const parts = [
+    ...frontSpecs.map(emitFence),
+    bodyOut.join('\n').trim(),
+    ...backSpecs.map(emitFence),
+  ].filter(Boolean);
+  return (titleComment + parts.join('\n\n')).trim();
 }
 
 // ─── Main preprocessing pipeline ─────────────────────────────────────────────
@@ -407,6 +564,11 @@ export function preprocessMarkdown(text: string): string {
   //    before punctuation that is harmless to unescape, but deliberately leave
   //    * _ ` alone so we never turn literal text into accidental emphasis/code.
   text = text.replace(/\\([-\u2013\u2014.,:;!?()[\]{}'"\u201c\u201d\u2018\u2019#&%$@/<>=~|])/g, '$1');
+
+  // 1b. Excise any table of contents BEFORE promotion, so its entry rows ("Chapter
+  //     One", dot-leader page rows) aren't promoted into phantom chapters. The TOC
+  //     is regenerated from the real structure at export.
+  text = stripTableOfContents(text);
 
   // 2. Promote heading-less chapter markers (bare "1", "1 TITLE", bold
   //    "CHAPTER 1" + title) from DOCX files whose chapter styles mammoth

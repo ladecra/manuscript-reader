@@ -2183,6 +2183,25 @@ html.light .reader-rail {
   min-height: 100dvh;
 }
 #content { max-width: var(--max-w); margin: 0 auto; }
+/* Retained front/back matter (classify-and-keep). The reading view is sacred:
+   copyright / dedication / acknowledgements live in the manuscript and in exports,
+   but never in the immersive reading scroll. Hidden by default; revealed only in
+   Manuscript (edit) mode, set apart from body prose by a faint rule + label. */
+#content .ms-matter { display: none; }
+#content.edit-mode .ms-matter,
+#content.edit-mode-touch .ms-matter {
+  display: block;
+  max-width: 38rem; margin: 40px auto; padding-top: 20px;
+  border-top: 1px solid var(--border);
+  color: var(--muted); font-size: 0.96em;
+}
+#content.edit-mode .ms-matter--back { border-top-style: dashed; }
+#content .ms-matter .ms-matter-title {
+  font-family: 'Hanken Grotesk', system-ui, sans-serif;
+  font-size: 10px; letter-spacing: 0.28em; text-transform: uppercase;
+  color: var(--dim); text-align: left; margin: 0 0 12px;
+}
+
 .chapter-marker {
   display: block; text-align: center;
   font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 9px;
@@ -2520,6 +2539,25 @@ mark[data-ann]:hover { filter: brightness(1.2); }
   font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 12px; color: var(--dim);
   line-height: 1.6; margin: 0;
 }
+
+/* SMF submission export — extent picker (amount + live resolved summary). */
+.smf-extent-input {
+  display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin: 14px 0 4px;
+  font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 13px; color: var(--ink);
+}
+.smf-extent-input input {
+  width: 86px; padding: 6px 8px; font: inherit; color: var(--ink);
+  background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+}
+.smf-extent-hint { font-size: 11px; color: var(--dim); }
+.smf-extent-summary {
+  margin-top: 14px; padding: 12px 14px; border-radius: 8px;
+  background: var(--surface); border: 1px solid var(--border);
+  font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 12.5px;
+  line-height: 1.6; color: var(--muted);
+}
+.smf-extent-summary strong { color: var(--ink); }
+.smf-extent-total { display: block; margin-top: 4px; font-size: 11px; color: var(--dim); }
 .share-version-field { display: block; margin-bottom: 16px; }
 .share-version-label {
   display: block; font-family: 'Hanken Grotesk', system-ui, sans-serif;
