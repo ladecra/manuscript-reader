@@ -80,6 +80,11 @@ export interface StorageProvider {
   saveSnapshotMeta(rec: SnapshotRecord): Promise<void>;
   /** Remove a snapshot; its body is reclaimed only when no sibling still references it. */
   deleteSnapshot(id: string, snapshotId: string): Promise<void>;
+
+  /** Manuscript ids the user deleted — prevents cloud sync from resurrecting them.
+   *  Map value is `deletedAt` (Unix ms). Re-importing the same title clears the entry. */
+  loadTombstones(): Promise<Record<string, number>>;
+  saveTombstones(tombstones: Record<string, number>): Promise<void>;
 }
 
 // ─── Key scheme (used by the IndexedDB provider's single key-value store) ──────
@@ -99,6 +104,7 @@ export const key = {
   snapshotPrefix: (msId: string) => `snapshot:${msId}:`,
   snapshotBody: (msId: string, versionId: string) => `snapbody:${msId}:${versionId}`,
   snapshotBodyPrefix: (msId: string) => `snapbody:${msId}:`,
+  tombstones: () => 'meta:tombstones',
 };
 
 /** The per-snapshot record persisted under the `snapshot:` key — a Snapshot with

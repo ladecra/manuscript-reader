@@ -80,6 +80,38 @@ export class SupabaseSync {
     }
   }
 
+  // ── Deletion tombstones (cross-device delete) ─────────────────────────────────
+  // Table: manuscript_tombstones (user_id uuid, manuscript_id text, deleted_at bigint,
+  // PK (user_id, manuscript_id)). Without it, local tombstones still prevent
+  // resurrection on the same device; cloud reconcile logs a warning.
+
+  async fetchTombstones(): Promise<Record<string, number>> {
+    const { data, error } = await this.sb
+      .from('manuscript_tombstones')
+      .select('manuscript_id, deleted_at')
+      .eq('user_id', this.userId);
+    if (error) throw error;
+    const out: Record<string, number> = {};
+    for (const row of data ?? []) {
+      out[row.manuscript_id as string] = row.deleted_at as number;
+    }
+    return out;
+  }
+
+  async pushTombstone(manuscriptId: string, deletedAt: number): Promise<void> {
+    const { error } = await this.sb.from('manuscript_tombstones').upsert(
+      { user_id: this.userId, manuscript_id: manuscriptId, deleted_at: deletedAt },
+      { onConflict: 'user_id,manuscript_id' },
+    );
+    if (error) throw error;
+  }
+
+  async clearTombstone(manuscriptId: string): Promise<void> {
+    const { error } = await this.sb.from('manuscript_tombstones').delete()
+      .match({ user_id: this.userId, manuscript_id: manuscriptId });
+    if (error) throw error;
+  }
+
   // ── Child entities (annotations, edits, sessions, position) ─────────────────
 
   async pushAnnotations(id: string, data: Annotation[]): Promise<void> {

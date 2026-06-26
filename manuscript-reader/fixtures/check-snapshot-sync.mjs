@@ -38,6 +38,10 @@ function makeFakeSync() {
   return {
     userId: 'u1',
     pushedSnapshots: [], bodyFetches: 0,
+    // tombstone reconcile (inert: no deletions in this scenario)
+    async fetchTombstones() { return {}; },
+    async pushTombstone() {},
+    async clearTombstone() {},
     // manuscript loops (kept inert: equal revisions ⇒ no pull/push of manuscripts)
     async fetchAllMetadata() { return [{ id: 'frost', revision: 0, title: 'Frostwood', wordCount: 8, chapterCount: 1, lastOpened: 1, status: 'draft' }]; },
     async fetchMarkdown() { return null; },
