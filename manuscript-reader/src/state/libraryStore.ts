@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type { Manuscript, ManuscriptStatus, PublishingMetadata } from '../engine/types';
 import { MANUSCRIPT_STATUSES } from '../engine/types';
-import { loadLibrary, saveLibrary, manuscriptId, savePosition, loadPosition, clearManuscriptTombstone, type StoredManuscript } from '../engine/storage';
+import { loadLibrary, saveLibrary, uniqueManuscriptId, savePosition, loadPosition, clearManuscriptTombstone, type StoredManuscript } from '../engine/storage';
 import { parseMarkdown, countWords } from '../engine/ingestion/parseMarkdown';
 
 function toManuscript(s: StoredManuscript): Manuscript {
@@ -31,7 +31,7 @@ function toManuscript(s: StoredManuscript): Manuscript {
 interface LibraryStore {
   library: Manuscript[];
   refresh: () => void;
-  upsertManuscript: (md: string) => Manuscript;
+  importManuscript: (md: string) => Manuscript;
   updateManuscript: (id: string, patch: { title?: string; author?: string; status?: ManuscriptStatus; chapterCount?: number; publishing?: PublishingMetadata }) => void;
   cycleStatus: (id: string) => void;
   toggleFavorite: (id: string) => void;
@@ -50,25 +50,26 @@ export const useLibraryStore = create<LibraryStore>((_set, _get) => {
 
     refresh() { set({ library: loadLibrary().map(toManuscript) }); },
 
-    upsertManuscript(md) {
+    // Every import is its own manuscript. The ID is unique across the library, so
+    // a Load can never overwrite an existing book — even when titles slugify the
+    // same (e.g. two untitled manuscripts). Re-importing to *update* an existing
+    // book is intentionally not a Load side effect; it belongs to the desktop
+    // workspace's version management.
+    importManuscript(md) {
       const stored = loadLibrary();
       const titleComment = md.match(/<!--\s*title:\s*(.+?)\s*-->/i);
       const h1Match = md.match(/^# (.+)$/m);
       const title = titleComment ? titleComment[1].trim() : h1Match ? h1Match[1].trim() : 'Untitled';
-      const id = manuscriptId(title);
+      const id = uniqueManuscriptId(title, stored.map(m => m.id));
       const { chapters } = parseMarkdown(md);
       const wordCount = countWords(md);
-      const existing = stored.findIndex(m => m.id === id);
-      const prev = existing >= 0 ? stored[existing] : null;
-      const contentChanged = prev ? prev.combinedMarkdown !== md : true;
       const flat: StoredManuscript = {
         id, title, wordCount, chapterCount: chapters.length, lastOpened: Date.now(),
-        status: prev ? prev.status : 'Draft',
-        author: prev ? prev.author : undefined,
+        status: 'Draft',
         combinedMarkdown: md,
-        revision: contentChanged ? (prev?.revision ?? 0) + 1 : (prev?.revision ?? 1),
+        revision: 1,
       };
-      if (existing >= 0) stored[existing] = flat; else stored.unshift(flat);
+      stored.unshift(flat);
       clearManuscriptTombstone(id);
       saveLibrary(stored);
       const converted = stored.map(toManuscript);

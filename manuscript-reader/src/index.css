@@ -3191,6 +3191,14 @@ mark[data-ann]:hover { filter: brightness(1.2); }
   font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 11px; letter-spacing: 0.03em;
   color: var(--dim); margin-top: 4px;
 }
+.hub-version-restore {
+  flex-shrink: 0; display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 10px; border-radius: 6px; border: 1px solid var(--border);
+  background: transparent; color: var(--dim); font: inherit; font-size: 12.5px;
+  cursor: pointer; transition: color 0.12s, background 0.12s, border-color 0.12s;
+}
+.hub-version-restore:hover:not(:disabled) { color: var(--ink); background: var(--surface-high); border-color: var(--gold-line); }
+.hub-version-restore:disabled { opacity: 0.45; cursor: default; }
 .hub-version-del {
   flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
   width: 28px; height: 28px; border-radius: 6px; border: none; background: transparent;
