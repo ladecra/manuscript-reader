@@ -11,8 +11,10 @@ export type Screen = 'landing' | 'library' | 'load' | 'manuscript' | 'reader';
  *    manuscript   → the editing surface (was: editMode)
  *    annotations  → annotation column active (was: annSidebarOpen)
  *    changes      → revision review: edited passages marked, previous text in the
- *                   margin (Phase 8). Read-only; never an overlay on Reading. */
-export type ReaderMode = 'reading' | 'manuscript' | 'annotations' | 'changes';
+ *                   margin (Phase 8). Read-only; never an overlay on Reading.
+ *  The canonical type lives in the engine (it drives the position-intent rule). */
+export type { ReaderMode } from '../engine/reader/positionIntent';
+import type { ReaderMode } from '../engine/reader/positionIntent';
 
 export function readerModeOf(s: { editMode: boolean; annSidebarOpen: boolean; changesOpen?: boolean }): ReaderMode {
   if (s.editMode) return 'manuscript';
@@ -43,11 +45,16 @@ interface UIStore {
   // A posture the reader should adopt on its next mount, set when the hub's
   // chapter-list hover actions send the author in to *annotate* or *edit* a
   // chapter rather than just read it. Consumed once, alongside pendingChapterIndex.
-  pendingReaderIntent: 'annotate' | 'edit' | null;
+  pendingReaderIntent: 'annotate' | 'edit' | 'changes' | null;
 
   /** Annotation id the reader should scroll to on its next mount (hub Feedback
    *  "go to passage"). Consumed once, usually with pendingChapterIndex. */
   pendingAnnotationId: string | null;
+
+  /** A scroll fraction (0–1) the reader should restore on its next mount, set when
+   *  the hub's "resume where you were working" rows send the author back into a
+   *  mode's saved work position. Consumed once, takes priority over pendingChapterIndex. */
+  pendingResumeFrac: number | null;
 
   // Actions
   setScreen: (s: Screen) => void;
@@ -78,8 +85,9 @@ interface UIStore {
   closeAllPanels: () => void;
 
   setPendingChapterIndex: (n: number | null) => void;
-  setPendingReaderIntent: (i: 'annotate' | 'edit' | null) => void;
+  setPendingReaderIntent: (i: 'annotate' | 'edit' | 'changes' | null) => void;
   setPendingAnnotationId: (id: string | null) => void;
+  setPendingResumeFrac: (f: number | null) => void;
 }
 
 const FONT_MIN = 15;
@@ -99,6 +107,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   pendingChapterIndex: null,
   pendingReaderIntent: null,
   pendingAnnotationId: null,
+  pendingResumeFrac: null,
 
   setScreen(s) {
     let workspaceRailOpen = get().workspaceRailOpen;
@@ -172,4 +181,5 @@ export const useUIStore = create<UIStore>((set, get) => ({
   setPendingChapterIndex(n) { set({ pendingChapterIndex: n }); },
   setPendingReaderIntent(i) { set({ pendingReaderIntent: i }); },
   setPendingAnnotationId(id) { set({ pendingAnnotationId: id }); },
+  setPendingResumeFrac(f) { set({ pendingResumeFrac: f }); },
 }));

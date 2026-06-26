@@ -14,6 +14,7 @@ const ANN_KEY = 'ms_ann_';
 const EDIT_KEY = 'ms_edits_';
 const SESSION_KEY = 'ms_sessions_';
 const COVER_KEY = 'ms_cover_';
+const NOTE_KEY = 'ms_note_';
 const SNAP_KEY = 'ms_snap_';        // ms_snap_{msId}_{snapId} → SnapshotRecord
 const SNAPBODY_KEY = 'ms_snapbody_'; // ms_snapbody_{msId}_{versionId} → markdown
 const TOMBSTONES_KEY = 'ms_tombstones_v1';
@@ -102,6 +103,16 @@ export class LocalStorageProvider implements StorageProvider {
     if (dataUrl === null) { localStorage.removeItem(COVER_KEY + id); return; }
     try { localStorage.setItem(COVER_KEY + id, dataUrl); }
     catch { /* QuotaExceededError — cover won't persist on this backend */ }
+  }
+
+  async loadNote(id: string): Promise<string> {
+    return localStorage.getItem(NOTE_KEY + id) ?? '';
+  }
+
+  async saveNote(id: string, text: string): Promise<void> {
+    if (!text) { localStorage.removeItem(NOTE_KEY + id); return; }
+    try { localStorage.setItem(NOTE_KEY + id, text); }
+    catch { /* QuotaExceededError — note won't persist on this backend */ }
   }
 
   // ── Version snapshots ──

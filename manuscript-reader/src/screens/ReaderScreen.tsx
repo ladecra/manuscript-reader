@@ -8,8 +8,10 @@ import { applyBlockEdit, htmlToMarkdownBlocks, sameProse, serializeContentDomToM
 import { matchMarkdownBlockPrefix } from '../engine/manuscript/editMarkdownShortcut';
 import { applyMarkdownPromoteInBlock, lineTextBeforeCaretInChapterBlock } from '../lib/readerEditDom';
 import { useReaderStore } from '../state/readerStore';
-import { useUIStore } from '../state/uiStore';
+import { useUIStore, readerModeOf } from '../state/uiStore';
 import { useLibraryStore } from '../state/libraryStore';
+import { positionChannelForMode, isWorkMode } from '../engine/reader/positionIntent';
+import { saveWorkPosition } from '../engine/storage';
 import { useSnapshotStore } from '../state/snapshotStore';
 import { getParsedManuscript } from '../engine/ingestion/parseCache';
 import { chapterForOffset } from '../engine/manuscript/chapterForOffset';
@@ -369,6 +371,17 @@ interface ReaderScreenProps {
 export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   const contentRef = useRef<HTMLDivElement>(null);
   const scrollSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // An explicit jump (margin card, chapter nav, hub "go to passage") moves the
+  // viewport but must NOT overwrite the mode's resume bookmark — otherwise hopping
+  // to one note and back would relocate where you were working. We suppress the
+  // debounced save until the smooth scroll settles AND its trailing debounce would
+  // have fired (~animation + the 1500ms debounce); genuine reading afterward saves
+  // normally once the window lapses.
+  const suppressSaveUntil = useRef(0);
+  const suppressNextSave = useCallback(() => {
+    if (scrollSaveTimer.current) { clearTimeout(scrollSaveTimer.current); scrollSaveTimer.current = null; }
+    suppressSaveUntil.current = Date.now() + 2000;
+  }, []);
   const entranceObs = useRef<IntersectionObserver | null>(null);
   // In-flight mark-application rAF (annotation highlights OR change-marks). Marking
   // is chunked across frames so a large annotation/edit set never blocks first paint;
@@ -399,6 +412,8 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   const [scrollPct, setScrollPct] = useState(0);
   const [minsLeft, setMinsLeft] = useState(0);
   const [clockTime, setClockTime] = useState('');
+  // Match shareable reader: show after ~120px scroll (not % — long books round to 0%).
+  const [stripVisible, setStripVisible] = useState(false);
   const [selection, setSelection] = useState<{ visible: boolean; position: { left: number; top: number }; range: Range | null; text: string }>({ visible: false, position: { left: 0, top: 0 }, range: null, text: '' });
   const [editingAnn, setEditingAnn] = useState<{ id: string; note: string } | null>(null);
   const [addChaptersOpen, setAddChaptersOpen] = useState(false);
@@ -427,7 +442,7 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   const editingChapterRef = useRef<typeof editingChapter>(null);
   // Latches a hub jump (chapter/annotation/posture) so it survives StrictMode's
   // double entrance-effect; cleared after the synchronous double-invoke settles.
-  const pendingJumpRef = useRef<{ chapterIdx: number | null; annId: string | null; intent: 'annotate' | 'edit' | null } | null>(null);
+  const pendingJumpRef = useRef<{ chapterIdx: number | null; annId: string | null; frac: number | null; intent: 'annotate' | 'edit' | 'changes' | null } | null>(null);
   useEffect(() => { editModeRef.current = editMode; }, [editMode]);
   useEffect(() => { editingChapterRef.current = editingChapter; }, [editingChapter]);
   useEffect(() => { annSidebarOpenRef.current = annSidebarOpen; }, [annSidebarOpen]);
@@ -559,6 +574,7 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     const { html } = getParsedManuscript(manuscript.metadata.combinedMarkdown);
     c.innerHTML = html;
     totalWords.current = manuscript.metadata.combinedMarkdown.trim().split(/\s+/).filter(Boolean).length;
+    setMinsLeft(Math.ceil(totalWords.current / 238));
 
     // An edit re-render: keep the reading posture — no fade-in, no resume toast,
     // restore the exact scroll, re-apply edit-mode class and re-anchor marks.
@@ -580,21 +596,25 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
     // both runs read, and clear it only after the synchronous double-invoke settles.
     const storeIdx = useUIStore.getState().pendingChapterIndex;
     const storeAnn = useUIStore.getState().pendingAnnotationId;
-    if (storeIdx != null || storeAnn != null) {
+    const storeFrac = useUIStore.getState().pendingResumeFrac;
+    if (storeIdx != null || storeAnn != null || storeFrac != null) {
       pendingJumpRef.current = {
         chapterIdx: storeIdx,
         annId: storeAnn,
+        frac: storeFrac,
         intent: useUIStore.getState().pendingReaderIntent,
       };
       useUIStore.getState().setPendingChapterIndex(null);
       useUIStore.getState().setPendingAnnotationId(null);
+      useUIStore.getState().setPendingResumeFrac(null);
       useUIStore.getState().setPendingReaderIntent(null);
       setTimeout(() => { pendingJumpRef.current = null; }, 0);
     }
 
     const jump = pendingJumpRef.current;
     if (jump) {
-      const { chapterIdx, annId, intent } = jump;
+      const { chapterIdx, annId, frac, intent } = jump;
+      suppressNextSave(); // a hub jump is navigation — don't bookmark the destination
       c.querySelectorAll('p, blockquote, ul, ol').forEach(el => el.classList.add('visible'));
       if (editModeRef.current) c.classList.add('edit-mode');
       // Place the jump target's mark synchronously (priority) so the scroll below
@@ -602,7 +622,11 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
       syncAnnotationDOM(annId ?? undefined);
       requestAnimationFrame(() => requestAnimationFrame(() => {
         const mark = annId ? c.querySelector(`mark[data-ann="${CSS.escape(annId)}"]`) : null;
-        if (mark) {
+        if (frac != null) {
+          // Resume where the author was working in this mode (hub "resume" rows).
+          const docH = document.documentElement.scrollHeight - window.innerHeight;
+          window.scrollTo(0, docH * frac);
+        } else if (mark) {
           mark.scrollIntoView({ behavior: 'smooth', block: 'center' });
           setSelectedAnnId(annId!);
         } else if (chapterIdx != null) {
@@ -612,10 +636,11 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
           else window.scrollTo(0, 0);
         }
       }));
-      // Land in the requested posture (annotate / edit), not just reading. The
-      // editMode/sidebar effects pick up the store change and toggle the affordance.
+      // Land in the requested posture (annotate / edit / changes), not just reading.
+      // The editMode/sidebar/changes effects pick up the store change and toggle the affordance.
       if (intent === 'edit') useUIStore.getState().enterEditMode();
       else if (intent === 'annotate') useUIStore.getState().openAnnSidebar();
+      else if (intent === 'changes') useUIStore.getState().setReaderMode('changes');
       return;
     }
 
@@ -1007,6 +1032,7 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
 
       setScrollPct(Math.round(pct * 100));
       setMinsLeft(Math.ceil((1 - pct) * totalWords.current / 238));
+      setStripVisible(sy > 120);
 
       const activeChapter = chapterForOffset(
         chapters.map(ch => ({
@@ -1025,10 +1051,21 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
 
       if (scrollSaveTimer.current) clearTimeout(scrollSaveTimer.current);
       scrollSaveTimer.current = setTimeout(() => {
-        if (manuscript?.id) updateProgress(manuscript.id, pct);
+        if (!manuscript?.id) return;
+        if (Date.now() < suppressSaveUntil.current) return; // jump in flight — don't bookmark the destination
+        // Position is mode-aware intent: only Reading writes the canonical progress;
+        // Annotations/Changes keep their own work bookmark; Manuscript (editing) writes nothing.
+        const channel = positionChannelForMode(readerModeOf({
+          editMode: editModeRef.current,
+          annSidebarOpen: annSidebarOpenRef.current,
+          changesOpen: changesOpenRef.current,
+        }));
+        if (channel === 'reading-progress') updateProgress(manuscript.id, pct);
+        else if (isWorkMode(channel)) saveWorkPosition(manuscript.id, channel, pct);
       }, 1500);
     }
     window.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
     return () => window.removeEventListener('scroll', onScroll);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- updateProgress is a stable store action
   }, [chapters, activeChapterIdx, manuscript?.id, onChapterLabelChange]);
@@ -1132,12 +1169,14 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   }, [selection, chapters, addAnnotation]);
 
   const jumpToChapter = useCallback((id: string) => {
+    suppressNextSave();
     document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }, []);
+  }, [suppressNextSave]);
 
   const jumpToAnnotation = useCallback((id: string) => {
     const mark = contentRef.current?.querySelector(`mark[data-ann="${id}"]`);
     if (!mark) return;
+    suppressNextSave();
     setSelectedAnnId(id); // emphasize the card
     // On desktop the cards live in the right margin and don't cover the prose,
     // so stay in Annotations and just scroll. On the narrow/mobile overlay
@@ -1149,7 +1188,7 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
       closeAnnSidebar();
       setTimeout(() => mark.scrollIntoView({ behavior: 'smooth', block: 'center' }), 300);
     }
-  }, [closeAnnSidebar]);
+  }, [closeAnnSidebar, suppressNextSave]);
 
   const removeMark = useCallback((id: string) => {
     const mark = contentRef.current?.querySelector(`mark[data-ann="${id}"]`);
@@ -1159,9 +1198,10 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
   // Changes mode: select an edit and scroll its change-mark into view (if located).
   const jumpToEdit = useCallback((id: string) => {
     setSelectedEditId(id);
+    suppressNextSave();
     const mark = contentRef.current?.querySelector(`mark[data-edit="${CSS.escape(id)}"]`);
     mark?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }, []);
+  }, [suppressNextSave]);
 
   // Keep the selected edit's change-mark visually emphasized (gold), in step with
   // the selected card. Declarative over the imperatively-managed marks.
@@ -1257,7 +1297,7 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
         )}
       </div>
       <div id="end-mark">End of manuscript</div>
-      <div id="bottom-strip" className={scrollPct > 5 && !editMode && !editingChapter ? 'visible' : ''}>
+      <div id="bottom-strip" className={stripVisible && !editMode && !editingChapter ? 'visible' : ''}>
         <span id="pct-read">{scrollPct}% read</span>
         <span className="sep" />
         <span id="time-left">{minsDisplay}</span>

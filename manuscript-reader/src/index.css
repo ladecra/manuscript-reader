@@ -502,7 +502,7 @@ html.light[data-mode="reader"] #topbar #topbar-chapter { opacity: 0.6; }
   font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase;
   color: var(--dim);
   opacity: 0; transition: opacity var(--transition-slow);
-  white-space: nowrap; pointer-events: none; z-index: 80;
+  white-space: nowrap; pointer-events: none; z-index: 101;
 }
 :root.light #bottom-strip {
   background: rgba(245, 240, 232, 0.88);
@@ -2857,7 +2857,7 @@ mark[data-ann]:hover { filter: brightness(1.2); }
 .hub .hub-tools .instrument-item--tool .instrument-item-sub { display: none; }
 .hub .hub-tools .instrument-item--tool { padding-top: 9px; padding-bottom: 9px; align-items: center; }
 .hub .hub-tools .instrument-item--tool .instrument-item-icon { margin-top: 0; }
-.hub-tools-nav { flex: 1; min-height: 0; }
+.hub-tools-nav { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .hub-tools-group { margin-bottom: 2px; }
 .hub-tools-group-label {
   padding: 14px 12px 6px; font-size: 9px;
@@ -3370,7 +3370,7 @@ mark[data-ann]:hover { filter: brightness(1.2); }
 .hub-open-reader:hover:not(:disabled) { border-color: var(--gold); color: var(--gold); }
 .hub-open-reader:disabled { opacity: 0.4; cursor: not-allowed; }
 
-/* Rail sub-sections (Notes · Recent annotations). */
+/* Rail sub-sections (Working Notes · Pick up where you left off). */
 .hub-rail-section { margin-top: 30px; }
 .hub-rail-section-head {
   display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
@@ -3387,22 +3387,43 @@ mark[data-ann]:hover { filter: brightness(1.2); }
   font-family: var(--font-body); font-style: italic; font-size: 14px;
   color: var(--ink-muted); line-height: 1.5; padding-left: 12px; padding-right: 4px;
 }
-.hub-rail-anns { list-style: none; display: flex; flex-direction: column; }
-.hub-rail-ann {
-  display: flex; gap: 10px; padding: 11px 12px;
+/* Wayfinding rows — quiet "pick up where you left off" pointers (Annotations /
+   Changes). Navigation, not a feed: each resumes a mode at its last work spot. */
+.hub-rail-wayfind {
+  width: 100%; display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; background: none; border: none; cursor: pointer; text-align: left;
   border-top: 1px solid var(--line);
+  transition: background var(--transition);
 }
-.hub-rail-ann:first-child { border-top: none; }
-.hub-rail-ann-dot { width: 7px; height: 7px; border-radius: 50%; margin-top: 6px; flex-shrink: 0; }
-.hub-rail-ann-body { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.hub-rail-ann-quote {
-  font-family: var(--font-body); font-size: 14px; font-style: italic; line-height: 1.4;
-  color: var(--ink-2);
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+.hub-rail-wayfind:first-of-type { border-top: none; }
+.hub-rail-wayfind:hover { background: var(--surface-2, rgba(0,0,0,0.03)); }
+.hub-rail-wayfind-icon {
+  display: inline-flex; flex-shrink: 0; color: var(--ink-muted);
 }
-.hub-rail-ann-meta {
+.hub-rail-wayfind:hover .hub-rail-wayfind-icon { color: var(--gold); }
+.hub-rail-wayfind-body { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; }
+.hub-rail-wayfind-lead {
+  font-family: var(--font-body); font-size: 14px; line-height: 1.35; color: var(--ink-2);
+}
+.hub-rail-wayfind-meta {
   font-family: var(--font-ui); font-size: 9px; font-weight: 500;
   letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* Working Notes — anchors the bottom of the rail and grows to fill it, so tall
+   screens get a roomy scratchpad instead of dead air. */
+.hub-rail-section--notes {
+  flex: 1; min-height: 120px; display: flex; flex-direction: column;
+}
+.hub-rail-notes-field {
+  flex: 1; width: 100%; min-height: 96px; resize: none;
+  margin-left: 2px; margin-right: 4px;
+  background: none; border-color: rgba(33, 29, 21, 0.07); outline: none; padding: 10px;
+  font-family: var(--font-body); font-size: 14px; line-height: 1.6; color: var(--ink-2);
+}
+.hub-rail-notes-field::placeholder {
+  font-style: italic; color: var(--ink-muted); opacity: 0.85;
 }
 /* Band 2 — continue reading: the precious object. Plane 3 — warm paper, the
    heaviest lift on the page, foreshadowing the reader. Opening the book is the

@@ -15,7 +15,9 @@ import { AddChaptersModal } from '../components/reader/AddChaptersModal';
 import { ReportView } from '../components/reports/ReportView';
 import { ExportChoiceModal } from '../components/reports/ExportChoiceModal';
 import { exportShareableReader, ShareReaderBuildError, type ShareSnapshotStamp } from '../engine/exports/shareableReader';
-import { loadSnapshot } from '../engine/storage';
+import { loadSnapshot, loadWorkPosition, loadNote, saveNote } from '../engine/storage';
+import { hasMeaningfulEdits } from '../engine/manuscript/changeList';
+import type { WorkMode } from '../engine/reader/positionIntent';
 import { ShareReaderModal } from '../components/share/ShareReaderModal';
 import { showToast } from '../components/ui/Toast';
 import { PencilIcon, ChevronLeftIcon, DotsIcon, DownloadIcon, LayersIcon, PlusIcon, XIcon } from '../components/ui/Icons';
@@ -35,7 +37,7 @@ interface ManuscriptHubScreenProps {
 export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps) {
   const { manuscript, chapters, annotations: rawAnnotations, edits, sessions, openManuscript } = useReaderStore();
   const { library, updateManuscript, replaceMarkdown, appendChapters, getReadingPosition, updateProgress, cycleStatus } = useLibraryStore();
-  const { setPendingChapterIndex, setPendingReaderIntent, setPendingAnnotationId, hubPane: pane, setHubPane } = useUIStore();
+  const { setPendingChapterIndex, setPendingReaderIntent, setPendingAnnotationId, setPendingResumeFrac, hubPane: pane, setHubPane } = useUIStore();
   const { versions: versionsByMs, refresh: refreshVersions, saveVersion, relabel, remove: removeVersion } = useSnapshotStore();
   const [editStructure, setEditStructure] = useState(false);
   const [chapterEdits, setChapterEdits] = useState<ChapterEdit[]>([]);
@@ -47,6 +49,36 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
   const [shareReaderOpen, setShareReaderOpen] = useState(false);
   const [shareReaderInitialMode, setShareReaderInitialMode] = useState<'reading' | 'annotating'>('annotating');
   const [reportExportOpen, setReportExportOpen] = useState(false);
+
+  // Working Notes scratchpad — loaded on demand per manuscript, debounce-saved.
+  // Local-first (the storage layer doesn't push it to the cloud yet).
+  const [note, setNote] = useState('');
+  const noteSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingNoteRef = useRef<{ id: string; value: string } | null>(null);
+  const manuscriptId = manuscript?.id;
+  const flushNote = useCallback(() => {
+    if (noteSaveTimer.current) { clearTimeout(noteSaveTimer.current); noteSaveTimer.current = null; }
+    if (pendingNoteRef.current) { saveNote(pendingNoteRef.current.id, pendingNoteRef.current.value); pendingNoteRef.current = null; }
+  }, []);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset/hydrate the note when the manuscript changes
+    if (!manuscriptId) { setNote(''); return; }
+    let cancelled = false;
+    loadNote(manuscriptId).then(t => { if (!cancelled) setNote(t); });
+    // Flush a pending edit before switching manuscripts (or unmount) so the last
+    // few keystrokes before navigating away are never dropped.
+    return () => { cancelled = true; flushNote(); };
+  }, [manuscriptId, flushNote]);
+  const onNoteChange = useCallback((value: string) => {
+    setNote(value);
+    if (!manuscriptId) return;
+    pendingNoteRef.current = { id: manuscriptId, value };
+    if (noteSaveTimer.current) clearTimeout(noteSaveTimer.current);
+    noteSaveTimer.current = setTimeout(() => {
+      saveNote(manuscriptId, value);
+      pendingNoteRef.current = null;
+    }, 600);
+  }, [manuscriptId]);
 
   const title = manuscript?.metadata.title ?? '';
   const combinedMarkdown = manuscript?.metadata.combinedMarkdown;
@@ -279,13 +311,46 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
     setHubPane(pane === id ? 'contents' : id);
   }, [pane, setHubPane]);
 
-  // The rail's "Recent annotations" section — the latest few, newest first.
-  const recentAnnotations = useMemo(
-    () => [...annotations].slice(-4).reverse().map(a => ({
-      id: a.id, type: a.type, quote: a.quote ?? '', chapterTitle: a.chapterTitle ?? '',
-    })),
-    [annotations],
-  );
+  // Resume a mode's work where the author left off: prefer the saved work-position
+  // bookmark; otherwise land at the chapter of the most recent annotation/edit.
+  // (No bookmark on a fresh device — the chapter fallback still does the right thing.)
+  const resumeWork = useCallback((mode: WorkMode, chapterIndex: number | null) => {
+    if (!manuscript) return;
+    const frac = loadWorkPosition(manuscript.id, mode);
+    setPendingReaderIntent(mode === 'annotations' ? 'annotate' : 'changes');
+    if (frac > 0.001) setPendingResumeFrac(frac);
+    else if (chapterIndex != null) setPendingChapterIndex(chapterIndex);
+    onRead();
+  }, [manuscript, setPendingReaderIntent, setPendingResumeFrac, setPendingChapterIndex, onRead]);
+
+  // The rail's two "pick up where you left off" rows — wayfinding, not a feed. The
+  // chapter label is derived from the most recent annotation (chapters already
+  // re-homed from anchors above) and the most recent meaningful edit.
+  const wayfinding = useMemo(() => {
+    const latestAnn = annotations.length
+      ? annotations.reduce((a, b) => (b.createdAt ?? 0) > (a.createdAt ?? 0) ? b : a)
+      : null;
+    const latestEdit = hasMeaningfulEdits(edits) && edits.length
+      ? edits.reduce((a, b) => (b.createdAt ?? 0) > (a.createdAt ?? 0) ? b : a)
+      : null;
+    // "Ch. 01 · Title" — number first (zero-padded), title when we have one.
+    // Front matter (index 0) has no chapter number, so fall back to the title alone.
+    const label = (chapterIndex: number, chapterTitle?: string): string | null => {
+      const title = chapterTitle?.trim();
+      const num = chapterIndex > 0 ? `Ch. ${String(chapterIndex).padStart(2, '0')}` : '';
+      return num && title ? `${num} · ${title}` : (title || num || null);
+    };
+    return {
+      annotations: {
+        chapterLabel: latestAnn ? label(latestAnn.chapterIndex, latestAnn.chapterTitle) : null,
+        onResume: () => resumeWork('annotations', latestAnn?.chapterIndex ?? null),
+      },
+      changes: {
+        chapterLabel: latestEdit ? label(latestEdit.chapterIndex, latestEdit.chapterTitle) : null,
+        onResume: () => resumeWork('changes', latestEdit?.chapterIndex ?? null),
+      },
+    };
+  }, [annotations, edits, resumeWork]);
 
   if (!manuscript) return null;
 
@@ -583,7 +648,8 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
         annotationCount={annotations.length}
         versionCount={versions.length}
         savedLabel={savedLabel}
-        recentAnnotations={recentAnnotations}
+        wayfinding={wayfinding}
+        note={{ value: note, onChange: onNoteChange }}
         className={mobileToolsOpen ? undefined : 'hub-tools--mobile-hidden'}
         onTogglePane={toggleToolPane}
         onRead={onRead}

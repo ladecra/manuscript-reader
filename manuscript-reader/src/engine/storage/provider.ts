@@ -64,6 +64,11 @@ export interface StorageProvider {
   loadCover(id: string): Promise<string | null>;
   saveCover(id: string, dataUrl: string | null): Promise<void>;
 
+  /** The manuscript's private "Working Notes" scratchpad (free text). Local-first;
+   *  not synced yet (a clean follow-up). Returns '' when none is set. */
+  loadNote(id: string): Promise<string>;
+  saveNote(id: string, text: string): Promise<void>;
+
   // ── Version snapshots (Phase 8) ──
   // Split read on purpose: list the light index without paying for the (large,
   // content-addressed) frozen bodies; load a single full snapshot on demand.
@@ -100,6 +105,7 @@ export const key = {
   sessions: (id: string) => `sessions:${id}`,
   position: (id: string) => `position:${id}`,
   cover: (id: string) => `cover:${id}`,
+  note: (id: string) => `note:${id}`,
   snapshot: (msId: string, snapId: string) => `snapshot:${msId}:${snapId}`,
   snapshotPrefix: (msId: string) => `snapshot:${msId}:`,
   snapshotBody: (msId: string, versionId: string) => `snapbody:${msId}:${versionId}`,
