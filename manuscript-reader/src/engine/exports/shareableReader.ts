@@ -6,8 +6,7 @@
 // The output has zero external dependencies beyond Google Fonts and requires no
 // localStorage to render. Ported faithfully from the v0.9 prototype.
 
-import { ANNOTATION_COLORS } from '../types';
-import { manuscriptVersionIdSource } from '../manuscript/manuscriptVersion';
+import { buildShareableAnnotationRuntimeScript } from './shareableReaderAnnotationRuntime';
 
 export class ShareReaderBuildError extends Error {
   constructor(message: string) {
@@ -48,471 +47,6 @@ export function validateShareableReaderHTML(html: string): void {
   }
 }
 
-/** Annotation runtime injected when building in beta-reader mode. */
-function buildAnnotationScript(): string {
-  const nl = String.fromCharCode(10);
-  // NB: this is a plain string (not a nested template literal) so the inner
-  // backticks and ${...} are emitted verbatim into the exported file.
-  return `
-// ── Annotation tools (beta reader mode) ──────────────────────────────────────
-{
-  var SLUG = title.toLowerCase().replace(/[^a-z0-9]/g,'-').slice(0,30);
-  var ANN_KEY  = 'shared_ann_' + SLUG;
-  var NAME_KEY = 'shared_reader_name';
-  var RID_KEY  = 'shared_reader_id';        // stable per-browser reader identity
-  var START_KEY = 'shared_started_' + SLUG; // session start, per manuscript
-  var ANN_TYPES  = ['highlight','note','bookmark','question','continuity','structural','pacing','voice'];
-  var ANN_LABELS = {highlight:'Highlight',note:'Note',bookmark:'Bookmark',question:'Question',continuity:'Continuity',structural:'Structural',pacing:'Pacing',voice:'Voice / Tone'};
-  var ANN_COLORS = ${JSON.stringify(ANNOTATION_COLORS)};
-  var NOTE_TYPES = {note:1,question:1,continuity:1,structural:1,pacing:1,voice:1};
-
-  var anns = [];
-  try { anns = JSON.parse(localStorage.getItem(ANN_KEY)||'[]'); } catch(e){}
-  var readerName = '';
-  try { readerName = localStorage.getItem(NAME_KEY) || ''; } catch(e){}
-
-  // Stable reader identity — generated once on first open and reused thereafter,
-  // so the author can tell two beta readers apart even if both leave the name
-  // field blank or type the same name. This is the key agreement analysis joins on.
-  var readerId = '';
-  try { readerId = localStorage.getItem(RID_KEY) || ''; } catch(e){}
-  if(!readerId){ readerId = 'r'+Date.now().toString(36)+Math.random().toString(36).slice(2,8); try{ localStorage.setItem(RID_KEY, readerId); }catch(e){} }
-
-  // Session start, captured the first time this manuscript is opened.
-  var startedAt = 0;
-  try { startedAt = parseInt(localStorage.getItem(START_KEY)||'0',10) || 0; } catch(e){}
-  if(!startedAt){ startedAt = Date.now(); try{ localStorage.setItem(START_KEY, String(startedAt)); }catch(e){} }
-
-  function saveAnns(){ try{ localStorage.setItem(ANN_KEY, JSON.stringify(anns)); }catch(e){} }
-  function saveName(){ try{ localStorage.setItem(NAME_KEY, readerName); }catch(e){} }
-  function annId(){ return 'a'+Date.now()+Math.random().toString(36).slice(2,6); }
-  function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-
-  // Content version id of the manuscript this reader is reading. This is the app's
-  // own manuscriptVersionId, inlined from its source (engine/manuscript/
-  // manuscriptVersion.ts) — NOT a hand-copy — so the id stamped here is computed by
-  // the exact code the app runs, and can't silently drift. That's what lets us later
-  // tell whether two readers reacted to the same draft. Verified by check-share-parity.
-  var versionId = ${manuscriptVersionIdSource()};
-  var MS_VERSION = versionId(md);
-
-  var css = [
-    'mark[data-ann]{background:rgba(217,172,60,.25);color:inherit;cursor:pointer;padding:1px 0}',
-    'mark[data-ann].type-note{background:rgba(142,145,146,.22)}',
-    'mark[data-ann].type-bookmark{background:rgba(99,102,241,.22)}',
-    'mark[data-ann].type-question{background:rgba(239,100,97,.22)}',
-    'mark[data-ann].type-continuity{background:rgba(52,211,153,.22)}',
-    'mark[data-ann].type-structural{background:rgba(251,146,60,.22)}',
-    'mark[data-ann].type-pacing{background:rgba(56,189,248,.22)}',
-    'mark[data-ann].type-voice{background:rgba(192,132,252,.22)}',
-    '.sp-popup{position:fixed;z-index:200;background:var(--surface);border:1px solid var(--border);display:none;flex-direction:column;min-width:230px;box-shadow:0 8px 32px rgba(0,0,0,.4)}',
-    '.sp-popup.vis{display:flex}',
-    '.sp-row{display:flex;border-bottom:1px solid var(--border)}',
-    '.sp-row:last-child{border-bottom:none}',
-    '.sp-btn{flex:1;display:flex;align-items:center;gap:7px;padding:10px 12px;background:none;border:none;border-right:1px solid var(--border);font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);cursor:pointer;white-space:nowrap;transition:color .15s,background .15s}',
-    '.sp-btn:last-child{border-right:none}',
-    '.sp-btn:hover{color:var(--primary);background:var(--surface-high)}',
-    '.sp-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}',
-    '.sp-note{padding:10px 12px;display:none;flex-direction:column;gap:8px}',
-    '.sp-note.vis{display:flex}',
-    '.sp-ta{width:100%;background:none;border:none;border-bottom:1px solid var(--border);font-family:"EB Garamond",Georgia,serif;font-size:15px;color:var(--primary);padding:4px 0;outline:none;resize:none;min-height:58px;line-height:1.5}',
-    '.sp-ta:focus{border-bottom-color:var(--primary)}',
-    '.sp-ta::placeholder{color:var(--dim);font-style:italic}',
-    '.sp-save-row{display:flex;justify-content:space-between;align-items:center;gap:8px}',
-    '.sp-cancel{font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);background:none;border:none;cursor:pointer;padding:4px}',
-    '.sp-cancel:hover{color:var(--muted)}',
-    '.sp-do{font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--primary);background:none;border:1px solid var(--primary);padding:5px 12px;cursor:pointer;transition:background .2s,color .2s}',
-    '.sp-do:hover{background:var(--primary);color:var(--bg)}',
-    '.sp-edit{position:fixed;z-index:201;background:var(--surface);border:1px solid var(--border);width:min(320px,90vw);padding:14px 16px;display:none;flex-direction:column;gap:10px;box-shadow:0 8px 32px rgba(0,0,0,.4)}',
-    '.sp-edit.vis{display:flex}',
-    '.sp-edit-label{font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}',
-    '.sp-edit-actions{display:flex;justify-content:space-between;align-items:center}',
-    '.sp-del{font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--border);background:none;border:none;cursor:pointer;padding:4px}',
-    '.sp-del:hover{color:#c0392b}',
-    '.ann-side{position:fixed;top:var(--topbar-h);right:0;width:min(340px,92vw);height:calc(100dvh - var(--topbar-h));background:var(--bg);border-left:1px solid var(--border);display:flex;flex-direction:column;z-index:90;transform:translateX(100%);transition:transform .32s var(--ease-expo),background .35s,border-color .35s}',
-    '.ann-side.open{transform:translateX(0)}',
-    '.ann-side.topbar-hidden{top:0;height:100dvh}',
-    '.ann-side-head{padding:16px 20px 0;border-bottom:1px solid var(--border);flex-shrink:0}',
-    '.ann-side-title-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}',
-    '.ann-side-title{font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:10px;font-weight:500;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}',
-    '.ann-side-x{background:none;border:none;cursor:pointer;color:var(--dim);padding:2px;display:flex;align-items:center}',
-    '.ann-side-x:hover{color:var(--primary)}.ann-side-x svg{width:14px;height:14px}',
-    '.ann-name{width:100%;background:none;border:1px solid var(--border);font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:11px;letter-spacing:.04em;color:var(--on-surface);padding:7px 9px;outline:none;margin-bottom:12px;transition:border-color .2s}',
-    '.ann-name:focus{border-color:var(--primary)}',
-    '.ann-name::placeholder{color:var(--dim)}',
-    '.ann-tabs{display:flex;margin:0 -20px;overflow-x:auto;scrollbar-width:none}',
-    '.ann-tabs::-webkit-scrollbar{display:none}',
-    '.ann-tab{flex-shrink:0;padding:10px 14px;background:none;border:none;border-bottom:2px solid transparent;font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);cursor:pointer;transition:color .15s,border-color .15s}',
-    '.ann-tab.active{color:var(--primary);border-bottom-color:var(--primary)}',
-    '.ann-tab:hover{color:var(--muted)}',
-    '.ann-list{flex:1;overflow-y:auto;scrollbar-width:thin}',
-    '.ann-empty{padding:44px 20px;text-align:center;font-family:"EB Garamond",Georgia,serif;font-size:16px;color:var(--dim);line-height:1.6}',
-    '.ann-item{padding:14px 20px;border-bottom:1px solid var(--border);cursor:pointer;transition:background .15s}',
-    '.ann-item:hover{background:var(--surface)}',
-    '.ann-ihead{display:flex;align-items:center;gap:8px;margin-bottom:7px}',
-    '.ann-idot{width:7px;height:7px;border-radius:50%;flex-shrink:0}',
-    '.ann-ilabel{font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:9px;font-weight:500;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);flex:1}',
-    '.ann-iloc{font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:9px;color:var(--border);letter-spacing:.06em}',
-    '.ann-ix{background:none;border:none;cursor:pointer;color:var(--border);padding:2px;display:flex;align-items:center}',
-    '.ann-ix:hover{color:var(--dim)}.ann-ix svg{width:13px;height:13px}',
-    '.ann-quote{font-family:"EB Garamond",Georgia,serif;font-size:14px;font-style:italic;color:var(--muted);line-height:1.5;margin-bottom:6px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}',
-    '.ann-note-text{font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:11px;color:var(--on-surface);line-height:1.55}',
-    '.ann-side-foot{padding:14px 20px;border-top:1px solid var(--border);flex-shrink:0}',
-    '.ann-export{width:100%;padding:11px;background:none;border:1px solid var(--primary);font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:11px;font-weight:500;letter-spacing:.1em;text-transform:uppercase;color:var(--primary);cursor:pointer;transition:background .2s,color .2s}',
-    '.ann-export:hover{background:var(--primary);color:var(--bg)}',
-    '.ann-export:disabled{opacity:.4;cursor:default}',
-    '.ann-foot-hint{font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:9px;letter-spacing:.04em;color:var(--dim);text-align:center;margin-top:9px;opacity:.85;line-height:1.5}',
-    '.ann-badge{display:inline-block;width:6px;height:6px;border-radius:50%;background:#d9ac3c;margin-left:5px;vertical-align:middle;opacity:0;transition:opacity .3s}',
-    '.ann-badge.vis{opacity:1}',
-    '.ann-hint{position:fixed;top:calc(var(--topbar-h) + 8px);left:50%;transform:translateX(-50%);background:var(--surface);border:1px solid var(--border);font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:10px;letter-spacing:.05em;color:var(--dim);padding:7px 16px;z-index:79;white-space:nowrap;pointer-events:none;opacity:1;transition:opacity 1s}',
-    '.ann-hint.fade{opacity:0}'
-  ].join(${JSON.stringify(nl)});
-  var styleEl = document.createElement('style');
-  styleEl.textContent = css;
-  document.head.appendChild(styleEl);
-
-  var tgl = document.createElement('button');
-  tgl.className = 'icon-btn';
-  tgl.setAttribute('aria-label','Annotations');
-  tgl.innerHTML = '<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="square"><path d="M3 3h12v10H9l-4 3V13H3z"/><line x1="6" y1="7" x2="12" y2="7"/><line x1="6" y1="10" x2="10" y2="10"/></svg>';
-  var badge = document.createElement('span');
-  badge.className = 'ann-badge';
-  tgl.appendChild(badge);
-  var tbRight = document.getElementById('topbar-right');
-  tbRight.insertBefore(tgl, tbRight.firstChild);
-
-  var popup = document.createElement('div');
-  popup.className = 'sp-popup';
-  var rowsHtml = '';
-  for (var ri=0; ri<2; ri++) {
-    rowsHtml += '<div class="sp-row">';
-    for (var ci=0; ci<3; ci++) {
-      var tp = ANN_TYPES[ri*3+ci];
-      rowsHtml += '<button class="sp-btn" data-type="'+tp+'"><span class="sp-dot" style="background:'+ANN_COLORS[tp]+'"></span>'+ANN_LABELS[tp]+'</button>';
-    }
-    rowsHtml += '</div>';
-  }
-  rowsHtml += '<div class="sp-note"><textarea class="sp-ta" placeholder="Add a note…" rows="3"></textarea><div class="sp-save-row"><button class="sp-cancel">Cancel</button><button class="sp-do">Save</button></div></div>';
-  popup.innerHTML = rowsHtml;
-  document.body.appendChild(popup);
-  var noteRow = popup.querySelector('.sp-note');
-  var noteTA  = popup.querySelector('.sp-ta');
-
-  var editPop = document.createElement('div');
-  editPop.className = 'sp-edit';
-  editPop.innerHTML = '<span class="sp-edit-label">Note</span><textarea class="sp-ta" rows="3"></textarea><div class="sp-edit-actions"><button class="sp-del">Remove</button><button class="sp-do sp-edit-save">Save</button></div>';
-  document.body.appendChild(editPop);
-  var editLabel = editPop.querySelector('.sp-edit-label');
-  var editTA    = editPop.querySelector('.sp-ta');
-
-  var side = document.createElement('aside');
-  side.className = 'ann-side';
-  var tabsHtml = '<button class="ann-tab active" data-filter="all">All</button>';
-  var PLURAL = {highlight:1,bookmark:1,note:1,question:1}; // others read fine unsuffixed
-  ANN_TYPES.forEach(function(t){ tabsHtml += '<button class="ann-tab" data-filter="'+t+'">'+ANN_LABELS[t]+(PLURAL[t]?'s':'')+'</button>'; });
-  side.innerHTML =
-    '<div class="ann-side-head">' +
-      '<div class="ann-side-title-row"><span class="ann-side-title">Your annotations</span>' +
-        '<button class="ann-side-x" aria-label="Close"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="square"><line x1="1" y1="1" x2="13" y2="13"/><line x1="13" y1="1" x2="1" y2="13"/></svg></button>' +
-      '</div>' +
-      '<input class="ann-name" type="text" placeholder="Your name (so the author knows whose notes these are)" autocomplete="name">' +
-      '<div class="ann-tabs">' + tabsHtml + '</div>' +
-    '</div>' +
-    '<div class="ann-list"></div>' +
-    '<div class="ann-side-foot"><button class="ann-export">Export feedback (.json)</button><div class="ann-foot-hint">Send this file back to the author to import your notes.</div></div>';
-  document.body.appendChild(side);
-  var sideList   = side.querySelector('.ann-list');
-  var nameInput  = side.querySelector('.ann-name');
-  var exportBtn  = side.querySelector('.ann-export');
-  var sideTabsState = 'all';
-  nameInput.value = readerName;
-
-  var hint = document.createElement('div');
-  hint.className = 'ann-hint';
-  hint.textContent = 'Select any passage to annotate · open the panel to review & export';
-  document.body.appendChild(hint);
-  var hintFaded = false;
-  function fadeHint(){ if(hintFaded) return; hintFaded=true; hint.classList.add('fade'); setTimeout(function(){ hint.style.display='none'; },1100); }
-  setTimeout(fadeHint, 12000);
-
-  function updateBadge(){ badge.classList.toggle('vis', anns.length>0); exportBtn.disabled = anns.length===0; }
-
-  function chapterForRange(range){
-    if(!range || !chapters.length) return {title:'',index:0,id:''};
-    var rect = range.getBoundingClientRect();
-    var y = rect.top + window.scrollY;
-    var best = {title:'',index:0,id:''};
-    for(var k=0;k<chapters.length;k++){
-      var el = document.getElementById(chapters[k].id);
-      if(el && el.offsetTop <= y + 100) best = {title:chapters[k].title, index:chapters[k].index, id:chapters[k].id};
-    }
-    return best;
-  }
-
-  // ── Durable anchor capture ───────────────────────────────────────────────────
-  // Mirrors the app's engine/annotations/anchor.ts (buildAnchor) and ReaderScreen
-  // (chapterBlockFor/offsetInContainer) EXACTLY, in the same rendered-text domain:
-  // the chapter-block's textContent. Because the shared reader renders the same
-  // combinedMarkdown into the same ch-N / .chapter-block structure, an anchor
-  // captured here re-resolves through the app's locateAnchor on import — so beta
-  // marks land precisely (duplicate-proof, reorder-proof) instead of via a
-  // fragile quote-only first-match. 40 = engine ANCHOR_CONTEXT.
-  function anchorBlockFor(chapterId){
-    if(!chapterId) return null;
-    var marker = document.getElementById(chapterId);
-    var el = marker ? marker.nextElementSibling : null;
-    while(el && !(el.classList && el.classList.contains('chapter-block'))) el = el.nextElementSibling;
-    return el || null;
-  }
-  function offsetInRoot(root, range){
-    var pre = document.createRange();
-    pre.selectNodeContents(root);
-    try { pre.setEnd(range.startContainer, range.startOffset); } catch(e){ return 0; }
-    return pre.toString().length;
-  }
-  function buildAnchorFor(range, chapterId, quote){
-    if(!range || !quote) return undefined;
-    var scope = anchorBlockFor(chapterId);
-    var root = scope || contentEl;
-    var full = root.textContent || '';
-    var start = offsetInRoot(root, range);
-    var end = start + quote.length;
-    var a = { quote: quote, prefix: full.slice(Math.max(0, start-40), start), suffix: full.slice(end, end+40), offset: start };
-    if(scope) a.chapterId = chapterId;
-    return a;
-  }
-
-  function wrapMark(container, text, id, type){
-    var walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-    var node, search = text.slice(0,60);
-    while((node=walker.nextNode())){
-      var idx = node.nodeValue.indexOf(search);
-      if(idx !== -1){
-        var end = Math.min(idx+text.length, node.nodeValue.length);
-        var mark = document.createElement('mark');
-        mark.dataset.ann = id; mark.className = 'type-'+type;
-        mark.textContent = node.nodeValue.slice(idx,end);
-        var frag = document.createDocumentFragment();
-        if(idx>0) frag.appendChild(document.createTextNode(node.nodeValue.slice(0,idx)));
-        frag.appendChild(mark);
-        if(end<node.nodeValue.length) frag.appendChild(document.createTextNode(node.nodeValue.slice(end)));
-        node.parentNode.replaceChild(frag,node);
-        attachMark(mark);
-        return;
-      }
-    }
-  }
-  function attachMark(mark){
-    mark.addEventListener('click', function(e){ e.stopPropagation(); openEdit(mark.dataset.ann, mark); });
-  }
-
-  anns.forEach(function(ann){ if(ann.quote) wrapMark(contentEl, ann.quote, ann.id, ann.type); });
-  updateBadge();
-
-  var pendingRange = null, pendingType = null;
-  document.addEventListener('mouseup', handleSel);
-  document.addEventListener('touchend', handleSel);
-  function handleSel(e){
-    if(popup.contains(e.target) || editPop.contains(e.target) || side.contains(e.target)) return;
-    setTimeout(function(){
-      var sel = window.getSelection();
-      var txt = sel ? sel.toString().trim() : '';
-      if(txt.length>3 && contentEl.contains(sel.anchorNode)){
-        pendingRange = sel.getRangeAt(0).cloneRange();
-        showPopup(pendingRange);
-      } else { hidePopup(); }
-    },10);
-  }
-  function showPopup(range){
-    var r = range.getBoundingClientRect();
-    popup.classList.add('vis');
-    noteRow.classList.remove('vis');
-    noteTA.value = ''; pendingType = null;
-    var pw = popup.offsetWidth||230, ph = popup.offsetHeight||90;
-    var left = r.left + r.width/2 - pw/2;
-    var top  = r.top - ph - 10;
-    left = Math.max(8, Math.min(left, window.innerWidth-pw-8));
-    if(top < 60) top = r.bottom + 8;
-    popup.style.left = left+'px'; popup.style.top = top+'px';
-  }
-  function hidePopup(){ popup.classList.remove('vis'); noteRow.classList.remove('vis'); noteTA.value=''; pendingRange=null; pendingType=null; }
-
-  popup.querySelectorAll('.sp-btn').forEach(function(btn){
-    btn.addEventListener('click', function(e){
-      e.stopPropagation();
-      var type = btn.dataset.type;
-      if(NOTE_TYPES[type]){
-        pendingType = type;
-        noteRow.classList.add('vis');
-        setTimeout(function(){ noteTA.focus(); },0);
-      } else {
-        commit(type, '');
-      }
-    });
-  });
-  popup.querySelector('.sp-cancel').addEventListener('click', function(e){ e.stopPropagation(); hidePopup(); });
-  popup.querySelector('.sp-do').addEventListener('click', function(e){ e.stopPropagation(); if(pendingType) commit(pendingType, noteTA.value.trim()); });
-  noteTA.addEventListener('keydown', function(e){
-    if(e.key==='Enter' && (e.metaKey||e.ctrlKey)){ e.preventDefault(); if(pendingType) commit(pendingType, noteTA.value.trim()); }
-    if(e.key==='Escape') hidePopup();
-  });
-
-  function commit(type, note){
-    var sel = window.getSelection();
-    var txt = sel ? sel.toString().trim() : '';
-    var ch  = chapterForRange(pendingRange);
-    var quote = txt.slice(0,400);
-    // Build the anchor from the current rendered text BEFORE inserting the mark,
-    // so the new <mark> doesn't perturb the offset math (matches the app).
-    var anchor = buildAnchorFor(pendingRange, ch.id, quote);
-    var ann = {id:annId(), type:type, quote:quote, note:note,
-               chapterTitle:ch.title, chapterIndex:ch.index, createdAt:Date.now(),
-               readerName: readerName || null, readerId: readerId, anchor: anchor};
-    anns.push(ann); saveAnns(); updateBadge(); fadeHint();
-    if(pendingRange && txt){
-      try {
-        var mark = document.createElement('mark');
-        mark.dataset.ann = ann.id; mark.className = 'type-'+type;
-        pendingRange.surroundContents(mark);
-        attachMark(mark);
-      } catch(err){ wrapMark(contentEl, txt.slice(0,60), ann.id, type); }
-    }
-    if(window.getSelection) window.getSelection().removeAllRanges();
-    hidePopup();
-    renderSide();
-    if(!readerName && !nudgedName){ nudgedName = true; openSide(); setTimeout(function(){ nameInput.focus(); },360); }
-  }
-
-  var editingId = null;
-  var nudgedName = false;
-  function openEdit(id, anchor){
-    var ann = anns.find(function(a){ return a.id===id; });
-    if(!ann) return;
-    editingId = id;
-    editLabel.textContent = ANN_LABELS[ann.type] || ann.type;
-    editTA.value = ann.note || '';
-    editPop.classList.add('vis');
-    var rect = anchor.getBoundingClientRect();
-    var left = Math.max(8, Math.min(rect.left, window.innerWidth-320-8));
-    var top  = rect.bottom + 8;
-    if(top + 150 > window.innerHeight) top = Math.max(8, rect.top - 150);
-    editPop.style.left = left+'px'; editPop.style.top = top+'px';
-    setTimeout(function(){ editTA.focus(); },50);
-  }
-  function hideEdit(){ editPop.classList.remove('vis'); editingId = null; }
-  editPop.querySelector('.sp-edit-save').addEventListener('click', function(){
-    if(!editingId) return;
-    var ann = anns.find(function(a){ return a.id===editingId; });
-    if(ann){ ann.note = editTA.value.trim(); saveAnns(); renderSide(); }
-    hideEdit();
-  });
-  editPop.querySelector('.sp-del').addEventListener('click', function(){
-    if(!editingId) return;
-    removeAnn(editingId); hideEdit();
-  });
-  editTA.addEventListener('keydown', function(e){
-    if(e.key==='Enter' && (e.metaKey||e.ctrlKey)) editPop.querySelector('.sp-edit-save').click();
-    if(e.key==='Escape') hideEdit();
-  });
-
-  function removeAnn(id){
-    anns = anns.filter(function(a){ return a.id!==id; });
-    saveAnns();
-    var mark = contentEl.querySelector('mark[data-ann="'+id+'"]');
-    if(mark){
-      var parent = mark.parentNode;
-      while(mark.firstChild) parent.insertBefore(mark.firstChild, mark);
-      parent.removeChild(mark); parent.normalize();
-    }
-    updateBadge(); renderSide();
-  }
-
-  function openSide(){ side.classList.add('open'); tgl.classList.add('active-btn'); renderSide(); }
-  function closeSide(){ side.classList.remove('open'); tgl.classList.remove('active-btn'); }
-  tgl.addEventListener('click', function(){ side.classList.contains('open') ? closeSide() : openSide(); });
-  side.querySelector('.ann-side-x').addEventListener('click', closeSide);
-  side.querySelectorAll('.ann-tab').forEach(function(tab){
-    tab.addEventListener('click', function(){
-      side.querySelectorAll('.ann-tab').forEach(function(t){ t.classList.remove('active'); });
-      tab.classList.add('active'); sideTabsState = tab.dataset.filter; renderSide();
-    });
-  });
-  nameInput.addEventListener('input', function(){
-    readerName = nameInput.value.trim(); saveName();
-    anns.forEach(function(a){ if(!a.readerName) a.readerName = readerName || null; });
-    saveAnns();
-  });
-
-  function renderSide(){
-    var filtered = sideTabsState==='all' ? anns.slice() : anns.filter(function(a){ return a.type===sideTabsState; });
-    filtered.sort(function(a,b){ return (a.chapterIndex-b.chapterIndex) || (a.createdAt-b.createdAt); });
-    sideList.innerHTML = '';
-    if(!filtered.length){
-      var empty = document.createElement('div');
-      empty.className = 'ann-empty';
-      empty.textContent = anns.length===0 ? 'Select any passage to annotate.' : 'No annotations of this type.';
-      sideList.appendChild(empty);
-      return;
-    }
-    filtered.forEach(function(ann){
-      var item = document.createElement('div');
-      item.className = 'ann-item';
-      var loc = ann.chapterTitle ? 'Ch. '+String(ann.chapterIndex).padStart(2,'0') : '';
-      item.innerHTML =
-        '<div class="ann-ihead">' +
-          '<span class="ann-idot" style="background:'+ANN_COLORS[ann.type]+'"></span>' +
-          '<span class="ann-ilabel">'+ANN_LABELS[ann.type]+'</span>' +
-          '<span class="ann-iloc">'+loc+'</span>' +
-          '<button class="ann-ix" aria-label="Remove"><svg viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="square"><line x1="1" y1="1" x2="12" y2="12"/><line x1="12" y1="1" x2="1" y2="12"/></svg></button>' +
-        '</div>' +
-        (ann.quote ? '<div class="ann-quote">"'+esc(ann.quote)+'"</div>' : '') +
-        (ann.note ? '<div class="ann-note-text">'+esc(ann.note)+'</div>' : '');
-      item.querySelector('.ann-ix').addEventListener('click', function(e){ e.stopPropagation(); removeAnn(ann.id); });
-      item.addEventListener('click', function(){
-        var mark = contentEl.querySelector('mark[data-ann="'+ann.id+'"]');
-        if(mark){ closeSide(); setTimeout(function(){ mark.scrollIntoView({behavior:'smooth',block:'center'}); },300); }
-      });
-      sideList.appendChild(item);
-    });
-  }
-  renderSide();
-
-  // Track how far the reader got — the *furthest* point reached, not the current
-  // scroll, so reviewing earlier passages before exporting doesn't undercount.
-  var maxProgress = 0;
-  function trackProgress(){ var docH=document.documentElement.scrollHeight-window.innerHeight; var p=docH>0?window.scrollY/docH:0; if(p>maxProgress) maxProgress=p; }
-  window.addEventListener('scroll', trackProgress, {passive:true});
-  trackProgress();
-
-  exportBtn.addEventListener('click', function(){
-    if(!anns.length) return;
-    anns.forEach(function(a){ if(!a.readerName) a.readerName = readerName || null; if(!a.readerId) a.readerId = readerId; });
-    saveAnns();
-    var prog = Math.min(1, Math.max(0, maxProgress));
-    var payload = { readerId: readerId, readerName: readerName || null, manuscript: title,
-                    manuscriptVersionId: MS_VERSION,
-                    snapshotId: SHARE_SNAPSHOT_ID, snapshotLabel: SHARE_SNAPSHOT_LABEL,
-                    startedAt: startedAt, completedAt: prog>=0.985 ? Date.now() : null,
-                    exportedAt: Date.now(), progress: prog, annotations: anns };
-    var blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
-    var url  = URL.createObjectURL(blob);
-    var a    = document.createElement('a');
-    a.href = url; a.download = SLUG + '-feedback.json';
-    document.body.appendChild(a); a.click();
-    setTimeout(function(){ URL.revokeObjectURL(url); document.body.removeChild(a); },1000);
-  });
-
-  document.addEventListener('mousedown', function(e){
-    if(!popup.contains(e.target) && !contentEl.contains(e.target)) hidePopup();
-    if(!editPop.contains(e.target) && e.target.tagName!=='MARK') hideEdit();
-  });
-  document.addEventListener('keydown', function(e){
-    if(e.key==='Escape'){ hidePopup(); hideEdit(); closeSide(); }
-  });
-}
-`;
-}
-
 /**
  * Build a self-contained shareable reader HTML document.
  * @param withAnnotations  When true, embeds the beta-reader annotation runtime.
@@ -537,7 +71,10 @@ export function buildShareableHTML(
   const badgeText = snapshot?.label?.trim()
     ? `Shared reader · ${snapshot.label.trim()}`
     : 'Shared reader';
-  const annotationScript = withAnnotations ? buildAnnotationScript() : '';
+  const annotationScript = withAnnotations ? buildShareableAnnotationRuntimeScript() : '';
+  const screenReaderMarkup = withAnnotations
+    ? '<div id="screen-reader" class="beta-reader"><div id="reader-body" class="ann-open"><div id="content"></div></div><div id="end-mark">End of manuscript</div></div>'
+    : '<div id="screen-reader"><div id="content"></div><div id="end-mark">End of manuscript</div></div>';
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -555,19 +92,22 @@ export function buildShareableHTML(
    drop cap, in both themes). Var NAMES are kept for this file's existing rules;
    only the values track the app. Kept in step by eye — see check-share-parity for
    the version-id contract; this is the visual layer (Slice 2). */
-:root{--page-field:radial-gradient(135% 95% at 50% -12%,#1c1c1a 0%,#181816 55%,#121211 100%);--bg:#181816;--surface:#1e1e1c;--surface-high:#252523;--paper:#161615;--primary:#ecebe6;--on-surface:#ecebe6;--muted:#a4a39c;--dim:#79786f;--border:#2b2b28;--brand:#bfa063;--drop-cap:var(--brand);--body-size:20px;--max-w:680px;--margin:clamp(22px,5vw,64px);--topbar-h:54px;--safe-bottom:env(safe-area-inset-bottom,0px);--ease-expo:cubic-bezier(0.16,1,0.3,1);--ease-std:cubic-bezier(0.4,0,0.2,1)}
-:root.light{--page-field:#fdfbf9;--bg:#fdfbf9;--surface:#faf8f6;--surface-high:#f6f0e9;--paper:#fdfbf9;--primary:#252524;--on-surface:#252524;--muted:#5c5a54;--dim:#8f8c83;--border:#f3f1ed;--brand:#b59757}
+:root{--page-field:radial-gradient(135% 95% at 50% -12%,#1c1c1a 0%,#181816 55%,#121211 100%);--bg:#181816;--surface:#1e1e1c;--surface-high:#252523;--paper:#161615;--primary:#ecebe6;--on-surface:#ecebe6;--muted:#a4a39c;--dim:#79786f;--border:#2b2b28;--brand:#bfa063;--drop-cap:var(--brand);--body-size:20px;--max-w:680px;--margin:clamp(22px,5vw,64px);--topbar-h:54px;--bar-glass:rgba(20,20,18,.82);--safe-bottom:env(safe-area-inset-bottom,0px);--ease-expo:cubic-bezier(0.16,1,0.3,1);--ease-std:cubic-bezier(0.4,0,0.2,1)}
+/* Light theme: warm reader paper (html.light[data-mode="reader"] in the app), not studio hub. */
+:root.light{--page-field:#fffaf4;--bg:#fffaf4;--surface:#faf8f6;--surface-high:#f6f0e9;--paper:#fffaf4;--primary:#252524;--on-surface:#252524;--muted:#5c5a54;--dim:#8f8c83;--border:#ebe2d8;--brand:#b59757}
+:root.light #topbar{background:rgba(249,243,236,.86);border-bottom-color:#ebe2d8}
+:root.light #topbar #topbar-title,:root.light #topbar #topbar-chapter{opacity:.6}
 html{scroll-behavior:smooth}
 body{background:var(--page-field);color:var(--on-surface);font-family:'EB Garamond',Georgia,serif;-webkit-font-smoothing:antialiased;min-height:100dvh;transition:background .35s,color .35s}
 ::-webkit-scrollbar{width:3px}::-webkit-scrollbar-track{background:var(--bg)}::-webkit-scrollbar-thumb{background:var(--border)}
-#topbar{position:fixed;top:0;left:0;right:0;height:var(--topbar-h);background:var(--bg);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 var(--margin);z-index:100;transition:transform .4s var(--ease-expo),background .35s,border-color .35s}
+#topbar{position:fixed;top:0;left:0;right:0;height:var(--topbar-h);background:var(--bar-glass);-webkit-backdrop-filter:blur(20px) saturate(140%);backdrop-filter:blur(20px) saturate(140%);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 var(--margin);z-index:100;transition:transform .4s var(--ease-expo),background .35s,border-color .35s}
 #topbar.hidden{transform:translateY(-110%);pointer-events:none}
-#topbar-title{font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:60vw}
+#topbar-title{font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:10px;font-weight:400;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:60vw}
 #topbar-right{display:flex;align-items:center;gap:6px;flex-shrink:0}
 .icon-btn{background:none;border:none;cursor:pointer;color:var(--dim);padding:6px;display:flex;align-items:center;justify-content:center;transition:color .2s;-webkit-tap-highlight-color:transparent}
 .icon-btn:hover,.icon-btn:active,.icon-btn.active-btn{color:var(--primary)}
 .icon-btn svg{width:17px;height:17px;display:block}
-#topbar-chapter{font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:10px;color:var(--border);letter-spacing:.06em;white-space:nowrap}
+#topbar-chapter{font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:10px;color:var(--dim);letter-spacing:.08em;white-space:nowrap}
 #progress-track{position:fixed;top:var(--topbar-h);left:0;right:0;height:1px;background:var(--border);opacity:.3;z-index:100}
 #progress-track.topbar-hidden{top:0}
 #progress-fill{height:100%;background:var(--primary);width:0%;transition:width .15s linear}
@@ -605,9 +145,11 @@ body{background:var(--page-field);color:var(--on-surface);font-family:'EB Garamo
 #content ol li{counter-increment:ol-c}
 #content ol li::before{content:counter(ol-c,decimal-leading-zero);position:absolute;left:0;font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:10px;color:var(--dim);top:9px}
 #end-mark{text-align:center;margin-top:96px;font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:10px;letter-spacing:.22em;text-transform:uppercase;color:var(--border);opacity:.4}
-#bottom-strip{position:fixed;bottom:calc(24px + var(--safe-bottom));left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:16px;background:var(--surface);border:1px solid var(--border);padding:8px 18px;font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:11px;color:var(--dim);letter-spacing:.05em;opacity:0;transition:opacity .5s;white-space:nowrap;pointer-events:none;z-index:80}
+#bottom-strip{position:fixed;bottom:calc(24px + var(--safe-bottom));left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:16px;background:rgba(16,16,16,.82);-webkit-backdrop-filter:blur(12px) saturate(120%);backdrop-filter:blur(12px) saturate(120%);border:1px solid rgba(255,255,255,.06);padding:8px 18px;font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:11px;color:var(--dim);letter-spacing:.05em;opacity:0;transition:opacity .5s;white-space:nowrap;pointer-events:none;z-index:80}
+:root.light #bottom-strip{background:rgba(245,240,232,.88);border-color:rgba(33,29,21,.1)}
 #bottom-strip.visible{opacity:1}
-#bottom-strip .sep{width:1px;height:9px;background:var(--border)}
+#bottom-strip .sep{width:1px;height:9px;background:rgba(255,255,255,.12)}
+:root.light #bottom-strip .sep{background:rgba(33,29,21,.15)}
 #pct-read{color:var(--primary)}
 .icon-sun{display:none}.icon-moon{display:block}
 :root.light .icon-sun{display:block}:root.light .icon-moon{display:none}
@@ -640,7 +182,7 @@ body{background:var(--page-field);color:var(--on-surface);font-family:'EB Garamo
 <div id="progress-track"><div id="progress-fill"></div></div>
 <div id="nav-overlay"></div>
 <nav id="chapter-nav"><div class="nav-section-label">Chapters</div><div id="chapter-links"></div></nav>
-<div id="screen-reader"><div id="content"></div><div id="end-mark">End of manuscript</div></div>
+${screenReaderMarkup}
 <div id="bottom-strip"><span id="pct-read">0%</span><span class="sep"></span><span id="time-left">—</span><span class="sep"></span><span id="clock-time">—</span></div>
 <div id="shared-badge">${escHtml(badgeText)}</div>
 <script>
