@@ -318,7 +318,7 @@ function LibraryListRow({ ms, onOpen, onRead, onDelete, onCycleStatus, onToggleF
   );
 }
 
-function LibraryGridCard({ ms, onOpen, onDelete, onUpdate, onToggleFavorite }: {
+export function LibraryGridCard({ ms, onOpen, onDelete, onUpdate, onToggleFavorite }: {
   ms: Manuscript;
   onOpen: () => void;
   onDelete: () => void;

@@ -17,8 +17,16 @@ export interface WorkspaceManuscriptRow {
 
 interface AppShellProps {
   children: ReactNode;
-  /** library | manuscript | reader — library nav highlights only on library screen. */
-  variant: 'library' | 'manuscript' | 'reader';
+  /** library | manuscript | reader | publishing — library nav highlights only on
+   *  the library screen; a non-'library' variant cleanly de-highlights the filters. */
+  variant: 'library' | 'manuscript' | 'reader' | 'publishing';
+  /** Opens the Publishing Studio (the production destination — print-ready & query
+   *  artifacts). Omitted ⇒ the rail CTA is hidden (e.g. the reader). */
+  onPublishingStudio?: () => void;
+  /** Highlights the rail CTA while the Studio screen is open. */
+  publishingStudioActive?: boolean;
+  /** Disables the CTA (e.g. an empty library — nothing to publish yet). */
+  studioDisabled?: boolean;
   libraryFilter: LibraryNavFilter;
   onLibraryFilter: (f: LibraryNavFilter) => void;
   manuscriptCount: number;
@@ -46,6 +54,9 @@ export function AppShell({
   onSwitchManuscript,
   onNewManuscript,
   onHome,
+  onPublishingStudio,
+  publishingStudioActive = false,
+  studioDisabled = false,
   bareTop = false,
 }: AppShellProps) {
   const [collapsed, setCollapsed] = useState(false);
@@ -196,6 +207,26 @@ export function AppShell({
             </>
           )}
         </div>
+
+        {onPublishingStudio && (
+          <div className="app-shell-studio">
+            <button
+              type="button"
+              className={`rail-studio-cta${publishingStudioActive ? ' active' : ''}`}
+              onClick={onPublishingStudio}
+              disabled={studioDisabled}
+              title={studioDisabled ? 'Add a manuscript to publish' : 'Publishing Studio — print-ready & query formats'}
+              aria-label="Publishing Studio"
+            >
+              {collapsed
+                ? <QuillIcon size={16} />
+                : <span className="rail-studio-cta-label">Publishing Studio</span>}
+            </button>
+            {!collapsed && (
+              <span className="rail-studio-cta-sub">Print-ready &amp; query formats</span>
+            )}
+          </div>
+        )}
 
         <div className="app-shell-footer">
           <SettingsMenu variant="rail-item" />
