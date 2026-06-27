@@ -148,11 +148,11 @@ function densityChart(chapters: ChapterStat[]): string {
     });
 
     if (ch.density > 0) {
-      bars += `<text x="${(x + barW / 2).toFixed(1)}" y="${(PAD.top + chartH - totalBarH - 4).toFixed(1)}" text-anchor="middle" font-size="8.5" fill="${INK}" font-family="'Hanken Grotesk',system-ui,sans-serif" font-weight="500">${ch.density.toFixed(1)}</text>`;
+      bars += `<text x="${(x + barW / 2).toFixed(1)}" y="${(PAD.top + chartH - totalBarH - 4).toFixed(1)}" text-anchor="middle" font-size="8.5" fill="var(--ink)" font-family="'Hanken Grotesk',system-ui,sans-serif" font-weight="500">${ch.density.toFixed(1)}</text>`;
     }
-    bars += `<text x="${(x + barW / 2).toFixed(1)}" y="${(PAD.top + chartH + 13).toFixed(1)}" text-anchor="middle" font-size="8.5" fill="${META}" font-family="'Hanken Grotesk',system-ui,sans-serif">Ch. ${ch.index}</text>`;
+    bars += `<text x="${(x + barW / 2).toFixed(1)}" y="${(PAD.top + chartH + 13).toFixed(1)}" text-anchor="middle" font-size="8.5" fill="var(--meta)" font-family="'Hanken Grotesk',system-ui,sans-serif">Ch. ${ch.index}</text>`;
     if (ch.words > 0) {
-      bars += `<text x="${(x + barW / 2).toFixed(1)}" y="${(PAD.top + chartH + 25).toFixed(1)}" text-anchor="middle" font-size="7.5" fill="${LBL}" font-family="'Hanken Grotesk',system-ui,sans-serif">${ch.words.toLocaleString()} words</text>`;
+      bars += `<text x="${(x + barW / 2).toFixed(1)}" y="${(PAD.top + chartH + 25).toFixed(1)}" text-anchor="middle" font-size="7.5" fill="var(--lbl)" font-family="'Hanken Grotesk',system-ui,sans-serif">${ch.words.toLocaleString()} words</text>`;
     }
   });
 
@@ -160,8 +160,8 @@ function densityChart(chapters: ChapterStat[]): string {
   const yTicks = [0, Math.round(maxD / 2), Math.round(maxD)];
   yTicks.forEach(v => {
     const y = PAD.top + chartH - (v / maxD) * chartH;
-    grid += `<line x1="${PAD.left}" y1="${y.toFixed(1)}" x2="${PAD.left + chartW}" y2="${y.toFixed(1)}" stroke="${RULE}" stroke-width="0.6"/>`;
-    grid += `<text x="${(PAD.left - 5).toFixed(1)}" y="${(y + 3.5).toFixed(1)}" text-anchor="end" font-size="7.5" fill="${LBL}" font-family="'Hanken Grotesk',system-ui,sans-serif">${v}</text>`;
+    grid += `<line x1="${PAD.left}" y1="${y.toFixed(1)}" x2="${PAD.left + chartW}" y2="${y.toFixed(1)}" stroke="var(--rule)" stroke-width="0.6"/>`;
+    grid += `<text x="${(PAD.left - 5).toFixed(1)}" y="${(y + 3.5).toFixed(1)}" text-anchor="end" font-size="7.5" fill="var(--lbl)" font-family="'Hanken Grotesk',system-ui,sans-serif">${v}</text>`;
   });
 
   return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">${grid}${bars}</svg>`;
@@ -199,15 +199,22 @@ function heatmapChart(
   const first = pathPts[0];
   const areaPath = `${linePath} L ${last.x.toFixed(1)} ${(PAD.top + chartH).toFixed(1)} L ${first.x.toFixed(1)} ${(PAD.top + chartH).toFixed(1)} Z`;
 
-  // Chapter markers
+  // Chapter markers. Boundary lines are cheap and never collide, so draw them all;
+  // labels collide on narrow chapters, so only label a chapter when its on-chart
+  // width clears a threshold (with the hotspot always labelled). This is the
+  // density check the old "label every chapter at its center" code lacked.
+  const LABEL_MIN_PX = 26; // ~"Ch. NN" at 8px
   let markers = '';
   let cumW = 0;
   for (const ch of chapterStats) {
+    const widthPx = (ch.words / totalWords) * chartW;
     const midX = sx(cumW + ch.words / 2);
-    markers += `<text x="${midX.toFixed(1)}" y="${(PAD.top - 8).toFixed(1)}" text-anchor="middle" font-size="8" fill="${LBL}" font-family="'Hanken Grotesk',system-ui,sans-serif">Ch. ${ch.index}</text>`;
+    if (widthPx >= LABEL_MIN_PX || ch.index === hotspot?.index) {
+      markers += `<text x="${midX.toFixed(1)}" y="${(PAD.top - 8).toFixed(1)}" text-anchor="middle" font-size="8" fill="var(--lbl)" font-family="'Hanken Grotesk',system-ui,sans-serif">Ch. ${ch.index}</text>`;
+    }
     if (cumW > 0) {
       const bx = sx(cumW);
-      markers += `<line x1="${bx.toFixed(1)}" y1="${PAD.top}" x2="${bx.toFixed(1)}" y2="${(PAD.top + chartH).toFixed(1)}" stroke="${RULE}" stroke-width="0.8" stroke-dasharray="2,3"/>`;
+      markers += `<line x1="${bx.toFixed(1)}" y1="${PAD.top}" x2="${bx.toFixed(1)}" y2="${(PAD.top + chartH).toFixed(1)}" stroke="var(--rule)" stroke-width="0.8" stroke-dasharray="2,3"/>`;
     }
     cumW += ch.words;
   }
@@ -217,8 +224,8 @@ function heatmapChart(
   const yTicks = [0, Math.round(yTop * 0.25), Math.round(yTop * 0.5), Math.round(yTop * 0.75), yTop];
   yTicks.forEach(v => {
     const y = sy(v);
-    yAxis += `<line x1="${PAD.left}" y1="${y.toFixed(1)}" x2="${(PAD.left + chartW).toFixed(1)}" y2="${y.toFixed(1)}" stroke="${RULE}" stroke-width="0.5"/>`;
-    yAxis += `<text x="${(PAD.left - 5).toFixed(1)}" y="${(y + 3.5).toFixed(1)}" text-anchor="end" font-size="7.5" fill="${LBL}" font-family="'Hanken Grotesk',system-ui,sans-serif">${v}</text>`;
+    yAxis += `<line x1="${PAD.left}" y1="${y.toFixed(1)}" x2="${(PAD.left + chartW).toFixed(1)}" y2="${y.toFixed(1)}" stroke="var(--rule)" stroke-width="0.5"/>`;
+    yAxis += `<text x="${(PAD.left - 5).toFixed(1)}" y="${(y + 3.5).toFixed(1)}" text-anchor="end" font-size="7.5" fill="var(--lbl)" font-family="'Hanken Grotesk',system-ui,sans-serif">${v}</text>`;
   });
 
   // X axis ticks
@@ -228,9 +235,9 @@ function heatmapChart(
     const w = Math.round((i / steps) * totalWords);
     const x = sx(w);
     const label = w >= 1000 ? `${Math.round(w / 1000)}k` : String(w);
-    xAxis += `<text x="${x.toFixed(1)}" y="${(PAD.top + chartH + 14).toFixed(1)}" text-anchor="middle" font-size="7.5" fill="${LBL}" font-family="'Hanken Grotesk',system-ui,sans-serif">${label}</text>`;
+    xAxis += `<text x="${x.toFixed(1)}" y="${(PAD.top + chartH + 14).toFixed(1)}" text-anchor="middle" font-size="7.5" fill="var(--lbl)" font-family="'Hanken Grotesk',system-ui,sans-serif">${label}</text>`;
   }
-  xAxis += `<text x="${(PAD.left + chartW / 2).toFixed(1)}" y="${(H - 1).toFixed(1)}" text-anchor="middle" font-size="7.5" fill="${LBL}" font-family="'Hanken Grotesk',system-ui,sans-serif">Word Count</text>`;
+  xAxis += `<text x="${(PAD.left + chartW / 2).toFixed(1)}" y="${(H - 1).toFixed(1)}" text-anchor="middle" font-size="7.5" fill="var(--lbl)" font-family="'Hanken Grotesk',system-ui,sans-serif">Word Count</text>`;
 
   // Hotspot callout
   let callout = '';
@@ -240,24 +247,20 @@ function heatmapChart(
     const cx2 = Math.min(px + 56, PAD.left + chartW - 136);
     const cy2 = Math.max(py - 46, PAD.top + 4);
     callout = `
-      <circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="3.5" fill="${INK}"/>
-      <line x1="${px.toFixed(1)}" y1="${py.toFixed(1)}" x2="${(cx2).toFixed(1)}" y2="${(cy2 + 14).toFixed(1)}" stroke="#EF6461" stroke-width="0.9"/>
-      <rect x="${cx2.toFixed(1)}" y="${cy2.toFixed(1)}" width="134" height="30" fill="white" stroke="${RULE}" stroke-width="0.6" rx="2"/>
-      <text x="${(cx2 + 7).toFixed(1)}" y="${(cy2 + 11).toFixed(1)}" font-size="7.5" fill="#EF6461" font-family="'Hanken Grotesk',system-ui,sans-serif" font-weight="bold">Hotspot</text>
-      <text x="${(cx2 + 7).toFixed(1)}" y="${(cy2 + 22).toFixed(1)}" font-size="7" fill="${META}" font-family="'Hanken Grotesk',system-ui,sans-serif">${peak.y.toFixed(1)} annotations / 1,000 words</text>
+      <circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="3.5" fill="var(--ink)"/>
+      <line x1="${px.toFixed(1)}" y1="${py.toFixed(1)}" x2="${(cx2).toFixed(1)}" y2="${(cy2 + 14).toFixed(1)}" stroke="var(--accent-heat)" stroke-width="0.9"/>
+      <rect x="${cx2.toFixed(1)}" y="${cy2.toFixed(1)}" width="134" height="30" fill="var(--card)" stroke="var(--rule)" stroke-width="0.6" rx="2"/>
+      <text x="${(cx2 + 7).toFixed(1)}" y="${(cy2 + 11).toFixed(1)}" font-size="7.5" fill="var(--accent-heat)" font-family="'Hanken Grotesk',system-ui,sans-serif" font-weight="bold">Hotspot</text>
+      <text x="${(cx2 + 7).toFixed(1)}" y="${(cy2 + 22).toFixed(1)}" font-size="7" fill="var(--meta)" font-family="'Hanken Grotesk',system-ui,sans-serif">${peak.y.toFixed(1)} annotations / 1,000 words</text>
     `;
   }
 
+  // Flat low-opacity fill (was a vertical opacity-stop gradient, which banded on
+  // dark backgrounds). currentColor + fill-opacity keeps it theme-aware.
   return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <linearGradient id="hg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#EF6461" stop-opacity="0.22"/>
-      <stop offset="100%" stop-color="#EF6461" stop-opacity="0.03"/>
-    </linearGradient>
-  </defs>
   ${yAxis}${markers}
-  <path d="${areaPath}" fill="url(#hg)"/>
-  <path d="${linePath}" fill="none" stroke="#EF6461" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="${areaPath}" fill="var(--accent-heat)" fill-opacity="0.12"/>
+  <path d="${linePath}" fill="none" stroke="var(--accent-heat)" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/>
   ${xAxis}${callout}
 </svg>`;
 }
@@ -289,8 +292,8 @@ function pieChart(typeTotals: Record<AnnotationType, number>, totalAnns: number)
     const n = typeTotals[t] ?? 0;
     const pct = Math.round((n / totalAnns) * 100);
     legend += `<rect x="164" y="${ly}" width="8" height="8" fill="${COLOR[t]}" rx="1"/>`;
-    legend += `<text x="177" y="${ly + 7}" font-size="9.5" fill="${HEAD}" font-family="'EB Garamond',Georgia,serif">${LABEL[t]}</text>`;
-    legend += `<text x="340" y="${ly + 7}" text-anchor="end" font-size="9" fill="${META}" font-family="'Hanken Grotesk',system-ui,sans-serif">${n}  (${pct}%)</text>`;
+    legend += `<text x="177" y="${ly + 7}" font-size="9.5" fill="var(--head)" font-family="'EB Garamond',Georgia,serif">${LABEL[t]}</text>`;
+    legend += `<text x="340" y="${ly + 7}" text-anchor="end" font-size="9" fill="var(--meta)" font-family="'Hanken Grotesk',system-ui,sans-serif">${n}  (${pct}%)</text>`;
     ly += 19;
   });
 
@@ -309,7 +312,7 @@ function statIcon(type: string): string {
     highlight:  '<circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="8" fill="none"/>',
     continuity: '<path d="M20 11a8 8 0 1 0-1.5 5"/><path d="M20 5v5h-5"/>',
   };
-  return `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="${LBL}" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">${paths[type] ?? ''}</svg>`;
+  return `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="var(--lbl)" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">${paths[type] ?? ''}</svg>`;
 }
 
 // ── Editorial signals (clusters → cards, each with verbatim feedback) ─────────
@@ -332,7 +335,11 @@ function css(): string {
   return `
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-:root {
+/* Theme is baked at export from the app's active theme (uiStore.theme) and can be
+   flipped in-file via the toggle (data-theme on <html>, persisted to localStorage).
+   Charts read these same tokens, so they track the active theme automatically.
+   --accent-heat is the hotspot/heatmap-line accent; it lightens in dark for contrast. */
+:root, [data-theme="light"] {
   --bg:     #E8E4DB;
   --page:   ${PAPER};
   --card:   #ffffff;
@@ -342,22 +349,34 @@ function css(): string {
   --lbl:    ${LBL};
   --rule:   ${RULE};
   --desc:   #4A4740;
+  --accent-heat: #EF6461;
   --shadow: rgba(0,0,0,.12);
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg:     #151412;
-    --page:   #1e1c19;
-    --card:   #252320;
-    --ink:    #EDE8DF;
-    --head:   #D4CEC5;
-    --meta:   #8A8580;
-    --lbl:    #5E5A55;
-    --rule:   #333028;
-    --desc:   #B8B2A8;
-    --shadow: rgba(0,0,0,.4);
-  }
+[data-theme="dark"] {
+  --bg:     #151412;
+  --page:   #1e1c19;
+  --card:   #252320;
+  --ink:    #EDE8DF;
+  --head:   #D4CEC5;
+  --meta:   #8A8580;
+  --lbl:    #5E5A55;
+  --rule:   #333028;
+  --desc:   #B8B2A8;
+  --accent-heat: #F58A88;
+  --shadow: rgba(0,0,0,.4);
 }
+
+/* in-file theme toggle */
+.theme-toggle {
+  position: fixed; top: 16px; right: 16px; z-index: 10;
+  font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 10px; font-weight: 600;
+  letter-spacing: .12em; text-transform: uppercase;
+  color: var(--meta); background: var(--card); border: 1px solid var(--rule);
+  padding: 7px 12px; border-radius: 4px; cursor: pointer;
+  box-shadow: 0 1px 4px var(--shadow);
+}
+.theme-toggle:hover { color: var(--ink); }
+@media print { .theme-toggle { display: none; } }
 
 body {
   background: var(--bg);
@@ -526,8 +545,9 @@ function buildHtml(opts: {
   chapters: Chapter[];
   signals: EditorialSignals;
   dateStr: string;
+  theme?: 'light' | 'dark';
 }): string {
-  const { title, annotations, chapters, signals, dateStr } = opts;
+  const { title, annotations, chapters, signals, dateStr, theme = 'light' } = opts;
   const rep = signals.report;
   const pct = (n: number) => rep.totalAnns > 0 ? Math.round((n / rep.totalAnns) * 100) : 0;
   const annById = new Map(annotations.map(a => [a.id, a]));
@@ -592,7 +612,7 @@ function buildHtml(opts: {
     : '';
   const signalsHtml = rep.clusters.length
     ? rep.clusters.slice(0, 4).map(c => signalCard(c, annById)).join('')
-    : `<p style="color:${LBL};font-size:12px;font-style:italic">No concentrated signals yet — feedback is spread evenly across the manuscript.</p>`;
+    : `<p style="color:var(--lbl);font-size:12px;font-style:italic">No concentrated signals yet — feedback is spread evenly across the manuscript.</p>`;
 
   // Hotspots — each with one representative piece of verbatim feedback.
   const hotspotsHtml = rep.hotspots.length ? rep.hotspots.slice(0, 3).map((h, i) => {
@@ -606,13 +626,13 @@ function buildHtml(opts: {
         ${rep1 ? snippetHtml(rep1) : ''}
       </div>
     </div>`;
-  }).join('') : `<p style="color:${LBL};font-size:11px;font-style:italic">No standout hotspots yet.</p>`;
+  }).join('') : `<p style="color:var(--lbl);font-size:11px;font-style:italic">No standout hotspots yet.</p>`;
 
   const silentHtml = rep.silent.length ? rep.silent.slice(0, 4).map(s => `
     <div class="silent-item">
       <div class="silent-ch">Chapter ${s.index}${s.title ? ` — ${esc(stripCh(s.title))}` : ''}</div>
       <div class="silent-sub">${s.count === 0 ? 'No annotations.' : `${s.density.toFixed(1)} ann. / 1,000 words · below average (${rep.avgDensity.toFixed(1)})`}</div>
-    </div>`).join('') : `<p style="color:${LBL};font-size:11px;font-style:italic">Every chapter drew engagement.</p>`;
+    </div>`).join('') : `<p style="color:var(--lbl);font-size:11px;font-style:italic">Every chapter drew engagement.</p>`;
 
   // Cross-reader agreement — abandonment-aware (Phase 6 EditorialSignals): of the
   // readers who *reached* a chapter, how many independently reacted. Distinguishes
@@ -729,16 +749,23 @@ function buildHtml(opts: {
   <div class="page-footer">${esc(title)}&nbsp;&nbsp;—&nbsp;&nbsp;Intelligence Report&nbsp;&nbsp;—&nbsp;&nbsp;p.3</div>
 </div>` : '';
 
+  // Bake the app's active theme as the initial data-theme, but let a stored
+  // recipient preference win on load (set before paint to avoid a flash).
+  const initTheme = `<script>(function(){try{var t=localStorage.getItem('vellibris-report-theme');if(t)document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>`;
+  const toggleScript = `<script>(function(){var b=document.getElementById('theme-toggle');if(!b)return;function sync(){var d=document.documentElement.getAttribute('data-theme')==='dark';b.textContent=d?'☀ Light':'☾ Dark';}b.addEventListener('click',function(){var d=document.documentElement.getAttribute('data-theme')==='dark';var n=d?'light':'dark';document.documentElement.setAttribute('data-theme',n);try{localStorage.setItem('vellibris-report-theme',n);}catch(e){}sync();});sync();})();</script>`;
+
   return `<!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="${theme}">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>${esc(title)} — Intelligence Report</title>
+${initTheme}
 ${GOOGLE_FONTS_LINK}
 <style>${css()}</style>
 </head>
 <body>
+<button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle light or dark theme">☾ Dark</button>
 
 <!-- ════════ PAGE 1 ════════ -->
 <div class="page">
@@ -781,7 +808,7 @@ ${GOOGLE_FONTS_LINK}
   <!-- Heatmap -->
   <div class="sec-head mb4">Annotation Heatmap</div>
   <div class="sec-sub">Annotations per 1,000 words (sliding window)</div>
-  ${heatSvg || `<p style="color:${LBL};font-size:11px;font-style:italic;margin-bottom:20px">Insufficient data for heatmap.</p>`}
+  ${heatSvg || `<p style="color:var(--lbl);font-size:11px;font-style:italic;margin-bottom:20px">Insufficient data for heatmap.</p>`}
 
   <!-- Hotspots + Silent -->
   <div class="two-col mt24 mb28">
@@ -815,6 +842,7 @@ ${GOOGLE_FONTS_LINK}
   <div class="page-footer">${esc(title)}&nbsp;&nbsp;—&nbsp;&nbsp;Intelligence Report&nbsp;&nbsp;—&nbsp;&nbsp;p.2</div>
 </div>
 ${page3}
+${toggleScript}
 </body>
 </html>`;
 }
@@ -828,9 +856,10 @@ export function exportReportHtml(
   annotations: Annotation[],
   chapters: Chapter[],
   signals: EditorialSignals,
+  theme: 'light' | 'dark' = 'light',
 ): void {
   const dateStr = new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
-  const html = buildHtml({ title, annotations, chapters, signals, dateStr });
+  const html = buildHtml({ title, annotations, chapters, signals, dateStr, theme });
   const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

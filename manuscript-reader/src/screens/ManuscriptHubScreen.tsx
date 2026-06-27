@@ -240,7 +240,7 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
     if (!manuscript || !annotations.length) { showToast('No annotations yet.'); return; }
     const sig = computeEditorialSignals({ manuscriptId: manuscript.id, annotations, chapters, sessions, combinedMarkdown: manuscript.metadata.combinedMarkdown });
     import('../engine/exports/reportHtml').then(({ exportReportHtml }) => {
-      exportReportHtml(exportMeta().title, manuscript.id, annotations, chapters, sig);
+      exportReportHtml(exportMeta().title, manuscript.id, annotations, chapters, sig, useUIStore.getState().theme);
       showToast('Intelligence report exported.');
     }).catch(e => { console.error('HTML export error:', e); showToast('Export failed — see console.'); });
   }, [manuscript, annotations, chapters, sessions, exportMeta]);
