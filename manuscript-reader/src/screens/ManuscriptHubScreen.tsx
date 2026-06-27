@@ -20,7 +20,6 @@ import { ChapterTree } from '../components/library/ChapterTree';
 import { AddChaptersModal } from '../components/reader/AddChaptersModal';
 import { ReportView } from '../components/reports/ReportView';
 import { ExportChoiceModal } from '../components/reports/ExportChoiceModal';
-import { SmfExportModal } from '../components/reports/SmfExportModal';
 import { ExportCard } from '../components/hub/ExportCard';
 import { useManuscriptArtifactExports } from '../hooks/useManuscriptArtifactExports';
 import { exportShareableReader, ShareReaderBuildError, type ShareSnapshotStamp } from '../engine/exports/shareableReader';
@@ -59,7 +58,6 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
   const [shareReaderOpen, setShareReaderOpen] = useState(false);
   const [shareReaderInitialMode, setShareReaderInitialMode] = useState<'reading' | 'annotating'>('annotating');
   const [reportExportOpen, setReportExportOpen] = useState(false);
-  const [smfOpen, setSmfOpen] = useState(false);
 
   // Working Notes scratchpad — loaded on demand per manuscript, debounce-saved.
   // Local-first (the storage layer doesn't push it to the cloud yet).
@@ -222,11 +220,9 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
     enterReader, startOver,
   ]);
 
-  // Manuscript-artifact exports
-  // share one code path with the Publishing Studio so the bytes are produced once.
-  // `exportMeta` (assembled fresh from the latest saved metadata) also feeds the
-  // collaboration exports below (report, share-reader, revision log).
-  const { exportMeta, exportManuscript: handleExportManuscript, exportSmf: handleExportManuscriptSmf } = useManuscriptArtifactExports();
+  // Publication-ready files live in Publishing Studio; hub exports use `exportMeta`
+  // for collaboration artifacts (report, share-reader, revision log).
+  const { exportMeta } = useManuscriptArtifactExports();
 
   // ── Collaboration exports (report, share-reader, revision log) stay in the hub. ──
   const handleExportReportDocx = useCallback(async () => {
@@ -653,29 +649,16 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
             )}
 
             {pane === 'exports' && (
-              <>
               <ExportsTab
                 manuscriptAvailable={manuscriptAvailable}
                 annCount={annotations.length}
                 editCount={edits.length}
-                hasPublishing={!!publishing && Object.values(publishing).some(Boolean)}
-                onGoToDetails={() => setHubPane('details')}
-                onExportManuscript={handleExportManuscript}
-                onOpenSmf={() => setSmfOpen(true)}
                 onExportReportDocx={handleExportReportDocx}
                 onExportReportHtml={handleExportReportHtml}
                 onExportReportJson={handleExportReportJson}
                 onExportRevisionLog={handleExportRevisionLog}
                 onOpenShareReader={openShareReader}
               />
-              <SmfExportModal
-                open={smfOpen}
-                subject={title}
-                combinedMarkdown={manuscript?.metadata.combinedMarkdown ?? ''}
-                onClose={() => setSmfOpen(false)}
-                onExport={handleExportManuscriptSmf}
-              />
-              </>
             )}
           </div>
         )}
@@ -942,18 +925,15 @@ function VersionRow({ version, ordinal, manuscriptAvailable, onRestore, onRelabe
   );
 }
 
-// ── Exports: every publication-ready artifact in one home. ──
+// ── Hub exports: collaboration artifacts (publication files → Publishing Studio). ──
 /** A single export option, presented inline: a format chip, plain-language
  *  description, and a download affordance — no intermediate modal. */
 function ExportsTab({
-  manuscriptAvailable, annCount, editCount, hasPublishing, onGoToDetails,
-  onExportManuscript, onOpenSmf, onExportReportDocx, onExportReportHtml, onExportReportJson, onExportRevisionLog,
+  manuscriptAvailable, annCount, editCount,
+  onExportReportDocx, onExportReportHtml, onExportReportJson, onExportRevisionLog,
   onOpenShareReader,
 }: {
   manuscriptAvailable: boolean; annCount: number; editCount: number;
-  hasPublishing: boolean; onGoToDetails: () => void;
-  onExportManuscript: (format: 'epub' | 'docx' | 'md') => void | Promise<void>;
-  onOpenSmf: () => void;
   onExportReportDocx: () => void | Promise<void>;
   onExportReportHtml: () => void;
   onExportReportJson: () => void;
@@ -966,29 +946,11 @@ function ExportsTab({
   return (
     <div className="hub-panel">
       <h2 className="hub-panel-title">Exports &amp; Sharing</h2>
-      <p className="hub-panel-lead">Publication-ready files and clean reader copies — built from your latest draft and title-page details.</p>
-
-      {!hasPublishing && (
-        <button className="hub-detail-nudge" onClick={onGoToDetails}>
-          Add publishing details (ISBN, imprint, copyright…) → they’ll appear on your exported title and copyright pages.
-        </button>
-      )}
+      <p className="hub-panel-lead">Revision history, editorial reports, and shareable reader copies from your workspace. For EPUB, Word, and other publication files, use Publishing Studio.</p>
 
       <section className="hub-export-section">
-        <div className="hub-export-section-label">Manuscript</div>
+        <div className="hub-export-section-label">Revisions</div>
         <div className="hub-export-cards">
-          <ExportCard chip="EPUB" title="EPUB ebook" disabled={noManuscript} disabledHint={noManuscriptHint}
-            desc="Reflowable ebook for Kindle, Apple Books, and Kobo, with title, copyright, and contents pages — the format retailers ingest."
-            onClick={() => onExportManuscript('epub')} />
-          <ExportCard chip="DOCX" title="Word document" disabled={noManuscript} disabledHint={noManuscriptHint}
-            desc="Publication-grade .docx — 5.5×8.5 trim, running heads, page numbers, and regenerated front matter and contents."
-            onClick={() => onExportManuscript('docx')} />
-          <ExportCard chip="SMF" title="Agent submission" disabled={noManuscript} disabledHint={noManuscriptHint}
-            desc="Standard Manuscript Format for queries — 12pt Times, double-spaced. Export the full book or just the first N chapters, pages, or words."
-            onClick={onOpenSmf} />
-          <ExportCard chip="MD" title="Markdown" disabled={noManuscript} disabledHint={noManuscriptHint}
-            desc="Plain-text Markdown with a YAML metadata block — portable into Pandoc and most ebook toolchains."
-            onClick={() => onExportManuscript('md')} />
           <ExportCard chip="LOG" title="Revision log"
             disabled={editCount === 0}
             disabledHint="Edit a chapter in the reader to start a revision log"
