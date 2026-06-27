@@ -3,7 +3,7 @@ import { loadTheme, saveTheme, loadFontSize, saveFontSize } from '../engine/stor
 import type { HubPane } from '../components/layout/ManuscriptWorkspaceRail';
 import { workspaceRailOpenByDefault, WORKSPACE_RAIL_MOBILE_MAX_PX } from '../engine/ui/workspaceRail';
 
-export type Screen = 'landing' | 'library' | 'load' | 'manuscript' | 'reader';
+export type Screen = 'landing' | 'library' | 'load' | 'manuscript' | 'reader' | 'publishing';
 
 /** The reader's postures (Vellibris model). Derived from boolean flags so all
  *  legacy effects keep working:

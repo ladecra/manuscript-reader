@@ -7,15 +7,22 @@ import { computeEditorialSignals } from '../engine/editorialSignals';
 import { resolveAnnotationChapters } from '../engine/annotations/chapterResolve';
 import { getParsedManuscript } from '../engine/ingestion/parseCache';
 import { estimateReadingPagePosition, chapterWordCounts, resumeChapterByProgress } from '../engine/reading/manuscriptPages';
+import {
+  meanChapterWordCount,
+  splitTwoColumns,
+  formatChapterLengthRatio,
+  chapterLengthInsightFlag,
+  chapterLengthRatio,
+} from '../engine/prose/chapterLengthOutlier';
 import type { ManuscriptStatus, PublishingMetadata, Chapter, SnapshotMeta } from '../engine/types';
 import { applyChapterEdits, type ChapterEdit } from '../engine/manuscript/chapterEdit';
-import type { ExportManuscriptMeta } from '../engine/exports/manuscriptMarkdown';
 import { ChapterTree } from '../components/library/ChapterTree';
 import { AddChaptersModal } from '../components/reader/AddChaptersModal';
 import { ReportView } from '../components/reports/ReportView';
 import { ExportChoiceModal } from '../components/reports/ExportChoiceModal';
 import { SmfExportModal } from '../components/reports/SmfExportModal';
-import type { ExtentRequest } from '../engine/exports/manuscriptExtent';
+import { ExportCard } from '../components/hub/ExportCard';
+import { useManuscriptArtifactExports } from '../hooks/useManuscriptArtifactExports';
 import { exportShareableReader, ShareReaderBuildError, type ShareSnapshotStamp } from '../engine/exports/shareableReader';
 import { loadSnapshot, loadWorkPosition, loadNote, saveNote } from '../engine/storage';
 import { hasMeaningfulEdits } from '../engine/manuscript/changeList';
@@ -26,6 +33,7 @@ import { PencilIcon, ChevronLeftIcon, DotsIcon, DownloadIcon, LayersIcon, PlusIc
 import { CoverImage } from '../components/ui/CoverImage';
 import { ManuscriptWorkspaceRail, type HubPane } from '../components/layout/ManuscriptWorkspaceRail';
 import { FeedbackTab } from '../components/hub/FeedbackTab';
+import { PublishingDetailsForm } from '../components/hub/PublishingDetailsForm';
 
 // The manuscript page: a book's antechamber. Shared `.instrument-*` list styling
 // (hub rail, contents, publishing fields) is the evolving shell language; a
@@ -38,7 +46,7 @@ interface ManuscriptHubScreenProps {
 
 export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps) {
   const { manuscript, chapters, annotations: rawAnnotations, edits, sessions, openManuscript } = useReaderStore();
-  const { library, updateManuscript, replaceMarkdown, appendChapters, getReadingPosition, updateProgress, cycleStatus } = useLibraryStore();
+  const { updateManuscript, replaceMarkdown, appendChapters, getReadingPosition, updateProgress, cycleStatus } = useLibraryStore();
   const { setPendingChapterIndex, setPendingReaderIntent, setPendingAnnotationId, setPendingResumeFrac, hubPane: pane, setHubPane } = useUIStore();
   const { versions: versionsByMs, refresh: refreshVersions, saveVersion, relabel, remove: removeVersion } = useSnapshotStore();
   const [editStructure, setEditStructure] = useState(false);
@@ -152,6 +160,11 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
     [combinedMarkdown],
   );
 
+  const meanChapterWords = useMemo(
+    () => meanChapterWordCount(chapters.map(ch => wordsByChapter.get(ch.index) ?? 0)),
+    [chapters, wordsByChapter],
+  );
+
   const resumeChapter = useMemo(
     () => resumeChapterByProgress(chapters, wordsByChapter, progressFrac) ?? null,
     [chapters, wordsByChapter, progressFrac],
@@ -182,15 +195,40 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
     onRead();
   }, [manuscript, updateProgress, onRead]);
 
-  // The author-supplied data exports render into front matter — assembled fresh so
-  // it always reflects the latest saved metadata.
-  const exportMeta = useCallback((): ExportManuscriptMeta => ({
-    title: library.find(m => m.id === manuscript?.id)?.metadata.title ?? title,
-    author: manuscript?.metadata.author,
-    publishing: manuscript?.metadata.publishing,
-  }), [library, manuscript, title]);
+  const tocTwoColumns = !tocCompact && filteredChapters.length > 15;
+  const [tocLeft, tocRight] = useMemo(
+    () => (tocTwoColumns ? splitTwoColumns(filteredChapters) : [filteredChapters, [] as Chapter[]]),
+    [filteredChapters, tocTwoColumns],
+  );
 
-  // ── Exports (every artifact in one home; metadata flows into the manuscript ones). ──
+  const renderTocRow = useCallback((ch: Chapter) => (
+    <HubTocRow
+      key={ch.id}
+      ch={ch}
+      wordCount={wordsByChapter.get(ch.index)}
+      meanChapterWords={meanChapterWords}
+      isActive={resumeChapter?.index === ch.index}
+      compact={tocCompact}
+      menuOpen={openChapterMenu === ch.index}
+      onToggleMenu={() => setOpenChapterMenu(id => (id === ch.index ? null : ch.index))}
+      onCloseMenu={() => setOpenChapterMenu(null)}
+      onRead={() => enterReader(ch.index)}
+      onAnnotate={() => enterReader(ch.index, 'annotate')}
+      onEdit={() => enterReader(ch.index, 'edit')}
+      onStartOver={startOver}
+    />
+  ), [
+    wordsByChapter, meanChapterWords, resumeChapter?.index, tocCompact, openChapterMenu,
+    enterReader, startOver,
+  ]);
+
+  // Manuscript-artifact exports
+  // share one code path with the Publishing Studio so the bytes are produced once.
+  // `exportMeta` (assembled fresh from the latest saved metadata) also feeds the
+  // collaboration exports below (report, share-reader, revision log).
+  const { exportMeta, exportManuscript: handleExportManuscript, exportSmf: handleExportManuscriptSmf } = useManuscriptArtifactExports();
+
+  // ── Collaboration exports (report, share-reader, revision log) stay in the hub. ──
   const handleExportReportDocx = useCallback(async () => {
     if (!manuscript || !annotations.length) { showToast('No annotations yet.'); return; }
     const sig = computeEditorialSignals({ manuscriptId: manuscript.id, annotations, chapters, sessions, combinedMarkdown: manuscript.metadata.combinedMarkdown });
@@ -219,38 +257,6 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
       showToast('Report data exported.');
     }).catch(e => { console.error('JSON export error:', e); showToast('Export failed — see console.'); });
   }, [manuscript, annotations, chapters, sessions, exportMeta]);
-
-  const handleExportManuscript = useCallback(async (format: 'epub' | 'docx' | 'md') => {
-    if (!manuscript) return;
-    const md = manuscript.metadata.combinedMarkdown;
-    if (!md) { showToast('Manuscript not cached — re-import the file to export it.'); return; }
-    try {
-      if (format === 'md') {
-        const { exportManuscriptMarkdown } = await import('../engine/exports/manuscriptMarkdown');
-        exportManuscriptMarkdown(exportMeta(), manuscript.id, md);
-      } else if (format === 'epub') {
-        const { exportManuscriptEpub } = await import('../engine/exports/manuscriptEpub');
-        exportManuscriptEpub(exportMeta(), manuscript.id, md);
-      } else {
-        showToast('Building manuscript…');
-        const { exportManuscriptDocx } = await import('../engine/exports/manuscriptDocx');
-        await exportManuscriptDocx(exportMeta(), manuscript.id, md);
-      }
-      showToast('Manuscript exported.');
-    } catch (e) { console.error('Manuscript export error:', e); showToast('Export failed — see console.'); }
-  }, [manuscript, exportMeta]);
-
-  const handleExportManuscriptSmf = useCallback(async (request: ExtentRequest) => {
-    if (!manuscript) return;
-    const md = manuscript.metadata.combinedMarkdown;
-    if (!md) { showToast('Manuscript not cached — re-import the file to export it.'); return; }
-    try {
-      showToast('Building submission…');
-      const { exportManuscriptSmfDocx } = await import('../engine/exports/manuscriptSmfDocx');
-      await exportManuscriptSmfDocx(exportMeta(), manuscript.id, md, request);
-      showToast('Submission manuscript exported.');
-    } catch (e) { console.error('SMF export error:', e); showToast('Export failed — see console.'); }
-  }, [manuscript, exportMeta]);
 
   const handleExportRevisionLog = useCallback(() => {
     if (!manuscript || !edits.length) { showToast('No edits yet.'); return; }
@@ -554,27 +560,20 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
                     onClick={() => setAddChaptersOpen(true)}>+ Add chapters</button>
                 </div>
               </div>
+            ) : filteredChapters.length === 0 ? (
+              <p className="hub-toc-empty">No chapters match your search.</p>
+            ) : tocTwoColumns ? (
+              <div className="hub-toc-columns">
+                <nav className="instrument-nav" aria-label="Table of contents, column 1">
+                  {tocLeft.map(renderTocRow)}
+                </nav>
+                <nav className="instrument-nav" aria-label="Table of contents, column 2">
+                  {tocRight.map(renderTocRow)}
+                </nav>
+              </div>
             ) : (
               <nav className={`instrument-nav${tocCompact ? ' instrument-nav--compact' : ''}`} aria-label="Table of contents">
-                {filteredChapters.map(ch => (
-                  <HubTocRow
-                    key={ch.id}
-                    ch={ch}
-                    wordCount={wordsByChapter.get(ch.index)}
-                    isActive={resumeChapter?.index === ch.index}
-                    compact={tocCompact}
-                    menuOpen={openChapterMenu === ch.index}
-                    onToggleMenu={() => setOpenChapterMenu(id => (id === ch.index ? null : ch.index))}
-                    onCloseMenu={() => setOpenChapterMenu(null)}
-                    onRead={() => enterReader(ch.index)}
-                    onAnnotate={() => enterReader(ch.index, 'annotate')}
-                    onEdit={() => enterReader(ch.index, 'edit')}
-                    onStartOver={startOver}
-                  />
-                ))}
-                {filteredChapters.length === 0 && (
-                  <p className="hub-toc-empty">No chapters match your search.</p>
-                )}
+                {filteredChapters.map(renderTocRow)}
               </nav>
             )}
           </section>
@@ -584,7 +583,7 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
             <button type="button" className="btn-ghost" style={{ marginBottom: '30px' }} onClick={() => setHubPane('contents')}>‹ Contents</button>
 
             {pane === 'details' && (
-              <DetailsTab
+              <PublishingDetailsForm
                 key={manuscript.id}
                 title={title} author={author ?? ''} status={(status as ManuscriptStatus) ?? 'Draft'}
                 publishing={publishing ?? {}}
@@ -751,10 +750,11 @@ function hubLastOpenedLabel(ts: number | undefined): string {
 }
 
 function HubTocRow({
-  ch, wordCount, isActive, compact, menuOpen, onToggleMenu, onCloseMenu, onRead, onAnnotate, onEdit, onStartOver,
+  ch, wordCount, meanChapterWords, isActive, compact, menuOpen, onToggleMenu, onCloseMenu, onRead, onAnnotate, onEdit, onStartOver,
 }: {
   ch: Chapter;
   wordCount: number | undefined;
+  meanChapterWords: number;
   isActive: boolean;
   compact: boolean;
   menuOpen: boolean;
@@ -766,6 +766,10 @@ function HubTocRow({
   onStartOver: () => void;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
+  const ratio = wordCount != null && wordCount > 0 && meanChapterWords > 0
+    ? chapterLengthRatio(wordCount, meanChapterWords)
+    : null;
+  const flag = ratio != null ? chapterLengthInsightFlag(ratio) : null;
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -795,8 +799,18 @@ function HubTocRow({
         <span className="instrument-item-num">{ch.index}</span>
         {ch.title}
       </span>
-      {!compact && wordCount != null && (
-        <span className="instrument-item-meta">{wordCount.toLocaleString()}</span>
+      {!compact && ((wordCount != null && wordCount > 0) || flag) && (
+        <span className="instrument-item-meta">
+          {wordCount != null && wordCount > 0 && wordCount.toLocaleString()}
+          {flag && ratio != null && (
+            <span
+              className={`chapter-length-flag chapter-length-flag--${flag}`}
+              title={flag === 'short' ? 'Much shorter than your average chapter' : 'Much longer than your average chapter'}
+            >
+              {' · '}{formatChapterLengthRatio(ratio)}
+            </span>
+          )}
+        </span>
       )}
       <div className="hub-toc-menu-wrap" ref={menuRef}>
         <button
@@ -816,128 +830,6 @@ function HubTocRow({
             <button type="button" role="menuitem" className="hub-toc-menu-muted" onClick={e => { e.stopPropagation(); onCloseMenu(); onStartOver(); }}>Start from beginning</button>
           </div>
         )}
-      </div>
-    </div>
-  );
-}
-
-// ── Details: title page + publishing metadata. Every field here flows into the
-// manuscript's DOCX/Markdown exports (front matter, copyright page, dedication). ──
-
-const STATUS_META: { s: ManuscriptStatus; icon: string }[] = [
-  { s: 'Draft',        icon: '○' },
-  { s: 'In Progress',  icon: '◑' },
-  { s: 'Final Polish', icon: '✦' },
-  { s: 'Complete',     icon: '✓' },
-  { s: 'Archived',     icon: '⊡' },
-];
-
-function PubField({ label, id, value, onChange, placeholder = '', max, wide = false }: {
-  label: string; id: string; value: string; onChange: (v: string) => void;
-  placeholder?: string; max: number; wide?: boolean;
-}) {
-  return (
-    <div className={`pub-field${wide ? ' pub-field--wide' : ''}`}>
-      <label className="instrument-field-label" htmlFor={id}>{label}</label>
-      <input id={id} className="pub-field-input" type="text" value={value}
-        placeholder={placeholder} maxLength={max} onChange={e => onChange(e.target.value)} />
-    </div>
-  );
-}
-
-function PubTextarea({ label, id, value, onChange, placeholder = '', max, wide = false, counterNearLimit = false }: {
-  label: string; id: string; value: string; onChange: (v: string) => void;
-  placeholder?: string; max: number; wide?: boolean; counterNearLimit?: boolean;
-}) {
-  const showCounter = counterNearLimit && value.length >= max * 0.85;
-  return (
-    <div className={`pub-field${wide ? ' pub-field--wide' : ''}`}>
-      <label className="instrument-field-label" htmlFor={id}>{label}</label>
-      <textarea id={id} className="pub-field-input pub-field-textarea" value={value}
-        placeholder={placeholder} maxLength={max} rows={4}
-        onChange={e => onChange(e.target.value)} />
-      {showCounter && (
-        <span className="pub-field-counter" aria-live="polite">{value.length} / {max}</span>
-      )}
-    </div>
-  );
-}
-
-function DetailsTab({
-  title, author, status, publishing, onSave,
-}: {
-  title: string; author: string; status: ManuscriptStatus; publishing: PublishingMetadata;
-  onSave: (patch: { title: string; author: string; status: ManuscriptStatus; publishing: PublishingMetadata }) => void;
-}) {
-  const [titleInput, setTitleInput] = useState(title);
-  const [authorInput, setAuthorInput] = useState(author);
-  const [selectedStatus, setSelectedStatus] = useState<ManuscriptStatus>(status);
-  const [pub, setPub] = useState<PublishingMetadata>(publishing);
-
-  const sf = (key: keyof PublishingMetadata) => (v: string) => setPub(p => ({ ...p, [key]: v }));
-  const save = () => onSave({ title: titleInput.trim() || 'Untitled', author: authorInput.trim(), status: selectedStatus, publishing: pub });
-  const reset = () => { setTitleInput(title); setAuthorInput(author); setSelectedStatus(status); setPub(publishing); };
-
-  return (
-    <div className="hub-panel hub-details-form">
-      <div className="pub-form-header">
-        <div>
-          <h2 className="hub-panel-title">Publishing Details</h2>
-          <p className="hub-panel-lead">Title page and publishing data — applied to every artifact you export.</p>
-        </div>
-        <button type="button" className="pub-save-btn" onClick={save}>Save changes</button>
-      </div>
-
-      <div className="instrument-group-label">Work identification</div>
-      <div className="pub-form-grid">
-        <PubField label="Title" id="hub-detail-title" value={titleInput} onChange={setTitleInput} max={200} />
-        <PubField label="Subtitle" id="hub-pub-subtitle" value={pub.subtitle ?? ''} onChange={sf('subtitle')} max={200} placeholder="A subtitle, if any" />
-        <PubField label="Series" id="hub-pub-series" value={pub.series ?? ''} onChange={sf('series')} max={200} placeholder="The Hollow Cycle, Book 1" />
-        <PubField label="Author" id="hub-detail-author" value={authorInput} onChange={setAuthorInput} max={200} placeholder="Author (optional)" />
-        <PubField label="Publisher" id="hub-pub-publisher" value={pub.publisher ?? ''} onChange={sf('publisher')} max={200} placeholder="Publishing house" />
-        <PubField label="Imprint" id="hub-pub-imprint" value={pub.imprint ?? ''} onChange={sf('imprint')} max={200} placeholder="Imprint" />
-      </div>
-
-      <div className="instrument-group-label pub-section-label">Classification</div>
-      <div className="pub-form-grid">
-        <PubField label="Genre" id="hub-pub-genre" value={pub.genre ?? ''} onChange={sf('genre')} max={100} placeholder="Literary fiction, memoir, thriller…" />
-        <PubField label="Language" id="hub-pub-language" value={pub.language ?? ''} onChange={sf('language')} max={50} placeholder="English" />
-      </div>
-
-      <div className="instrument-group-label pub-section-label">Synopsis</div>
-      <div className="pub-form-grid">
-        <PubTextarea label="Short synopsis" id="hub-pub-synopsis" value={pub.synopsis ?? ''} onChange={sf('synopsis')} max={1000}
-          placeholder="A short description for your title page and exports (Pandoc: description)." wide counterNearLimit />
-      </div>
-
-      <div className="instrument-group-label pub-section-label">Publication</div>
-      <div className="pub-form-grid">
-        <PubField label="ISBN" id="hub-pub-isbn" value={pub.isbn ?? ''} onChange={sf('isbn')} max={20} placeholder="978-…" />
-        <PubField label="Edition" id="hub-pub-edition" value={pub.edition ?? ''} onChange={sf('edition')} max={100} placeholder="First edition" />
-        <PubField label="Publication date" id="hub-pub-publicationDate" value={pub.publicationDate ?? ''} onChange={sf('publicationDate')} max={100} placeholder="Spring 2027" />
-      </div>
-
-      <div className="instrument-group-label pub-section-label">Copyright</div>
-      <div className="pub-form-grid">
-        <PubField label="Copyright year" id="hub-pub-copyrightYear" value={pub.copyrightYear ?? ''} onChange={sf('copyrightYear')} max={10} placeholder={String(new Date().getFullYear())} />
-        <PubField label="Copyright holder" id="hub-pub-copyrightHolder" value={pub.copyrightHolder ?? ''} onChange={sf('copyrightHolder')} max={200} placeholder="Author or estate name" />
-        <PubField label="Rights" id="hub-pub-rights" value={pub.rights ?? ''} onChange={sf('rights')} max={200} placeholder="All rights reserved" wide />
-        <PubTextarea label="Dedication" id="hub-pub-dedication" value={pub.dedication ?? ''} onChange={sf('dedication')} max={1000} placeholder="For…" wide counterNearLimit />
-      </div>
-
-      <div className="instrument-group-label pub-section-label">Status</div>
-      <div className="pub-status-options">
-        {STATUS_META.map(({ s, icon }) => (
-          <button key={s} type="button" className={`status-opt${selectedStatus === s ? ' selected' : ''}`}
-            onClick={() => setSelectedStatus(s)}>
-            <span className="status-opt-icon" aria-hidden="true">{icon}</span>
-            {s}
-          </button>
-        ))}
-      </div>
-
-      <div className="pub-form-actions">
-        <button type="button" className="btn-outline pub-reset-btn" onClick={reset}>Reset</button>
       </div>
     </div>
   );
@@ -1053,30 +945,6 @@ function VersionRow({ version, ordinal, manuscriptAvailable, onRestore, onRelabe
 // ── Exports: every publication-ready artifact in one home. ──
 /** A single export option, presented inline: a format chip, plain-language
  *  description, and a download affordance — no intermediate modal. */
-function ExportCard({
-  chip, title, desc, onClick, disabled, disabledHint,
-}: {
-  chip: string; title: string; desc: string;
-  onClick: () => void; disabled?: boolean; disabledHint?: string;
-}) {
-  return (
-    <button
-      type="button"
-      className="hub-export-card"
-      onClick={onClick}
-      disabled={disabled}
-      title={disabled ? disabledHint : undefined}
-    >
-      <span className="hub-export-card-chip">{chip}</span>
-      <span className="hub-export-card-body">
-        <span className="hub-export-card-title">{title}</span>
-        <span className="hub-export-card-desc">{desc}</span>
-      </span>
-      <DownloadIcon size={15} className="hub-export-card-icon" />
-    </button>
-  );
-}
-
 function ExportsTab({
   manuscriptAvailable, annCount, editCount, hasPublishing, onGoToDetails,
   onExportManuscript, onOpenSmf, onExportReportDocx, onExportReportHtml, onExportReportJson, onExportRevisionLog,

@@ -10,6 +10,7 @@ import { LibraryScreen } from './screens/LibraryScreen';
 import { LoadModal } from './screens/LoadScreen';
 import { ReaderScreen } from './screens/ReaderScreen';
 import { ManuscriptHubScreen } from './screens/ManuscriptHubScreen';
+import { PublishingStudioScreen } from './screens/PublishingStudioScreen';
 import { ReaderRail } from './components/layout/ReaderRail';
 import { Toast, useToast } from './components/ui/Toast';
 import { SettingsMenu } from './components/ui/SettingsMenu';
@@ -97,7 +98,7 @@ export function App() {
   // The reader rail is collapsed (icon-only) by default; the user can expand it.
   const [readerRailCollapsed, setReaderRailCollapsed] = useState(true);
 
-  const shellActive = screen === 'library' || screen === 'manuscript';
+  const shellActive = screen === 'library' || screen === 'manuscript' || screen === 'publishing';
   const favCount = library.filter(m => m.metadata.favorite).length;
 
   const workspaceManuscripts = useMemo(
@@ -110,9 +111,11 @@ export function App() {
   );
 
   function handleSwitchManuscript(id: string) {
-    if (manuscript?.id === id) return;
     const ms = library.find(m => m.id === id);
     if (!ms) return;
+    // Same id is already the open manuscript on the hub — no-op. From Publishing
+    // Studio (or elsewhere) the author still expects Recent to open the hub page.
+    if (manuscript?.id === id && screen === 'manuscript') return;
     handleOpenHub(ms);
   }
 
@@ -253,6 +256,17 @@ export function App() {
     resetShellScroll();
   }
 
+  // The production destination — a library landing that privileges one book in the
+  // hub-hero presentation and offers the publishable formats. Reachable from the
+  // app-shell rail (library + hub), never the reader. The screen owns selection: it
+  // defaults to the open manuscript (deep-link) or the most recent, and opens whatever
+  // the author picks so the export hook emits the right bytes. A truly empty library
+  // disables the CTA upstream.
+  function goPublishingStudio() {
+    setScreen('publishing');
+    resetShellScroll();
+  }
+
   // The marketing front door owns the full viewport — no app topbar.
   if (screen === 'landing') {
     return <LandingScreen onOpenApp={handleLibraryNav} />;
@@ -260,7 +274,7 @@ export function App() {
 
   // The library + manuscript hub are "bare": no global topbar — the rail carries
   // the wordmark and a single quiet settings control floats top-right (v3 mockups).
-  const bareTop = screen === 'library' || screen === 'manuscript';
+  const bareTop = screen === 'library' || screen === 'manuscript' || screen === 'publishing';
 
   return (
     <>
@@ -325,7 +339,7 @@ export function App() {
 
       {shellActive ? (
         <AppShell
-          variant={screen === 'manuscript' ? 'manuscript' : 'library'}
+          variant={screen === 'manuscript' ? 'manuscript' : screen === 'publishing' ? 'publishing' : 'library'}
           libraryFilter={libraryFilter}
           onLibraryFilter={f => goLibrary(f)}
           manuscriptCount={library.length}
@@ -335,6 +349,9 @@ export function App() {
           onSwitchManuscript={handleSwitchManuscript}
           onNewManuscript={() => setLoadModalOpen(true)}
           onHome={handleHomeNav}
+          onPublishingStudio={goPublishingStudio}
+          publishingStudioActive={screen === 'publishing'}
+          studioDisabled={library.length === 0}
           bareTop={bareTop}
         >
           {screen === 'library' && (
@@ -361,6 +378,12 @@ export function App() {
               key={manuscript.id}
               onRead={() => { setScreen('reader'); window.scrollTo(0, 0); }}
               onExit={handleLibraryNav}
+            />
+          )}
+          {screen === 'publishing' && (
+            <PublishingStudioScreen
+              onExit={handleLibraryNav}
+              onOpenManuscript={goManuscriptPage}
             />
           )}
         </AppShell>

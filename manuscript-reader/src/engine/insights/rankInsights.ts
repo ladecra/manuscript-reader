@@ -20,6 +20,7 @@
 
 import type { EditorialSignals, ManuscriptInsight, AnnotationCluster, ChapterStat } from '../types';
 import { DEVELOPMENTAL_TYPES, ANNOTATION_LABELS } from '../types';
+import { chapterLengthInsightFlag } from '../prose/chapterLengthOutlier';
 
 // Prose length insight threshold — deliberately MUCH stricter than the table's
 // own ×-notation cut (ReportView/proseReportSection mark deviation at 1.4×/0.6×
@@ -27,12 +28,7 @@ import { DEVELOPMENTAL_TYPES, ANNOTATION_LABELS } from '../types';
 // chapter is genuinely, unmistakably off: ≥2.1× the manuscript's mean chapter
 // length, the classic two-chapters-merged tell. Short chapters surface at ≤0.25×
 // — much stricter than the table's 0.6× — for likely false breaks (orphaned headings).
-const PROSE_OUTLIER_LONG = 2.1;
-const PROSE_OUTLIER_SHORT = 0.25;
 
-// Per-tier caps and overall cap — keep the strip scannable above the fold.
-// Reaction allows clusters PLUS one developmental-density pointer (the pacing/
-// voice density clusters don't model), still bounded by MAX_TOTAL overall.
 const MAX_CONSENSUS = 2, MAX_CLUSTERS = 2, MAX_REACTION = 3, MAX_PROSE = 2, MAX_TOTAL = 5;
 
 export function rankInsights(signals: EditorialSignals): ManuscriptInsight[] {
@@ -198,7 +194,7 @@ function proseInsights(signals: EditorialSignals): ManuscriptInsight[] {
     .filter(c => c.words > 0)
     .map(c => ({ c, ratio: c.words / mean }))
     .filter(
-      ({ ratio }) => ratio >= PROSE_OUTLIER_LONG || ratio <= PROSE_OUTLIER_SHORT,
+      ({ ratio }) => chapterLengthInsightFlag(ratio) !== null,
     );
 
   // Most extreme vs the manuscript mean first (0.1× and 3× both beat 2.1×).
@@ -206,7 +202,8 @@ function proseInsights(signals: EditorialSignals): ManuscriptInsight[] {
 
   return rated.slice(0, MAX_PROSE).map(({ c, ratio }) => {
     const where = chapterName(c.title, c.index);
-    const short = ratio <= PROSE_OUTLIER_SHORT;
+    const flag = chapterLengthInsightFlag(ratio);
+    const short = flag === 'short';
     return {
       id: `insight-prose-${c.index}`,
       tier: 'prose' as const,
