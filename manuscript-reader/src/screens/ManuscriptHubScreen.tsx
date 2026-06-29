@@ -29,6 +29,7 @@ import type { WorkMode } from '../engine/reader/positionIntent';
 import { ShareReaderModal } from '../components/share/ShareReaderModal';
 import { showToast } from '../components/ui/Toast';
 import { PencilIcon, ChevronLeftIcon, DotsIcon, DownloadIcon, LayersIcon, PlusIcon, XIcon, UndoIcon } from '../components/ui/Icons';
+import { heroTitleClass } from '../components/ui/heroTitle';
 import { CoverImage } from '../components/ui/CoverImage';
 import { ManuscriptWorkspaceRail, type HubPane } from '../components/layout/ManuscriptWorkspaceRail';
 import { FeedbackTab } from '../components/hub/FeedbackTab';
@@ -420,7 +421,7 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
             </div>
             <div className="hub-hero-text">
               {publishing?.series && <div className="hub-hero-series">{publishing.series}</div>}
-              <h1 className="hub-hero-title">{title}</h1>
+              <h1 className={heroTitleClass(title)}>{title}</h1>
               {author && <div className="hub-hero-byline">{author}</div>}
               {publishing?.genre?.trim() ? (
                 <div className="hub-hero-genre">

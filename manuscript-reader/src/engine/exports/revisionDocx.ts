@@ -221,7 +221,7 @@ function buildDoc(data: {
     title: i.headline,
     desc: i.detail ?? '',
   }));
-  takeaways.push({ color: HEX.bookmark, title: `Reader Engagement: ${rep.label}`, desc: rep.blurb });
+  takeaways.push({ color: HEX.bookmark, title: `${signals.readerCount === 0 ? 'Engagement' : 'Reader Engagement'}: ${rep.label}`, desc: rep.blurb });
   takeaways.forEach(t => {
     children.push(new Paragraph({
       children: [new TextRun({ text: `●  ${t.title}`, font: SANS, size: 18, bold: true, color: t.color })],

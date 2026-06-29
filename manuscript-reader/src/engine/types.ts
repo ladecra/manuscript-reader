@@ -163,6 +163,16 @@ export interface Annotation {
   anchor?: TextAnchor;       // durable re-location anchor (Phase 4); absent = legacy, re-anchor by quote alone
 }
 
+/** A reader (beta) annotation carries a reader identity; the author's own marks
+ *  do not. Keep this DERIVED — `readerId`/`readerName` already encode authorship,
+ *  and "derived caches are not truth" (same lesson as annotation chapter
+ *  resolution). The one definition of authorship every surface shares: reader
+ *  *reactions* and author *revision intent* are different speech acts and must
+ *  never be framed identically (an author questioning their own line is not
+ *  "reader confusion"). */
+export const isReaderAnnotation = (a: Annotation): boolean => !!(a.readerId || a.readerName);
+export const isAuthorAnnotation = (a: Annotation): boolean => !isReaderAnnotation(a);
+
 /**
  * A durable text anchor (Phase 4). Locates a quoted span by its surrounding
  * context rather than a bare first-match search, so an annotation survives
@@ -324,10 +334,14 @@ export type BlockRole =
  *  matching, so freezing it is safe. Prologue/epilogue are NOT here: they are
  *  narrative and remain body chapters. */
 export type MatterRole =
-  | 'half-title' | 'title-page' | 'copyright' | 'dedication' | 'epigraph'
-  | 'foreword' | 'preface' | 'introduction'
+  | 'half-title' | 'title-page' | 'frontispiece' | 'copyright' | 'dedication' | 'epigraph'
+  | 'foreword' | 'preface' | 'introduction' | 'cast' | 'list-of-illustrations'
   | 'acknowledgements' | 'author-note' | 'afterword' | 'about-author'
-  | 'also-by' | 'colophon' | 'appendix' | 'glossary' | 'notes' | 'other';
+  | 'also-by' | 'colophon' | 'appendix' | 'glossary'
+  // nonfiction back matter — split out of the old catch-all `notes` so each renders
+  // to convention (a regenerated index, hanging-indent bibliography) rather than
+  // dumping stale page-bound prose.
+  | 'bibliography' | 'index' | 'notes' | 'reading-group-guide' | 'excerpt' | 'other';
 
 /** Which side of the body a matter section sits on. */
 export type MatterRegion = 'front' | 'back';

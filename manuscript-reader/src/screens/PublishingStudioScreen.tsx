@@ -4,9 +4,20 @@ import { useReaderStore } from '../state/readerStore';
 import { useLibraryStore } from '../state/libraryStore';
 import { useSnapshotStore } from '../state/snapshotStore';
 import { buildManuscriptStructure } from '../engine/ingestion/manuscriptStructure';
+import {
+  extractFrontMatterCandidates,
+  proposeFrontMatter,
+  applyFrontMatterCandidates,
+} from '../engine/ingestion/frontMatterExtract';
+import { computePublishReadiness, summarizeReadiness } from '../engine/publishing/readiness';
+import {
+  listMatterSections, upsertMatterSection, removeMatterSection, moveMatterSection,
+  isListMatter, type AuthoredMatter,
+} from '../engine/manuscript/matterEdit';
+import type { MatterRegion } from '../engine/types';
 import { totalWords, estimatePages, type ExtentRequest } from '../engine/exports/manuscriptExtent';
 import { sortLibraryManuscripts } from '../engine/library';
-import { loadAnnotations, loadEdits, loadSessions, loadSnapshot } from '../engine/storage';
+import { loadAnnotations, loadSnapshot } from '../engine/storage';
 import { useManuscriptArtifactExports } from '../hooks/useManuscriptArtifactExports';
 import { getParsedManuscript } from '../engine/ingestion/parseCache';
 import { chapterWordCounts } from '../engine/reading/manuscriptPages';
@@ -18,7 +29,8 @@ import { CoverImage } from '../components/ui/CoverImage';
 import { PublishingDetailsForm } from '../components/hub/PublishingDetailsForm';
 import { SmfExportModal } from '../components/reports/SmfExportModal';
 import { showToast } from '../components/ui/Toast';
-import { BookIcon, ChevronLeftIcon, ChevronRightIcon, LayersIcon, ListLayoutIcon, PencilIcon } from '../components/ui/Icons';
+import { BookIcon, ChevronLeftIcon, ChevronRightIcon, LayersIcon, ListLayoutIcon } from '../components/ui/Icons';
+import { heroTitleClass } from '../components/ui/heroTitle';
 
 interface PublishingStudioScreenProps {
   onExit: () => void;
@@ -28,6 +40,10 @@ interface PublishingStudioScreenProps {
 function statusClass(status: string): string {
   return 'status--' + status.toLowerCase().replace(/[^a-z]+/g, '-');
 }
+
+const FORMAT_LABEL: Record<StudioFormatId, string> = {
+  docx: 'DOCX', epub: 'EPUB', smf: 'submission', md: 'Markdown',
+};
 
 type PrepPane = 'details' | 'chapters' | 'matter';
 
@@ -51,12 +67,15 @@ export function PublishingStudioScreen({ onExit, onOpenManuscript }: PublishingS
   const refreshVersions = useSnapshotStore(s => s.refresh);
   const saveVersion = useSnapshotStore(s => s.saveVersion);
   const updateManuscript = useLibraryStore(s => s.updateManuscript);
+  const replaceMarkdown = useLibraryStore(s => s.replaceMarkdown);
 
   const { exportManuscript, exportSmf } = useManuscriptArtifactExports();
   const [exportGateOpen, setExportGateOpen] = useState(false);
   const [smfOpen, setSmfOpen] = useState(false);
   const [smfMarkdown, setSmfMarkdown] = useState('');
   const [query, setQuery] = useState('');
+  // Per-manuscript dismissal of the detected-details review prompt.
+  const [reviewDismissedFor, setReviewDismissedFor] = useState<string | null>(null);
   const [selectedFormat, setSelectedFormat] = useState<StudioFormatId>('docx');
   // Hub-style prep pane: null = stage + shelf; otherwise full center-column tool view.
   const [prepPane, setPrepPane] = useState<PrepPane | null>(null);
@@ -98,6 +117,37 @@ export function PublishingStudioScreen({ onExit, onOpenManuscript }: PublishingS
     [combinedMarkdown],
   );
 
+  // Detected publishing metadata — proposals for the author to review. Empty unless
+  // the front matter yielded a value the author hasn't already filled in.
+  const candidates = useMemo(
+    () => (structure ? extractFrontMatterCandidates(structure) : {}),
+    [structure],
+  );
+  const proposals = useMemo(
+    () => (selected
+      ? proposeFrontMatter(
+          { author: selected.metadata.author, publishing: selected.metadata.publishing ?? {} },
+          candidates,
+        )
+      : []),
+    [selected, candidates],
+  );
+
+  // Pre-export readiness — required elements (title/author/copyright) vs.
+  // recommended (ISBN/synopsis/dedication/about-author). Pure engine decision.
+  const readiness = useMemo(
+    () => (selected
+      ? computePublishReadiness({
+          title: selected.metadata.title,
+          author: selected.metadata.author,
+          publishing: selected.metadata.publishing ?? {},
+          structure,
+        }, selectedFormat)
+      : []),
+    [selected, structure, selectedFormat],
+  );
+  const readinessSummary = summarizeReadiness(readiness);
+
   const stats = useMemo(() => {
     if (structure) {
       const words = totalWords(structure);
@@ -110,20 +160,6 @@ export function PublishingStudioScreen({ onExit, onOpenManuscript }: PublishingS
 
   const annCount = selected ? loadAnnotations(selected.id).length : 0;
   const versions = (resolvedId && versionsByMs[resolvedId]) || [];
-
-  // "Tools used" — pure storage reads, no new persistence. Each chip lights only
-  // when the author actually used that surface, so the row reads as a record of
-  // how this book moved through the app.
-  const toolsUsed = useMemo(() => {
-    if (!selected) return null;
-    const readerIds = new Set(loadSessions(selected.id).map(s => s.readerId).filter(Boolean));
-    return {
-      reader: (selected.metadata.progress ?? 0) > 0,
-      editor: loadEdits(selected.id).length > 0,
-      annotations: annCount > 0,
-      readers: readerIds.size,
-    };
-  }, [selected, annCount]);
 
   const handleSaveDetails = useCallback(
     (patch: { title: string; author: string; status: ManuscriptStatus; publishing: PublishingMetadata }) => {
@@ -138,6 +174,35 @@ export function PublishingStudioScreen({ onExit, onOpenManuscript }: PublishingS
     },
     [selected, openId, updateManuscript, openManuscript],
   );
+
+  const handleApplyDetected = useCallback(() => {
+    if (!selected) return;
+    const merged = applyFrontMatterCandidates(
+      { author: selected.metadata.author, publishing: selected.metadata.publishing ?? {} },
+      candidates,
+    );
+    updateManuscript(selected.id, { author: merged.author, publishing: merged.publishing });
+    if (selected.id === openId) {
+      const refreshed = useLibraryStore.getState().library.find(mm => mm.id === selected.id);
+      const md = refreshed?.metadata.combinedMarkdown;
+      if (refreshed && md) openManuscript(refreshed, getParsedManuscript(md).chapters);
+    }
+    showToast('Applied detected details.');
+  }, [selected, candidates, openId, updateManuscript, openManuscript]);
+
+  // Authored matter writes into the combined markdown (the store of record) as the
+  // same comment fences ingestion produces, then re-parses via replaceMarkdown
+  // (which does NOT re-run preprocessMarkdown). Re-open the manuscript if it's the
+  // active one so the reader reflects the change.
+  const handleSaveMatter = useCallback((newMarkdown: string) => {
+    if (!selected) return;
+    const refreshed = replaceMarkdown(selected.id, newMarkdown);
+    if (refreshed && selected.id === openId) {
+      const md = refreshed.metadata.combinedMarkdown;
+      if (md) openManuscript(refreshed, getParsedManuscript(md).chapters);
+    }
+    showToast('Matter updated.');
+  }, [selected, openId, replaceMarkdown, openManuscript]);
 
   const handleSaveVersion = useCallback(() => {
     if (!selected || selected.id !== openId) return;
@@ -212,21 +277,20 @@ export function PublishingStudioScreen({ onExit, onOpenManuscript }: PublishingS
     !q || ms.metadata.title.toLowerCase().includes(q) || (ms.metadata.author ?? '').toLowerCase().includes(q),
   );
 
-  const metaFields = [
-    { label: 'Author', value: m.author },
-    { label: 'Copyright', value: [publishing.copyrightYear, publishing.copyrightHolder].filter(Boolean).join(' · ') || undefined },
-    { label: 'ISBN', value: publishing.isbn },
-    { label: 'Publisher', value: publishing.publisher },
-  ];
-  const filledCount = metaFields.filter(f => f.value).length;
-  const metadataComplete = filledCount >= metaFields.length;
+  // Version/status context for the hero — at-a-glance "where is this draft."
+  const lastVersion = versions[0];
+  const versionLine = lastVersion
+    ? `${versions.length} version${versions.length !== 1 ? 's' : ''} · last saved ${new Date(lastVersion.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`
+    : 'No version saved yet';
 
-  /** Editorial line only — not an engine readiness check (see comment on tagline in JSX). */
-  const showStageTagline = canExport && !m.uncached;
+  // The hero's single forward action: send the author to the next unfinished prep
+  // step (required first), or straight to export when nothing's outstanding.
+  const nextStep = readiness.find(i => !i.met && i.required) ?? readiness.find(i => !i.met);
+  const primaryStep = nextStep ? { action: nextStep.action, cta: nextStep.hint } : null;
 
-  const footerLine = metadataComplete
-    ? 'Title-page details on file'
-    : 'Some title-page fields are still empty';
+  const footerLine = readinessSummary.requiredMet
+    ? (readinessSummary.missingOptional > 0 ? 'Ready to export · some optional details open' : 'Ready to export')
+    : `${readinessSummary.missingRequired} required detail${readinessSummary.missingRequired !== 1 ? 's' : ''} still missing`;
 
   return (
     <div className="hub hub--3col hub--studio" id="screen-publishing">
@@ -258,14 +322,12 @@ export function PublishingStudioScreen({ onExit, onOpenManuscript }: PublishingS
             )}
 
             {prepPane === 'matter' && (
-              <div className="hub-panel studio-matter-stub">
-                <h2 className="hub-panel-title">Front &amp; back matter</h2>
-                <p className="hub-panel-lead">
-                  Add a dedication, epigraph, acknowledgements, or an about-the-author page —
-                  authored sections that frame the body and flow into every export.
-                </p>
-                <p className="studio-matter-soon">Coming soon</p>
-              </div>
+              <MatterEditorPane
+                key={selected.id}
+                combinedMarkdown={combinedMarkdown}
+                canEdit={canExport}
+                onSave={handleSaveMatter}
+              />
             )}
           </div>
         ) : (
@@ -302,53 +364,12 @@ export function PublishingStudioScreen({ onExit, onOpenManuscript }: PublishingS
             </div>
             <div className="hub-hero-text">
               {publishing.series && <div className="hub-hero-series">{publishing.series}</div>}
-              <h2 className="hub-hero-title">{m.title}</h2>
+              <h2 className={heroTitleClass(m.title)}>{m.title}</h2>
               {m.author && <div className="hub-hero-byline">{m.author}</div>}
-              {publishing.genre?.trim() ? (
-                <div className="hub-hero-genre">
-                  <span>{publishing.genre.trim()}</span>
-                  <button
-                    type="button"
-                    className="hub-hero-genre-edit"
-                    onClick={() => setPrepPane('details')}
-                    aria-label="Edit genre and synopsis"
-                  >
-                    <PencilIcon size={14} />
-                  </button>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  className="hub-hero-genre-add"
-                  onClick={() => setPrepPane('details')}
-                >
-                  Add genre &amp; synopsis
-                </button>
-              )}
-              {publishing.subtitle && <div className="hub-hero-subtitle">{publishing.subtitle}</div>}
-              {publishing.synopsis?.trim() && <p className="hub-hero-synopsis">{publishing.synopsis.trim()}</p>}
-              <span className={`hub-hero-status ms-status ${statusClass(m.status ?? 'Draft')}`}>{m.status ?? 'Draft'}</span>
-              {showStageTagline && (
-                <p className="studio-stage-tagline">
-                  Ready for print and submission formats.
-                </p>
-              )}
-              {toolsUsed && (
-                <div className="studio-tools-used" aria-label="Tools used on this manuscript">
-                  <span className="studio-tools-label">Tools used</span>
-                  <div className="studio-tools-chips">
-                    <span className="studio-tool-chip studio-tool-chip--library is-on">Library</span>
-                    <span className={`studio-tool-chip studio-tool-chip--reader${toolsUsed.reader ? ' is-on' : ''}`}>Reader</span>
-                    <span className={`studio-tool-chip studio-tool-chip--editor${toolsUsed.editor ? ' is-on' : ''}`}>Manuscript Editor</span>
-                    <span className={`studio-tool-chip studio-tool-chip--annotations${toolsUsed.annotations ? ' is-on' : ''}`}>Annotations</span>
-                    {toolsUsed.readers > 0 && (
-                      <span className="studio-tool-chip studio-tool-chip--readers is-on">
-                        {toolsUsed.readers} Reader{toolsUsed.readers !== 1 ? 's' : ''}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              )}
+              <div className="studio-state-line">
+                <span className={`hub-hero-status ms-status ${statusClass(m.status ?? 'Draft')}`}>{m.status ?? 'Draft'}</span>
+                {!m.uncached && <span className="studio-version-line">{versionLine}</span>}
+              </div>
               <div className="hub-hero-stats studio-hero-stats" aria-label="Manuscript summary">
                 {stats && stats.words > 0 && (
                   <div className="hub-stat">
@@ -375,6 +396,17 @@ export function PublishingStudioScreen({ onExit, onOpenManuscript }: PublishingS
                   </div>
                 )}
               </div>
+              <div className="studio-hero-cta">
+                <button
+                  type="button"
+                  className="studio-hero-cta-btn btn-fill"
+                  onClick={primaryStep ? () => setPrepPane(primaryStep.action) : handlePrimaryExport}
+                  disabled={!canExport}
+                >
+                  {primaryStep ? primaryStep.cta : `Export ${FORMAT_LABEL[selectedFormat]} →`}
+                </button>
+                <span className="studio-hero-cta-note">{footerLine}</span>
+              </div>
             </div>
           </header>
 
@@ -398,7 +430,59 @@ export function PublishingStudioScreen({ onExit, onOpenManuscript }: PublishingS
               ))}
             </div>
           </nav>
+
+          <div className="studio-readiness" aria-label="Publish readiness">
+            <div className="instrument-group-label studio-prep-label">Ready to export</div>
+            <ul className="studio-readiness-list">
+              {readiness.map(item => (
+                <li key={item.id} className={`studio-readiness-item${item.met ? ' is-met' : ''}`}>
+                  <span className="studio-readiness-mark" aria-hidden="true">{item.met ? '✓' : '○'}</span>
+                  <span className="studio-readiness-label">{item.label}</span>
+                  {!item.required && <span className="studio-readiness-opt">optional</span>}
+                  {!item.met && (
+                    <button
+                      type="button"
+                      className="studio-readiness-fix"
+                      onClick={() => setPrepPane(item.action)}
+                    >
+                      {item.hint}
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
         </div>
+
+        {proposals.length > 0 && reviewDismissedFor !== selected.id && (
+          <section className="studio-detected" aria-label="Detected publishing details">
+            <div className="studio-detected-head">
+              <div className="studio-detected-intro">
+                <div className="instrument-group-label">Detected in your manuscript</div>
+                <p className="studio-detected-lead">
+                  Found in your front matter. Applying fills only the title-page fields you’ve
+                  left empty — it never overwrites what you’ve entered.
+                </p>
+              </div>
+              <div className="studio-detected-actions">
+                <button type="button" className="btn-ghost" onClick={() => setReviewDismissedFor(selected.id)}>
+                  Dismiss
+                </button>
+                <button type="button" className="pub-save-btn" onClick={handleApplyDetected}>
+                  Use these details
+                </button>
+              </div>
+            </div>
+            <ul className="studio-detected-list">
+              {proposals.map(p => (
+                <li key={p.field} className="studio-detected-row">
+                  <span className="studio-detected-field">{p.label}</span>
+                  <span className="studio-detected-value">{p.value}</span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
 
         {shelfItems.length > 0 && (
           <section className="studio-shelf" aria-label="Manuscripts on your shelf">
@@ -441,7 +525,7 @@ export function PublishingStudioScreen({ onExit, onOpenManuscript }: PublishingS
         canExport={canExport}
         disabledHint={noExportHint}
         footerLine={footerLine}
-        footerAction={!metadataComplete ? { label: 'Edit details', onClick: () => setPrepPane('details') } : undefined}
+        footerAction={!readinessSummary.requiredMet ? { label: 'Edit details', onClick: () => setPrepPane('details') } : undefined}
         onPrimary={handlePrimaryExport}
       />
 
@@ -470,12 +554,15 @@ export function PublishingStudioScreen({ onExit, onOpenManuscript }: PublishingS
 }
 
 const MATTER_LABELS: Record<MatterRole, string> = {
-  'half-title': 'Half title', 'title-page': 'Title page', 'copyright': 'Copyright',
-  'dedication': 'Dedication', 'epigraph': 'Epigraph', 'foreword': 'Foreword',
-  'preface': 'Preface', 'introduction': 'Introduction', 'acknowledgements': 'Acknowledgements',
-  'author-note': "Author's note", 'afterword': 'Afterword', 'about-author': 'About the author',
-  'also-by': 'Also by', 'colophon': 'Colophon', 'appendix': 'Appendix', 'glossary': 'Glossary',
-  'notes': 'Notes', 'other': 'Section',
+  'half-title': 'Half title', 'title-page': 'Title page', 'frontispiece': 'Frontispiece',
+  'copyright': 'Copyright', 'dedication': 'Dedication', 'epigraph': 'Epigraph',
+  'foreword': 'Foreword', 'preface': 'Preface', 'introduction': 'Introduction',
+  'cast': 'Cast of characters', 'list-of-illustrations': 'List of illustrations',
+  'acknowledgements': 'Acknowledgements', 'author-note': "Author's note", 'afterword': 'Afterword',
+  'about-author': 'About the author', 'also-by': 'Also by', 'colophon': 'Colophon',
+  'appendix': 'Appendix', 'glossary': 'Glossary', 'bibliography': 'Bibliography',
+  'index': 'Index', 'notes': 'Notes', 'reading-group-guide': 'Reading group guide',
+  'excerpt': 'Excerpt', 'other': 'Section',
 };
 
 // ── Verify Chapter Map: a read-only view of what the ingestion engine detected —
@@ -550,6 +637,167 @@ function ChapterMapPane({
               </li>
             ))}
           </ul>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── Front & back matter editor: add / edit / remove the authored prose sections a
+// draft doesn't already carry (epigraph, acknowledgements, about-the-author…).
+// Each writes into the combined markdown as the same comment fence ingestion
+// produces, so it flows into every export. Title-page / copyright / dedication are
+// managed in Publishing Details (they have dedicated fields) and aren't edited here. ──
+const AUTHORABLE: { role: MatterRole; region: MatterRegion; label: string; max: number }[] = [
+  { role: 'epigraph', region: 'front', label: 'Epigraph', max: 1000 },
+  { role: 'foreword', region: 'front', label: 'Foreword', max: 12000 },
+  { role: 'preface', region: 'front', label: 'Preface', max: 12000 },
+  { role: 'introduction', region: 'front', label: 'Introduction', max: 12000 },
+  { role: 'acknowledgements', region: 'back', label: 'Acknowledgements', max: 4000 },
+  { role: 'author-note', region: 'back', label: "Author's note", max: 6000 },
+  { role: 'afterword', region: 'back', label: 'Afterword', max: 12000 },
+  { role: 'about-author', region: 'back', label: 'About the author', max: 2500 },
+  { role: 'also-by', region: 'back', label: 'Also by', max: 2000 },
+];
+const authorableSpec = (role: MatterRole) => AUTHORABLE.find(a => a.role === role) ?? null;
+
+function MatterEditorPane({
+  combinedMarkdown, canEdit, onSave,
+}: {
+  combinedMarkdown: string;
+  canEdit: boolean;
+  onSave: (newMarkdown: string) => void;
+}) {
+  const [editing, setEditing] = useState<MatterRole | null>(null);
+  const [draft, setDraft] = useState('');
+
+  // Sections in PUBLISHED order (markdown order), front then back, limited to the
+  // roles this editor authors (title/copyright/dedication live in Details).
+  const ordered = useMemo(() => {
+    const { front, back } = listMatterSections(combinedMarkdown);
+    const keep = (s: AuthoredMatter) => !!authorableSpec(s.role);
+    return { front: front.filter(keep), back: back.filter(keep) };
+  }, [combinedMarkdown]);
+  const present = useMemo(() => {
+    const byRole = new Map<MatterRole, AuthoredMatter>();
+    for (const s of [...ordered.front, ...ordered.back]) byRole.set(s.role, s);
+    return byRole;
+  }, [ordered]);
+
+  const spec = authorableSpec(editing as MatterRole);
+
+  const begin = (role: MatterRole) => {
+    setEditing(role);
+    const body = present.get(role)?.body ?? '';
+    // List matter is stored blank-line-separated; show one item per line for editing.
+    setDraft(isListMatter(role) ? body.replace(/\n{2,}/g, '\n') : body);
+  };
+  const cancel = () => { setEditing(null); setDraft(''); };
+  const save = () => {
+    if (!spec) return;
+    const body = draft.trim();
+    if (!body) { cancel(); return; }
+    onSave(upsertMatterSection(combinedMarkdown, { region: spec.region, role: spec.role, title: spec.label, body }));
+    cancel();
+  };
+  const remove = (role: MatterRole) => {
+    const a = authorableSpec(role);
+    if (!a) return;
+    onSave(removeMatterSection(combinedMarkdown, a.region, a.role));
+    if (editing === role) cancel();
+  };
+  const move = (region: MatterRegion, role: MatterRole, dir: -1 | 1) => {
+    onSave(moveMatterSection(combinedMarkdown, region, role, dir));
+  };
+
+  if (!canEdit) {
+    return (
+      <div className="hub-panel">
+        <h2 className="hub-panel-title">Front &amp; back matter</h2>
+        <p className="hub-panel-lead">Re-import this manuscript to add front &amp; back matter.</p>
+      </div>
+    );
+  }
+
+  if (spec) {
+    const overLimit = draft.length > spec.max;
+    const listHint = isListMatter(spec.role) ? ' One entry per line; titles render centered and italic.' : ' Separate paragraphs with a blank line.';
+    return (
+      <div className="hub-panel studio-matter-editor">
+        <button type="button" className="btn-ghost studio-matter-back" onClick={cancel}>‹ All sections</button>
+        <h2 className="hub-panel-title">{present.has(spec.role) ? 'Edit' : 'Add'} {spec.label.toLowerCase()}</h2>
+        <div className="studio-matter-form">
+          <textarea
+            className="pub-field-input pub-field-textarea studio-matter-textarea"
+            value={draft}
+            rows={isListMatter(spec.role) ? 8 : 12}
+            placeholder={`Write your ${spec.label.toLowerCase()}…${listHint}`}
+            onChange={e => setDraft(e.target.value)}
+            autoFocus
+          />
+          <div className="studio-matter-form-foot">
+            <span className={`pub-field-counter${overLimit ? ' is-over' : ''}`}>{draft.length} / {spec.max}</span>
+            <div className="studio-matter-form-actions">
+              <button type="button" className="btn-ghost" onClick={cancel}>Cancel</button>
+              <button type="button" className="pub-save-btn" disabled={overLimit} onClick={save}>Save section</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const renderGroup = (region: MatterRegion, label: string, items: AuthoredMatter[]) => (
+    items.length > 0 && (
+      <>
+        <div className="instrument-group-label pub-section-label">{label}</div>
+        <ul className="studio-matter-list">
+          {items.map((s, i) => {
+            const a = authorableSpec(s.role)!;
+            return (
+              <li key={s.role} className="studio-matter-row studio-matter-row--editable">
+                <span className="studio-matter-reorder">
+                  <button type="button" className="studio-matter-move" disabled={i === 0} aria-label={`Move ${a.label} up`} onClick={() => move(region, s.role, -1)}>↑</button>
+                  <button type="button" className="studio-matter-move" disabled={i === items.length - 1} aria-label={`Move ${a.label} down`} onClick={() => move(region, s.role, 1)}>↓</button>
+                </span>
+                <span className="studio-matter-role">{a.label}</span>
+                <span className="studio-matter-preview">{s.body.replace(/\n+/g, ' · ').slice(0, 80)}</span>
+                <span className="studio-matter-row-actions">
+                  <button type="button" className="btn-ghost" onClick={() => begin(s.role)}>Edit</button>
+                  <button type="button" className="btn-ghost studio-matter-remove" onClick={() => remove(s.role)}>Remove</button>
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      </>
+    )
+  );
+
+  const addable = AUTHORABLE.filter(a => !present.has(a.role));
+
+  return (
+    <div className="hub-panel studio-matter-editor">
+      <h2 className="hub-panel-title">Front &amp; back matter</h2>
+      <p className="hub-panel-lead">
+        Authored sections that frame the body, shown here in the order they’ll appear in
+        your exports — reorder with the arrows. Title page, copyright, and dedication are set
+        in <strong>Publishing Details</strong>.
+      </p>
+
+      {renderGroup('front', 'Front matter', ordered.front)}
+      {renderGroup('back', 'Back matter', ordered.back)}
+
+      {addable.length > 0 && (
+        <>
+          <div className="instrument-group-label pub-section-label">Add a section</div>
+          <div className="studio-matter-add">
+            {addable.map(a => (
+              <button key={a.role} type="button" className="studio-matter-add-btn" onClick={() => begin(a.role)}>
+                + {a.label}
+              </button>
+            ))}
+          </div>
         </>
       )}
     </div>

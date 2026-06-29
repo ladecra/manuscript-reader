@@ -112,6 +112,60 @@ console.log('CASE: developmental density (pacing/voice, no clusters)');
   check('it is a reaction-tier insight', insights.find(i => i.id === 'insight-dev-2')?.tier === 'reaction');
 }
 
+// ── Case 5: solo-author framing — own marks are NOT "reader" anything ────────
+console.log('\n' + '─'.repeat(60));
+console.log('CASE: solo author (no readers) — author-framed copy');
+{
+  const md = chapter('One', 120) + chapter('Two', 120) + chapter('Three', 120);
+  const chapters = [
+    { id: 'ch-1', index: 1, title: 'One' },
+    { id: 'ch-2', index: 2, title: 'Two' },
+    { id: 'ch-3', index: 3, title: 'Three' },
+  ];
+  // Three author questions in ch.2 (readerName null ⇒ author). With no sessions
+  // this is a solo author flagging their own revision queue.
+  const anns = [
+    { id: 'q1', type: 'question', quote: 'word', chapterTitle: 'Two', chapterIndex: 2, note: '', readerName: null, createdAt: 1 },
+    { id: 'q2', type: 'question', quote: 'word', chapterTitle: 'Two', chapterIndex: 2, note: '', readerName: null, createdAt: 2 },
+    { id: 'q3', type: 'question', quote: 'word', chapterTitle: 'Two', chapterIndex: 2, note: '', readerName: null, createdAt: 3 },
+  ];
+  const sig = computeEditorialSignals({ manuscriptId: 'solo', annotations: anns, chapters, sessions: [], combinedMarkdown: md });
+  const insights = rankInsights(sig);
+  show(insights);
+  const conf = insights.find(i => i.id?.startsWith('insight-cluster-confusion') || i.headline.toLowerCase().includes('question'));
+  check('no readers ⇒ readerCount is 0', sig.readerCount === 0);
+  check('a confusion insight surfaces the author questions', !!conf);
+  check('headline is author-framed ("you flagged"), not "cluster"', !!conf && /you flagged/i.test(conf.headline));
+  check('headline does not say "reader"', insights.every(i => !/reader/i.test(i.headline)));
+  check('detail does not call it reader confusion', !!conf && !/reader/i.test(conf.detail ?? '') && !/possible confusion/i.test(conf.detail ?? ''));
+}
+
+// ── Case 6: with readers — reaction copy stays reader-framed ──────────────────
+console.log('\n' + '─'.repeat(60));
+console.log('CASE: with a beta reader — reader-framed reaction copy');
+{
+  const md = chapter('One', 120) + chapter('Two', 120) + chapter('Three', 120);
+  const chapters = [
+    { id: 'ch-1', index: 1, title: 'One' },
+    { id: 'ch-2', index: 2, title: 'Two' },
+    { id: 'ch-3', index: 3, title: 'Three' },
+  ];
+  // Same three questions, but now attributed to a beta reader.
+  const anns = [
+    { id: 'q1', type: 'question', quote: 'word', chapterTitle: 'Two', chapterIndex: 2, note: '', readerName: 'Sam', readerId: 'r1', createdAt: 1 },
+    { id: 'q2', type: 'question', quote: 'word', chapterTitle: 'Two', chapterIndex: 2, note: '', readerName: 'Sam', readerId: 'r1', createdAt: 2 },
+    { id: 'q3', type: 'question', quote: 'word', chapterTitle: 'Two', chapterIndex: 2, note: '', readerName: 'Sam', readerId: 'r1', createdAt: 3 },
+  ];
+  const sessions = [{ id: 's1', manuscriptId: 'beta', readerId: 'r1', readerName: 'Sam', startedAt: 1, progress: 1, completedAt: 5, annotationIds: ['q1', 'q2', 'q3'] }];
+  const sig = computeEditorialSignals({ manuscriptId: 'beta', annotations: anns, chapters, sessions, combinedMarkdown: md });
+  const insights = rankInsights(sig);
+  show(insights);
+  const conf = insights.find(i => i.headline.toLowerCase().includes('question'));
+  check('readerCount is 1', sig.readerCount === 1);
+  check('a question insight surfaces', !!conf);
+  check('headline is reader-framed ("cluster"), not "you flagged"', !!conf && /cluster/i.test(conf.headline) && !/you flagged/i.test(conf.headline));
+}
+
 // ── Case 3: evenly-paced, annotation-free — empty is correct ─────────────────
 console.log('\n' + '─'.repeat(60));
 console.log('CASE: evenly-paced, no annotations (empty list expected)');

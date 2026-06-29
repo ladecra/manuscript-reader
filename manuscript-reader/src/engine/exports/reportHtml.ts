@@ -567,7 +567,11 @@ function buildHtml(opts: {
   // downloaded report and the screen lead with one story. Leads page 1; omitted
   // when nothing is genuinely off (an even, lightly-annotated draft).
   const insights = rankInsights(signals);
-  const tierLabel: Record<InsightTier, string> = { consensus: 'Reader agreement', reaction: 'Reader reactions', prose: 'Prose' };
+  // Authorship-aware: with no beta readers the reaction tier is the author's own
+  // revision flags, not reader reaction (matches the in-app panel; copy already
+  // solo-framed by rankInsights).
+  const reactionLabel = signals.readerCount === 0 ? 'Your revision flags' : 'Reader reactions';
+  const tierLabel: Record<InsightTier, string> = { consensus: 'Reader agreement', reaction: reactionLabel, prose: 'Prose' };
   const tierAccent: Record<InsightTier, string> = { consensus: 'var(--ink)', reaction: COLOR.question, prose: 'var(--desc)' };
   const insightsHtml = insights.length ? `
   <div class="sec-head mb4">Worth a Look First</div>
