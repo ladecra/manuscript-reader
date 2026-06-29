@@ -40,7 +40,7 @@ export function ReportView({ signals, onJump }: { signals: EditorialSignals | nu
   // render once there's at least one annotation.
   return (
     <>
-      {insights.length > 0 && <InsightsSection insights={insights} onJump={onJump} />}
+      {insights.length > 0 && <InsightsSection insights={insights} solo={(signals?.readerCount ?? 0) === 0} onJump={onJump} />}
       {hasProse && <ProseSection prose={prose!} onJump={onJump} />}
       {hasAnnotations && <ReportBody signals={signals!} onJump={onJump} />}
       {!hasAnnotations && hasProse && (
@@ -56,6 +56,9 @@ export function ReportView({ signals, onJump }: { signals: EditorialSignals | nu
 
 function ReportBody({ signals, onJump }: { signals: EditorialSignals; onJump: JumpFn }) {
   const report = signals.report;
+  // No beta readers ⇒ these findings are the author's own marks. Same data, but
+  // never described as reader reaction (see isReaderAnnotation in engine/types).
+  const solo = signals.readerCount === 0;
   const maxT = Math.max(1, ...ANNOTATION_TYPES.map(t => report.typeTotals[t] ?? 0));
 
   return (
@@ -117,7 +120,9 @@ function ReportBody({ signals, onJump }: { signals: EditorialSignals; onJump: Ju
           <Finding
             color="var(--ann-structural-solid)"
             title="Developmental flags"
-            desc="Chapters densest in editorial concerns — questions, continuity, structural, pacing, voice. Where the revision work concentrates, regardless of where readers leaned in."
+            desc={solo
+              ? "Chapters densest in your own editorial flags — questions, continuity, structural, pacing, voice. Where you've concentrated revision attention."
+              : "Chapters densest in editorial concerns — questions, continuity, structural, pacing, voice. Where the revision work concentrates, regardless of where readers leaned in."}
             chips={report.developmentalHotspots}
             chipLabel={c => `${devCount(c)}`}
             onJump={onJump}
@@ -127,7 +132,9 @@ function ReportBody({ signals, onJump }: { signals: EditorialSignals; onJump: Ju
         <Finding
           color="var(--ann-question-solid)"
           title="Hotspots"
-          desc="Chapters drawing the densest feedback overall — engagement and concern together, usually where something is working hard."
+          desc={solo
+            ? "Chapters carrying your densest marks overall — engagement and concern together, usually where something is working hard."
+            : "Chapters drawing the densest feedback overall — engagement and concern together, usually where something is working hard."}
           chips={report.hotspots}
           chipLabel={c => `${c.count}`}
           onJump={onJump}
@@ -136,7 +143,9 @@ function ReportBody({ signals, onJump }: { signals: EditorialSignals; onJump: Ju
         <Finding
           color="var(--dim)"
           title="Silent chapters"
-          desc="Little or no reader reaction. Could be smooth — or could be where attention drifts."
+          desc={solo
+            ? "Chapters you haven't marked. Could be smooth — or could be where attention drifts."
+            : "Little or no reader reaction. Could be smooth — or could be where attention drifts."}
           chips={report.silent}
           onJump={onJump}
         />
@@ -145,7 +154,9 @@ function ReportBody({ signals, onJump }: { signals: EditorialSignals; onJump: Ju
           <Finding
             color="var(--ann-question-solid)"
             title="Question clusters"
-            desc="Where readers asked the most — possible confusion or unanswered setups."
+            desc={solo
+              ? "Where you flagged the most questions — your own open setups to resolve."
+              : "Where readers asked the most — possible confusion or unanswered setups."}
             chips={report.questionClusters}
             chipLabel={c => `${c.counts.question ?? 0}?`}
             onJump={onJump}
@@ -171,13 +182,18 @@ function ReportBody({ signals, onJump }: { signals: EditorialSignals; onJump: Ju
 // Evidence-backed pointers, most-actionable first (consensus → reaction → prose),
 // each clickable into the prose. Tone is a librarian's pointer, never a verdict —
 // the copy lives in the engine (rankInsights); this only renders it.
-const TIER_LABEL: Record<ManuscriptInsight['tier'], string> = {
-  consensus: 'Reader agreement',
-  reaction: 'Reader reactions',
-  prose: 'Prose',
-};
+// Authorship-aware: with no beta readers the reaction tier is the AUTHOR's own
+// revision flags, never "reader reactions" (the data is identical; the framing
+// must not be). Consensus only ever appears when readers exist.
+function tierLabel(tier: ManuscriptInsight['tier'], solo: boolean): string {
+  switch (tier) {
+    case 'consensus': return 'Reader agreement';
+    case 'reaction':  return solo ? 'Your revision flags' : 'Reader reactions';
+    case 'prose':     return 'Prose';
+  }
+}
 
-function InsightsSection({ insights, onJump }: { insights: ManuscriptInsight[]; onJump: JumpFn }) {
+function InsightsSection({ insights, solo, onJump }: { insights: ManuscriptInsight[]; solo: boolean; onJump: JumpFn }) {
   return (
     <Section title="Worth a look">
       <div className="rp-finding-desc">
@@ -204,7 +220,7 @@ function InsightsSection({ insights, onJump }: { insights: ManuscriptInsight[]; 
               title={i.chapter != null ? `Jump to Chapter ${i.chapter}` : undefined}
             >
               <span className="rp-insight-main">
-                <span className="rp-insight-tier">{TIER_LABEL[i.tier]}</span>
+                <span className="rp-insight-tier">{tierLabel(i.tier, solo)}</span>
                 <span className="rp-insight-headline">{i.headline}</span>
                 {showDetail && <span className="rp-insight-detail">{i.detail}</span>}
               </span>

@@ -92,7 +92,7 @@ export function isDropHeading(rawLine: string): boolean {
 // they are narrative and stay body chapters.
 
 const MATTER_ROLE_MAP: Record<string, MatterRole> = {
-  'title page': 'title-page', frontispiece: 'title-page',
+  'title page': 'title-page', frontispiece: 'frontispiece',
   'half title': 'half-title',
   copyright: 'copyright',
   dedication: 'dedication',
@@ -100,6 +100,9 @@ const MATTER_ROLE_MAP: Record<string, MatterRole> = {
   foreword: 'foreword',
   preface: 'preface',
   introduction: 'introduction',
+  'dramatis personae': 'cast', 'cast of characters': 'cast', 'list of characters': 'cast',
+  'list of illustrations': 'list-of-illustrations', 'list of figures': 'list-of-illustrations',
+  'list of maps': 'list-of-illustrations', 'list of tables': 'list-of-illustrations',
   acknowledgment: 'acknowledgements', acknowledgments: 'acknowledgements',
   acknowledgement: 'acknowledgements', acknowledgements: 'acknowledgements',
   'author note': 'author-note', 'authors note': 'author-note',
@@ -110,8 +113,11 @@ const MATTER_ROLE_MAP: Record<string, MatterRole> = {
   colophon: 'colophon',
   glossary: 'glossary',
   appendix: 'appendix',
-  notes: 'notes', references: 'notes', bibliography: 'notes', index: 'notes',
-  'dramatis personae': 'notes', 'cast of characters': 'notes',
+  // Each was previously fused into `notes`; split so the renderer can treat them
+  // by convention. `notes` now means endnotes specifically.
+  notes: 'notes', endnotes: 'notes',
+  bibliography: 'bibliography', references: 'bibliography', 'works cited': 'bibliography',
+  index: 'index',
   'also by': 'also-by', 'also by the same author': 'also-by',
 };
 
@@ -136,7 +142,8 @@ export function classifyMatter(rawLine: string): MatterRole | null {
   if (MATTER_ROLE_MAP[s]) return MATTER_ROLE_MAP[s];
   if (/^(also by|other books|by the same author)/.test(s)) return 'also-by';
   if (/^(praise for|advance praise)/.test(s)) return 'about-author';
-  if (/^(reading group|discussion questions|book club)/.test(s)) return 'notes';
+  if (/^(reading group|discussion questions|book club|questions for discussion)/.test(s)) return 'reading-group-guide';
+  if (/^(excerpt|sneak peek|a preview of)/.test(s)) return 'excerpt';
   if (/^a note from/.test(s)) return 'author-note';
   return null;
 }

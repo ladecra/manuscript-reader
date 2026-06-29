@@ -19,6 +19,7 @@ import {
 } from 'docx';
 import { exportSlug, copyrightLine, type ExportManuscriptMeta } from './manuscriptMarkdown';
 import { buildManuscriptStructure } from '../ingestion/manuscriptStructure';
+import { LIST_MATTER_ROLES } from '../manuscript/matterEdit';
 import type { ManuscriptStructure, ChapterSection, MatterSection, StructuralBlock } from '../types';
 import { DOCX_INK as INK, DOCX_QUOTE as QUOTE } from './exportPalette';
 
@@ -188,7 +189,29 @@ function prosePage(title: string, blocks: StructuralBlock[], inToc: boolean): Fi
   return [head, ...renderBlocks(blocks)];
 }
 
-const FRONT_PROSE_ORDER = ['foreword', 'preface', 'introduction', 'author-note', 'other'];
+/** A list-matter page (Also by · List of illustrations): titles/entries centered,
+ *  indent-free, italic, one per line — the trade convention, distinct from the
+ *  justified first-line-indent body that `renderBlocks` produces. */
+function listMatterPage(title: string, blocks: StructuralBlock[]): FileChild[] {
+  const head = new Paragraph({
+    pageBreakBefore: true, alignment: C, keepNext: true, spacing: { before: 1000, after: 360 },
+    children: [new TextRun({ text: title, font: SERIF, size: 28, color: INK })],
+  });
+  const items = blocks
+    .filter(b => (b.role === 'paragraph' || b.role === 'list') && b.text.trim())
+    .flatMap(b => b.text.split('\n').filter(l => l.trim()))
+    .map(line => new Paragraph({
+      alignment: C, spacing: { after: 120, line: LINE, lineRule: 'auto' },
+      children: inlineRuns(line, { italics: true, color: INK }),
+    }));
+  return [head, ...items];
+}
+
+// Front-matter prose sections rendered (in this order) after the dedication/
+// epigraph and before the regenerated Contents. A front-region role NOT listed
+// here is skipped in the DOCX — `frontispiece` is intentionally omitted (an image
+// plate with no prose; classified for labelling, not rendered as an empty page).
+const FRONT_PROSE_ORDER = ['cast', 'list-of-illustrations', 'foreword', 'preface', 'introduction', 'author-note', 'other'];
 
 function frontMatterChildren(meta: ExportManuscriptMeta, st: ManuscriptStructure): FileChild[] {
   const out: FileChild[] = [...titlePage(meta), ...copyrightPage(meta)];
@@ -205,6 +228,7 @@ function frontMatterChildren(meta: ExportManuscriptMeta, st: ManuscriptStructure
 
   // Foreword / preface / introduction / author-note / other front prose, in order.
   for (const sec of st.frontMatter) {
+    if (LIST_MATTER_ROLES.has(sec.role)) { out.push(...listMatterPage(sec.title || sec.role, sec.blocks)); continue; }
     if (!FRONT_PROSE_ORDER.includes(sec.role)) continue;
     out.push(...prosePage(sec.title || sec.role, sec.blocks, true));
   }
@@ -272,7 +296,10 @@ function backMatterSection(meta: ExportManuscriptMeta, st: ManuscriptStructure):
   const recto = meta.title;
   const verso = meta.author?.trim() || meta.title;
   const children: FileChild[] = [];
-  for (const sec of st.backMatter) children.push(...prosePage(sec.title || sec.role, sec.blocks, false));
+  for (const sec of st.backMatter) {
+    if (LIST_MATTER_ROLES.has(sec.role)) children.push(...listMatterPage(sec.title || sec.role, sec.blocks));
+    else children.push(...prosePage(sec.title || sec.role, sec.blocks, false));
+  }
   return {
     properties: { type: SectionType.NEXT_PAGE, titlePage: true, page: { size: PAGE_SIZE, margin: PAGE_MARGIN } },
     headers: { default: runningHead(recto), even: runningHead(verso), first: blankHeader() },
@@ -290,8 +317,15 @@ function buildDoc(meta: ExportManuscriptMeta, combinedMarkdown: string): Documen
   const st = buildManuscriptStructure(combinedMarkdown);
   const p = meta.publishing ?? {};
 
+  // Front matter is numbered in lowercase roman (i, ii, iii…) so its pages don't
+  // collide with the body — the first chapter restarts at arabic 1 (see
+  // chapterSection). Standard print convention; also fixes the regenerated TOC,
+  // which otherwise listed front matter and chapters on the same number line.
   const sections: ISectionOptions[] = [{
-    properties: { titlePage: true, page: { size: PAGE_SIZE, margin: PAGE_MARGIN } },
+    properties: {
+      titlePage: true,
+      page: { size: PAGE_SIZE, margin: PAGE_MARGIN, pageNumbers: { start: 1, formatType: NumberFormat.LOWER_ROMAN } },
+    },
     children: frontMatterChildren(meta, st),
   }];
   st.chapters.forEach((ch, i) => sections.push(chapterSection(meta, ch, i === 0)));

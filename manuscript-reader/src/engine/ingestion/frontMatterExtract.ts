@@ -9,7 +9,7 @@
 // never overwrites what the author set, and surfaces the proposals for review. This
 // module makes no decisions about application — it only reads what the page says.
 
-import type { ManuscriptStructure, MatterSection } from '../types';
+import type { ManuscriptStructure, MatterSection, PublishingMetadata } from '../types';
 
 /** Candidate publishing values detected in the front matter. Every field optional;
  *  absent = nothing confidently detected. Keys mirror PublishingMetadata (+ author,
@@ -90,4 +90,78 @@ export function extractFrontMatterCandidates(structure: ManuscriptStructure): Fr
   // Prune undefined keys for a tidy candidate object.
   (Object.keys(out) as (keyof FrontMatterCandidates)[]).forEach(k => { if (out[k] == null) delete out[k]; });
   return out;
+}
+
+// ─── Applying candidates (empty-fields-only, never overwrites author input) ────
+// The consumer-side contract from the module header, made concrete: the
+// Publishing Studio proposes detected values for review, then fills ONLY the
+// fields the author has left empty. `author` lives on the manuscript, the rest on
+// PublishingMetadata — both are handled here so a caller applies one merge.
+
+/** Where a candidate field lands. `author` is on the manuscript; all others on
+ *  PublishingMetadata (keys are shared by name). */
+export type CandidateField = keyof FrontMatterCandidates;
+
+const CANDIDATE_LABELS: Record<CandidateField, string> = {
+  author: 'Author',
+  isbn: 'ISBN',
+  edition: 'Edition',
+  publicationDate: 'Publication date',
+  copyrightYear: 'Copyright year',
+  copyrightHolder: 'Copyright holder',
+  publisher: 'Publisher',
+  dedication: 'Dedication',
+};
+
+/** Current values a merge would write into — `author` plus the publishing fields. */
+export interface FrontMatterTarget {
+  author?: string;
+  publishing: PublishingMetadata;
+}
+
+/** One reviewable proposal: a detected value for a field the author left empty. */
+export interface FrontMatterProposal {
+  field: CandidateField;
+  label: string;
+  value: string;
+}
+
+const isEmpty = (v: string | undefined): boolean => !v || !v.trim();
+
+/** Read the target's current value for a candidate field (author off the
+ *  manuscript, everything else off PublishingMetadata). */
+function currentValue(target: FrontMatterTarget, field: CandidateField): string | undefined {
+  if (field === 'author') return target.author;
+  return target.publishing[field];
+}
+
+/** The detected values for fields the author has NOT filled — the review list.
+ *  Empty when nothing is both detected and missing. Order follows CANDIDATE_LABELS. */
+export function proposeFrontMatter(
+  target: FrontMatterTarget,
+  candidates: FrontMatterCandidates,
+): FrontMatterProposal[] {
+  return (Object.keys(CANDIDATE_LABELS) as CandidateField[])
+    .filter(field => !isEmpty(candidates[field]) && isEmpty(currentValue(target, field)))
+    .map(field => ({ field, label: CANDIDATE_LABELS[field], value: candidates[field]!.trim() }));
+}
+
+/** Apply detected candidates into empty fields only — never overwriting author
+ *  input — and return the merged target. Pure: returns fresh objects, mutates
+ *  nothing. Pass an explicit `fields` to apply a subset (a per-field accept);
+ *  omit it to apply every proposal. */
+export function applyFrontMatterCandidates(
+  target: FrontMatterTarget,
+  candidates: FrontMatterCandidates,
+  fields?: CandidateField[],
+): FrontMatterTarget {
+  const proposals = proposeFrontMatter(target, candidates);
+  const allow = fields ? new Set(fields) : null;
+  const next: FrontMatterTarget = { author: target.author, publishing: { ...target.publishing } };
+  for (const { field, value } of proposals) {
+    if (allow && !allow.has(field)) continue;
+    if (field === 'author') next.author = value;
+    else next.publishing[field] = value;
+  }
+  return next;
 }

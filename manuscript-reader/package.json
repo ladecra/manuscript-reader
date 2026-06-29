@@ -23,6 +23,9 @@
     "check-epub": "tsx fixtures/check-epub.mjs",
     "check-docx": "tsx fixtures/check-docx.mjs",
     "check-smf": "tsx fixtures/check-smf.mjs",
+    "check-frontmatter-apply": "tsx fixtures/check-frontmatter-apply.mjs",
+    "check-readiness": "tsx fixtures/check-readiness.mjs",
+    "check-matter-edit": "tsx fixtures/check-matter-edit.mjs",
     "check-share-parity": "tsx fixtures/check-share-parity.mjs"
   },
   "dependencies": {
