@@ -9,7 +9,8 @@ import {
   proposeFrontMatter,
   applyFrontMatterCandidates,
 } from '../engine/ingestion/frontMatterExtract';
-import { computePublishReadiness, summarizeReadiness } from '../engine/publishing/readiness';
+import { computePublishReadiness } from '../engine/publishing/readiness';
+import { computeAssembly } from '../engine/publishing/assembly';
 import {
   listMatterSections, upsertMatterSection, removeMatterSection, moveMatterSection,
   isListMatter, type AuthoredMatter,
@@ -22,14 +23,16 @@ import { useManuscriptArtifactExports } from '../hooks/useManuscriptArtifactExpo
 import { getParsedManuscript } from '../engine/ingestion/parseCache';
 import { chapterWordCounts } from '../engine/reading/manuscriptPages';
 import { ChapterAtlasList } from '../components/hub/ChapterAtlasList';
-import { StudioFormatRail, type StudioFormatId } from '../components/studio/StudioFormatRail';
+import { StudioAssemblyRail, type AssemblyUnmetItem } from '../components/studio/StudioAssemblyRail';
+import { StudioEditionPicker } from '../components/studio/StudioEditionPicker';
+import { studioFormat, type StudioFormatId } from '../components/studio/studioFormats';
 import { StudioShelfTile } from '../components/studio/StudioShelfTile';
 import { StudioExportModal, STUDIO_EXPORT_LIVE_DRAFT } from '../components/studio/StudioExportModal';
 import { CoverImage } from '../components/ui/CoverImage';
 import { PublishingDetailsForm } from '../components/hub/PublishingDetailsForm';
 import { SmfExportModal } from '../components/reports/SmfExportModal';
 import { showToast } from '../components/ui/Toast';
-import { BookIcon, ChevronLeftIcon, ChevronRightIcon, LayersIcon, ListLayoutIcon } from '../components/ui/Icons';
+import { ChevronLeftIcon } from '../components/ui/Icons';
 import { heroTitleClass } from '../components/ui/heroTitle';
 
 interface PublishingStudioScreenProps {
@@ -41,22 +44,25 @@ function statusClass(status: string): string {
   return 'status--' + status.toLowerCase().replace(/[^a-z]+/g, '-');
 }
 
-const FORMAT_LABEL: Record<StudioFormatId, string> = {
-  docx: 'DOCX', epub: 'EPUB', smf: 'submission', md: 'Markdown',
+type PrepPane = 'details' | 'chapters' | 'matter' | 'preview';
+
+const PANE_TITLE: Record<PrepPane, string> = {
+  details: 'Publishing details',
+  chapters: 'Structure',
+  matter: 'Front & back matter',
+  preview: 'Preview',
 };
 
-type PrepPane = 'details' | 'chapters' | 'matter';
-
-const PREP_TOOLS: {
-  id: PrepPane;
-  label: string;
-  sub: string;
-  Icon: typeof BookIcon;
-}[] = [
-  { id: 'details', label: 'Publishing Details', sub: 'Genre, synopsis & copyright', Icon: BookIcon },
-  { id: 'chapters', label: 'Verify chapter map', sub: 'What the engine detected in your draft', Icon: ListLayoutIcon },
-  { id: 'matter', label: 'Front & back matter', sub: 'Dedication, epigraph, about the author', Icon: LayersIcon },
-];
+// Last-used edition persists across visits (one global default — simplest v1).
+const FORMAT_STORAGE_KEY = 'vellibris.studio.format.v1';
+const PERSISTABLE: StudioFormatId[] = ['docx', 'epub', 'smf'];
+function loadStoredFormat(): StudioFormatId {
+  try {
+    const v = localStorage.getItem(FORMAT_STORAGE_KEY);
+    if (v && (PERSISTABLE as string[]).includes(v)) return v as StudioFormatId;
+  } catch { /* private mode / no storage — fall through */ }
+  return 'docx';
+}
 
 /** Publishing Studio — one book on stage, the shelf peripheral, formats as instruments. */
 export function PublishingStudioScreen({ onExit, onOpenManuscript }: PublishingStudioScreenProps) {
@@ -76,9 +82,14 @@ export function PublishingStudioScreen({ onExit, onOpenManuscript }: PublishingS
   const [query, setQuery] = useState('');
   // Per-manuscript dismissal of the detected-details review prompt.
   const [reviewDismissedFor, setReviewDismissedFor] = useState<string | null>(null);
-  const [selectedFormat, setSelectedFormat] = useState<StudioFormatId>('docx');
+  const [selectedFormat, setSelectedFormat] = useState<StudioFormatId>(loadStoredFormat);
   // Hub-style prep pane: null = stage + shelf; otherwise full center-column tool view.
   const [prepPane, setPrepPane] = useState<PrepPane | null>(null);
+  const [mobileAssemblyOpen, setMobileAssemblyOpen] = useState(false);
+
+  useEffect(() => {
+    try { localStorage.setItem(FORMAT_STORAGE_KEY, selectedFormat); } catch { /* no storage */ }
+  }, [selectedFormat]);
 
   const sorted = useMemo(() => sortLibraryManuscripts(library, 'lastOpened'), [library]);
   const [selectedId, setSelectedId] = useState<string | undefined>(
@@ -135,6 +146,8 @@ export function PublishingStudioScreen({ onExit, onOpenManuscript }: PublishingS
 
   // Pre-export readiness — required elements (title/author/copyright) vs.
   // recommended (ISBN/synopsis/dedication/about-author). Pure engine decision.
+  // Items drive the rail's required-gaps checklist; the assembly state below
+  // groups them into stages and the readiness summary.
   const readiness = useMemo(
     () => (selected
       ? computePublishReadiness({
@@ -146,7 +159,20 @@ export function PublishingStudioScreen({ onExit, onOpenManuscript }: PublishingS
       : []),
     [selected, structure, selectedFormat],
   );
-  const readinessSummary = summarizeReadiness(readiness);
+
+  // The publishing assembly state — stage status + readiness for this edition.
+  const assembly = useMemo(
+    () => (selected
+      ? computeAssembly({
+          title: selected.metadata.title,
+          author: selected.metadata.author,
+          publishing: selected.metadata.publishing ?? {},
+          structure,
+        }, selectedFormat, { hasSource: !!selected.metadata.combinedMarkdown })
+      : null),
+    [selected, structure, selectedFormat],
+  );
+  const readinessSummary = assembly?.readiness ?? { requiredMet: false, missingRequired: 0, missingOptional: 0 };
 
   const stats = useMemo(() => {
     if (structure) {
@@ -248,6 +274,13 @@ export function PublishingStudioScreen({ onExit, onOpenManuscript }: PublishingS
     setExportGateOpen(true);
   }, [canExport]);
 
+  // Markdown is the toolchain/AI format, not a finished edition — download the
+  // current draft directly, no assembly stage (flow review §7, Option A).
+  const handleAdvancedMd = useCallback(async () => {
+    if (!combinedMarkdown) return;
+    await exportManuscript('md', combinedMarkdown);
+  }, [combinedMarkdown, exportManuscript]);
+
   function selectManuscript(ms: Manuscript) {
     if (!ms.metadata.combinedMarkdown) {
       showToast('Source text offloaded — re-import from Load to publish this one.');
@@ -283,10 +316,21 @@ export function PublishingStudioScreen({ onExit, onOpenManuscript }: PublishingS
     ? `${versions.length} version${versions.length !== 1 ? 's' : ''} · last saved ${new Date(lastVersion.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`
     : 'No version saved yet';
 
-  // The hero's single forward action: send the author to the next unfinished prep
-  // step (required first), or straight to export when nothing's outstanding.
-  const nextStep = readiness.find(i => !i.met && i.required) ?? readiness.find(i => !i.met);
-  const primaryStep = nextStep ? { action: nextStep.action, cta: nextStep.hint } : null;
+  const stages = assembly?.stages ?? [];
+  const firstAttentionStage = stages.find(s => s.status === 'attention') ?? null;
+
+  const handleContinueAssembly = () => {
+    const pane = firstAttentionStage?.prepPane ?? stages[0]?.prepPane ?? 'chapters';
+    setPrepPane(pane);
+  };
+
+  const edition = studioFormat(selectedFormat);
+
+  // Required gaps drive the rail checklist; `action` ('details' | 'matter') is a
+  // valid stage pane.
+  const unmet: AssemblyUnmetItem[] = readiness
+    .filter(i => i.required && !i.met)
+    .map(i => ({ id: i.id, label: i.label, pane: i.action }));
 
   const footerLine = readinessSummary.requiredMet
     ? (readinessSummary.missingOptional > 0 ? 'Ready to export · some optional details open' : 'Ready to export')
@@ -303,8 +347,9 @@ export function PublishingStudioScreen({ onExit, onOpenManuscript }: PublishingS
               style={{ marginBottom: '30px' }}
               onClick={() => setPrepPane(null)}
             >
-              ‹ Publishing studio
+              ‹ Assembly
             </button>
+            <div className="instrument-group-label studio-pane-eyebrow">{PANE_TITLE[prepPane]}</div>
 
             {prepPane === 'details' && (
               <PublishingDetailsForm
@@ -328,6 +373,10 @@ export function PublishingStudioScreen({ onExit, onOpenManuscript }: PublishingS
                 canEdit={canExport}
                 onSave={handleSaveMatter}
               />
+            )}
+
+            {prepPane === 'preview' && (
+              <StudioPreviewPane structure={structure} editionLabel={edition.railTitle} />
             )}
           </div>
         ) : (
@@ -370,7 +419,7 @@ export function PublishingStudioScreen({ onExit, onOpenManuscript }: PublishingS
                 <span className={`hub-hero-status ms-status ${statusClass(m.status ?? 'Draft')}`}>{m.status ?? 'Draft'}</span>
                 {!m.uncached && <span className="studio-version-line">{versionLine}</span>}
               </div>
-              <div className="hub-hero-stats studio-hero-stats" aria-label="Manuscript summary">
+              <div className="studio-hero-stats" aria-label="Manuscript summary">
                 {stats && stats.words > 0 && (
                   <div className="hub-stat">
                     <span className="hub-stat-value">{stats.words.toLocaleString()}</span>
@@ -396,62 +445,15 @@ export function PublishingStudioScreen({ onExit, onOpenManuscript }: PublishingS
                   </div>
                 )}
               </div>
-              <div className="studio-hero-cta">
-                <button
-                  type="button"
-                  className="studio-hero-cta-btn btn-fill"
-                  onClick={primaryStep ? () => setPrepPane(primaryStep.action) : handlePrimaryExport}
-                  disabled={!canExport}
-                >
-                  {primaryStep ? primaryStep.cta : `Export ${FORMAT_LABEL[selectedFormat]} →`}
-                </button>
-                <span className="studio-hero-cta-note">{footerLine}</span>
-              </div>
             </div>
           </header>
-
-          <nav className="studio-prep-nav" aria-label="Before you export">
-            <div className="instrument-group-label studio-prep-label">Before you export</div>
-            <div className="instrument-nav">
-              {PREP_TOOLS.map(({ id, label, sub, Icon }) => (
-                <button
-                  key={id}
-                  type="button"
-                  className="instrument-item instrument-item--tool"
-                  onClick={() => setPrepPane(id)}
-                >
-                  <span className="instrument-item-icon"><Icon size={15} /></span>
-                  <span className="instrument-item-stack">
-                    <span className="instrument-item-label">{label}</span>
-                    <span className="instrument-item-sub">{sub}</span>
-                  </span>
-                  <span className="instrument-item-chevron"><ChevronRightIcon size={10} /></span>
-                </button>
-              ))}
-            </div>
-          </nav>
-
-          <div className="studio-readiness" aria-label="Publish readiness">
-            <div className="instrument-group-label studio-prep-label">Ready to export</div>
-            <ul className="studio-readiness-list">
-              {readiness.map(item => (
-                <li key={item.id} className={`studio-readiness-item${item.met ? ' is-met' : ''}`}>
-                  <span className="studio-readiness-mark" aria-hidden="true">{item.met ? '✓' : '○'}</span>
-                  <span className="studio-readiness-label">{item.label}</span>
-                  {!item.required && <span className="studio-readiness-opt">optional</span>}
-                  {!item.met && (
-                    <button
-                      type="button"
-                      className="studio-readiness-fix"
-                      onClick={() => setPrepPane(item.action)}
-                    >
-                      {item.hint}
-                    </button>
-                  )}
-                </li>
-              ))}
-            </ul>
-          </div>
+          <StudioEditionPicker
+            selected={selectedFormat}
+            onSelect={setSelectedFormat}
+            disabled={!canExport}
+            onContinue={handleContinueAssembly}
+            onAdvanced={canExport ? handleAdvancedMd : undefined}
+          />
         </div>
 
         {proposals.length > 0 && reviewDismissedFor !== selected.id && (
@@ -519,15 +521,31 @@ export function PublishingStudioScreen({ onExit, onOpenManuscript }: PublishingS
         )}
       </main>
 
-      <StudioFormatRail
-        selectedFormat={selectedFormat}
-        onSelectFormat={setSelectedFormat}
+      <StudioAssemblyRail
+        railTitle={edition.railTitle}
+        stages={stages}
+        activePane={prepPane}
+        onOpenStage={setPrepPane}
+        summaryLine={footerLine}
+        unmet={unmet}
+        primaryLabel={edition.primaryLabel}
         canExport={canExport}
         disabledHint={noExportHint}
-        footerLine={footerLine}
-        footerAction={!readinessSummary.requiredMet ? { label: 'Edit details', onClick: () => setPrepPane('details') } : undefined}
-        onPrimary={handlePrimaryExport}
+        onExport={handlePrimaryExport}
+        className={mobileAssemblyOpen ? undefined : 'hub-tools--mobile-hidden'}
       />
+
+      <div className="hub-mobile-bar">
+        <button
+          type="button"
+          className={`hub-mobile-bar-btn${mobileAssemblyOpen ? ' hub-mobile-bar-btn--open' : ''}`}
+          onClick={() => setMobileAssemblyOpen(o => !o)}
+          aria-expanded={mobileAssemblyOpen}
+        >
+          <span className="hub-mobile-bar-label">Assembly</span>
+          <span className="hub-mobile-bar-chevron" aria-hidden="true">{mobileAssemblyOpen ? '↓' : '↑'}</span>
+        </button>
+      </div>
 
       <StudioExportModal
         key={exportGateOpen ? `gate-${selected.id}-${selectedFormat}` : 'gate-closed'}
@@ -639,6 +657,67 @@ function ChapterMapPane({
           </ul>
         </>
       )}
+    </div>
+  );
+}
+
+// ── Preview (v1 stub): the assembled spine — chapter sequence + the front/back
+// matter order this edition will render — so the author can sanity-check structure
+// before export. Full typeset preview (trim size, running heads, chapter openers)
+// ships with the print/PDF route. Renders straight from the structural model. ──
+function StudioPreviewPane({
+  structure,
+  editionLabel,
+}: {
+  structure: ManuscriptStructure | null;
+  editionLabel: string;
+}) {
+  if (!structure || structure.chapters.length === 0) {
+    return (
+      <div className="hub-panel">
+        <h2 className="hub-panel-title">Preview</h2>
+        <p className="hub-panel-lead">No structure to preview yet — re-import this manuscript to map its chapters.</p>
+      </div>
+    );
+  }
+  const { frontMatter, chapters, backMatter } = structure;
+  const renderMatter = (label: string, sections: typeof frontMatter) => sections.length > 0 && (
+    <>
+      <div className="instrument-group-label pub-section-label">{label}</div>
+      <ul className="studio-matter-list">
+        {sections.map((s, i) => (
+          <li key={`${label}-${i}`} className="studio-matter-row">
+            <span className="studio-matter-role">{MATTER_LABELS[s.role]}</span>
+            {s.title && <span className="studio-matter-title">{s.title}</span>}
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+
+  return (
+    <div className="hub-panel studio-preview">
+      <h2 className="hub-panel-title">Preview</h2>
+      <p className="hub-panel-lead">
+        How <strong>{editionLabel}</strong> assembles, front to back. A full typeset preview —
+        trim size, running heads, chapter openers — arrives with the print/PDF route.
+      </p>
+
+      {renderMatter('Front matter', frontMatter)}
+
+      <div className="instrument-group-label pub-section-label">
+        {chapters.length} chapter{chapters.length !== 1 ? 's' : ''}
+      </div>
+      <ol className="studio-preview-chapters">
+        {chapters.map(c => (
+          <li key={c.id} className="studio-preview-chapter">
+            <span className="studio-preview-ch-num">{c.index + 1}</span>
+            <span className="studio-preview-ch-title">{c.title}</span>
+          </li>
+        ))}
+      </ol>
+
+      {renderMatter('Back matter', backMatter)}
     </div>
   );
 }

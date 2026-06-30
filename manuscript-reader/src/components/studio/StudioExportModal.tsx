@@ -2,8 +2,8 @@ import { useState } from 'react';
 import type { SnapshotMeta } from '../../engine/types';
 import { XIcon } from '../ui/Icons';
 import { StudioExportBody, STUDIO_EXPORT_LIVE_DRAFT } from './StudioExportBody';
-import type { StudioFormatId } from './StudioFormatRail';
-import { STUDIO_FORMATS } from './StudioFormatRail';
+import type { StudioFormatId } from './studioFormats';
+import { studioFormat } from './studioFormats';
 
 interface StudioExportModalProps {
   open: boolean;
@@ -31,7 +31,7 @@ export function StudioExportModal({
 }: StudioExportModalProps) {
   const [exportSource, setExportSource] = useState(STUDIO_EXPORT_LIVE_DRAFT);
   const [building, setBuilding] = useState(false);
-  const primary = STUDIO_FORMATS.find(f => f.id === format) ?? STUDIO_FORMATS[0];
+  const primary = studioFormat(format);
 
   if (!open) return null;
 
