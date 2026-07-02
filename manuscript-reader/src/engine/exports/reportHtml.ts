@@ -567,12 +567,11 @@ function buildHtml(opts: {
   // downloaded report and the screen lead with one story. Leads page 1; omitted
   // when nothing is genuinely off (an even, lightly-annotated draft).
   const insights = rankInsights(signals);
-  // Authorship-aware: with no beta readers the reaction tier is the author's own
-  // revision flags, not reader reaction (matches the in-app panel; copy already
-  // solo-framed by rankInsights).
-  const reactionLabel = signals.readerCount === 0 ? 'Your revision flags' : 'Reader reactions';
-  const tierLabel: Record<InsightTier, string> = { consensus: 'Reader agreement', reaction: reactionLabel, prose: 'Prose' };
-  const tierAccent: Record<InsightTier, string> = { consensus: 'var(--ink)', reaction: COLOR.question, prose: 'var(--desc)' };
+  // Authorship-aware by tier (matches the in-app panel): reader marks are reader
+  // reaction; the author's own marks ride the distinct 'author-queue' tier —
+  // "Your revision flags" — and are never labeled reader reaction.
+  const tierLabel: Record<InsightTier, string> = { consensus: 'Reader agreement', reaction: 'Reader reactions', 'author-queue': 'Your revision flags', prose: 'Prose' };
+  const tierAccent: Record<InsightTier, string> = { consensus: 'var(--ink)', reaction: COLOR.question, 'author-queue': COLOR.note, prose: 'var(--desc)' };
   const insightsHtml = insights.length ? `
   <div class="sec-head mb4">Worth a Look First</div>
   <div class="insight-list">
@@ -611,7 +610,9 @@ function buildHtml(opts: {
   ).join('')}</div>`;
 
   // Editorial signals (cluster cards with verbatim feedback) + engagement lead.
-  const engagementLead = rep.totalAnns > 0
+  // Engagement is a READER measure — shown only when reader-authored marks exist;
+  // a solo author's own flags never render as "reader engagement".
+  const engagementLead = rep.readers.length > 0
     ? `<div class="engagement-lead"><strong>Reader engagement: ${esc(rep.label)}.</strong> ${esc(rep.blurb)}</div>`
     : '';
   const signalsHtml = rep.clusters.length

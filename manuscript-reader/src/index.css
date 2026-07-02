@@ -746,6 +746,47 @@ html.light[data-mode="reader"] #topbar #topbar-chapter { opacity: 0.6; }
   #reader-body.ann-open #ann-margin.browse .ann-margin-card {
     position: static;
   }
+
+  /* Orphaned notes: annotations whose passage the current text no longer holds.
+     They can't be pinned beside prose, so — exactly like Changes — they collect
+     in a plain collapsed section at the BOTTOM of the gutter, after the last
+     anchored card. The cards are absolute (no flow), so anchor this to the
+     container's bottom edge; expanding grows it upward, staying on-screen once
+     the reader has scrolled to the end. */
+  #reader-body.ann-open #ann-margin:not(.browse) .ann-margin-orphans {
+    position: absolute;
+    bottom: 0;
+    left: 40px; right: 0; /* match the anchored cards */
+    border-top: 1px solid var(--border);
+    padding-top: 10px;
+  }
+  #reader-body.ann-open #ann-margin:not(.browse) .ann-margin-orphans .ann-margin-card {
+    position: static;
+    left: auto; right: auto;
+  }
+}
+
+.ann-margin-orphans-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  width: 100%; background: none; border: none; cursor: pointer; text-align: left;
+  padding: 6px 0;
+}
+.ann-margin-orphans-title {
+  display: flex; align-items: center; gap: 7px;
+  font-family: var(--font-ui); font-size: 9px; font-weight: 600;
+  letter-spacing: 0.18em; text-transform: uppercase; color: var(--dim);
+}
+.ann-margin-orphans-count {
+  padding: 1px 6px; border-radius: 9px; background: var(--border);
+  color: var(--dim); font-weight: 600; font-variant-numeric: tabular-nums;
+  letter-spacing: 0; font-size: 9px;
+}
+.ann-margin-orphans-head:hover .ann-margin-orphans-title { color: var(--ink); }
+.ann-margin-orphans-chevron { color: var(--dim); font-size: 9px; flex-shrink: 0; }
+.ann-margin-orphans-hint {
+  font-family: 'Hanken Grotesk', system-ui, sans-serif;
+  font-size: 10px; line-height: 1.5; color: var(--dim); font-style: italic;
+  padding-bottom: 4px;
 }
 
 .ann-margin-head {
@@ -873,9 +914,22 @@ html.light[data-mode="reader"] #topbar #topbar-chapter { opacity: 0.6; }
 
 .changes-margin-cardhead {
   display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
-  width: 100%; background: none; border: none; cursor: pointer; text-align: left;
+  width: 100%;
+}
+.changes-margin-cardhead-main {
+  flex: 1 1 auto; min-width: 0;
+  background: none; border: none; cursor: pointer; text-align: left;
   padding: 7px 0;
 }
+.changes-margin-jump {
+  flex: none; align-self: center; white-space: nowrap;
+  background: none; border: none; cursor: pointer; padding: 7px 0 7px 6px;
+  font-family: var(--font-ui); font-size: 9px; font-weight: 500;
+  letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--dim); transition: color var(--transition);
+}
+.changes-margin-jump:hover { color: var(--gold); }
+.changes-margin-jump .changes-margin-chevron { color: inherit; font-size: 11px; }
 .changes-margin-tag {
   font-family: 'Hanken Grotesk', system-ui, sans-serif; font-size: 9px; font-weight: 600;
   letter-spacing: 0.1em; text-transform: uppercase; color: var(--gold);
@@ -928,6 +982,31 @@ html.light[data-mode="reader"] #topbar #topbar-chapter { opacity: 0.6; }
   font-family: var(--font-ui); font-size: 9px; line-height: 1.45;
   color: var(--dim); letter-spacing: 0.02em; font-weight: 400;
   text-transform: none;
+}
+
+/* Orphaned changes: stale rows that no longer match the current text, tucked
+   into a collapsed section at the bottom so they can't bury the live changes. */
+.changes-margin-orphans { margin-top: 10px; border-top: 1px solid var(--border); }
+.changes-margin-orphans-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  width: 100%; background: none; border: none; cursor: pointer; text-align: left;
+  padding: 9px 0 4px 14px;
+}
+.changes-margin-orphans-title {
+  display: flex; align-items: center; gap: 7px;
+  font-family: var(--font-ui); font-size: 9px; font-weight: 600;
+  letter-spacing: 0.12em; text-transform: uppercase; color: var(--dim);
+}
+.changes-margin-orphans-count {
+  padding: 1px 6px; border-radius: 9px; background: var(--border);
+  color: var(--dim); font-weight: 600; font-variant-numeric: tabular-nums;
+  letter-spacing: 0; font-size: 9px;
+}
+.changes-margin-orphans-head:hover .changes-margin-orphans-title { color: var(--ink); }
+.changes-margin-orphans-hint {
+  padding: 0 0 6px 14px;
+  font-family: var(--font-ui); font-size: 9px; line-height: 1.45;
+  color: var(--dim); font-style: italic;
 }
 
 @media (min-width: 1200px) {
@@ -1163,6 +1242,7 @@ html.light[data-mode="reader"] #topbar #topbar-chapter { opacity: 0.6; }
 /* Tier accent on the left edge — agreement is the strongest signal, prose the most neutral. */
 .rp-insight[data-tier="consensus"] { border-left-color: var(--ink); }
 .rp-insight[data-tier="reaction"] { border-left-color: var(--ann-question-solid); }
+.rp-insight[data-tier="author-queue"] { border-left-color: var(--ann-note-solid); }
 .rp-insight[data-tier="prose"] { border-left-color: var(--dim); }
 .rp-insight-main { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
 .rp-insight-tier {

@@ -13,6 +13,7 @@
 import type {
   Annotation, Chapter, ChapterStat, EditorialSignals, ChapterAgreementSignal, ReaderSession,
 } from './types';
+import { isReaderAnnotation } from './types';
 import { computeReport } from './report';
 import { mergeReaderSessions } from './sessions';
 import { buildManuscriptStructure } from './ingestion/manuscriptStructure';
@@ -74,9 +75,16 @@ export function computeEditorialSignals(input: EditorialSignalsInput): Editorial
         .sort((a, b) => b.readersWhoAnnotated - a.readersWhoAnnotated || b.agreement - a.agreement)
     : [];
 
-  const unresolvedConcerns = annotations.filter(
-    a => CONCERN_TYPES.has(a.type) && a.status !== 'resolved',
-  ).length;
+  // Open concern marks, split by authorship. The total is retained (cross-version
+  // deltas depend on it), but the honest "reader concern" number excludes the
+  // author's own open to-dos — which surface as `openAuthorFlags` (revision queue,
+  // not reader concern). Invariant: unresolvedConcerns === unresolvedReaderConcerns
+  // + openAuthorFlags.
+  const isOpenConcern = (a: Annotation) => CONCERN_TYPES.has(a.type) && a.status !== 'resolved';
+  const openConcerns = annotations.filter(isOpenConcern);
+  const unresolvedConcerns = openConcerns.length;
+  const unresolvedReaderConcerns = openConcerns.filter(isReaderAnnotation).length;
+  const openAuthorFlags = unresolvedConcerns - unresolvedReaderConcerns;
 
   // Engagement curve = normalized highlight+bookmark volume per chapter, in order.
   const ordered = [...report.chapters].sort((a, b) => a.index - b.index);
@@ -103,6 +111,8 @@ export function computeEditorialSignals(input: EditorialSignalsInput): Editorial
     continuityBreaks,
     readerAgreement,
     unresolvedConcerns,
+    unresolvedReaderConcerns,
+    openAuthorFlags,
     engagementCurve,
     engagementDrops,
     prose,

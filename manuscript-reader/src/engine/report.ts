@@ -1,9 +1,53 @@
-import type { Annotation, AnnotationCluster, AnnotationType, Chapter, ChapterStat, Report } from './types';
-import { ANNOTATION_TYPES, DEVELOPMENTAL_TYPES } from './types';
+import type { Annotation, AnnotationCluster, AnnotationType, AuthorRevisionSummary, Chapter, ChapterStat, Report } from './types';
+import { ANNOTATION_TYPES, DEVELOPMENTAL_TYPES, isReaderAnnotation, isAuthorAnnotation } from './types';
 import { computeChapterWords } from './ingestion/parseMarkdown';
 
 function emptyCounts(): Record<AnnotationType, number> {
   return Object.fromEntries(ANNOTATION_TYPES.map(t => [t, 0])) as Record<AnnotationType, number>;
+}
+
+function typeTotalsFor(anns: Annotation[]): Record<AnnotationType, number> {
+  const totals = emptyCounts();
+  for (const a of anns) if (totals[a.type] !== undefined) totals[a.type]++;
+  return totals;
+}
+
+/** Per-chapter stats for a given annotation subset, seeded with every chapter so
+ *  run-detection sees the full chapter ordering. `readerCount` is left 0 — reader
+ *  identity is tracked once in the all-marks pass; these subset stats exist purely
+ *  to compute signal (clusters / density) over reader-only or author-only marks. */
+function statsFor(subset: Annotation[], chapters: Chapter[], chapterWords: Map<number, number>): ChapterStat[] {
+  const map = new Map<number, ChapterStat>();
+  for (const ch of chapters) {
+    map.set(ch.index, { title: ch.title, index: ch.index, count: 0, counts: emptyCounts(), words: chapterWords.get(ch.index) ?? 0, density: 0, readerCount: 0 });
+  }
+  for (const ann of subset) {
+    const key = ann.chapterIndex || 0;
+    if (!map.has(key)) {
+      map.set(key, { title: ann.chapterTitle, index: key, count: 0, counts: emptyCounts(), words: chapterWords.get(key) ?? 0, density: 0, readerCount: 0 });
+    }
+    const stat = map.get(key)!;
+    stat.count++;
+    if (stat.counts[ann.type] !== undefined) (stat.counts[ann.type] as number)++;
+  }
+  for (const stat of map.values()) stat.density = stat.words > 0 ? (stat.count / stat.words) * 1000 : 0;
+  return [...map.values()].sort((a, b) => a.index - b.index);
+}
+
+const devCount = (c: ChapterStat) => DEVELOPMENTAL_TYPES.reduce((s, t) => s + (c.counts[t] ?? 0), 0);
+
+/** Developmental-flag density hotspots over one stat set: editorial *concern*
+ *  annotations (question, continuity, structural, pacing, voice) per 1,000 words.
+ *  Computed separately for reader marks (the reader-concern lens) and author marks
+ *  (the author's own revision queue) so the two are never conflated. */
+function developmentalHotspotsFor(stats: ChapterStat[]): ChapterStat[] {
+  const withWords = stats.filter(c => c.words > 0);
+  const hasWordData = withWords.length > 0;
+  const devDensity = (c: ChapterStat) => (c.words > 0 ? (devCount(c) / c.words) * 1000 : 0);
+  const avgDevDensity = withWords.length ? withWords.reduce((s, c) => s + devDensity(c), 0) / withWords.length : 0;
+  return hasWordData
+    ? stats.filter(c => devCount(c) >= 2 && devDensity(c) >= avgDevDensity * 1.35).sort((a, b) => devDensity(b) - devDensity(a))
+    : stats.filter(c => devCount(c) > 0).sort((a, b) => devCount(b) - devCount(a)).slice(0, 3);
 }
 
 /** Stable beta-reader identity for agreement analysis. Prefers the durable
@@ -109,6 +153,19 @@ export function computeReport(annotations: Annotation[], chapters: Chapter[], co
 
   const chapterWords = combinedMarkdown ? computeChapterWords(combinedMarkdown) : new Map<number, number>();
 
+  // ── Partition once (the Part-1 discipline) ──────────────────────────────────
+  // Reader marks are *reactions*; author marks are *revision intent* — different
+  // speech acts. Descriptive stats below (typeTotals, per-chapter table, hotspots,
+  // coverage) stay all-marks so the author never loses sight of their own marks.
+  // Interpretive reader-reaction findings (clusters, developmental hotspots,
+  // question/continuity clusters, engagement score) are computed over READER marks
+  // only; author marks project into `authorRevision`. Empty reader sets are honest:
+  // there is no reader signal yet.
+  const readerAnns = annotations.filter(isReaderAnnotation);
+  const authorAnns = annotations.filter(isAuthorAnnotation);
+  const readerStats = statsFor(readerAnns, chapters, chapterWords);
+  const authorStats = statsFor(authorAnns, chapters, chapterWords);
+
   // Build per-chapter stats keyed by chapter index.
   const chapterMap = new Map<number, ChapterStat>();
   const chapterReaders = new Map<number, Set<string>>(); // index → distinct reader identities
@@ -170,27 +227,35 @@ export function computeReport(annotations: Annotation[], chapters: Chapter[], co
   const silent = hasWordData
     ? allStats.filter(c => c.words > 0 && (c.count === 0 || (avgDensity > 0 && c.density <= avgDensity * 0.4))).sort((a, b) => a.density - b.density)
     : allStats.filter(c => c.index > 0 && c.count === 0);
-  const questionClusters = allStats.filter(c => (c.counts.question ?? 0) >= 2).sort((a, b) => (b.counts.question ?? 0) - (a.counts.question ?? 0));
-  const continuityFlags = allStats.filter(c => (c.counts.continuity ?? 0) >= 1).sort((a, b) => (b.counts.continuity ?? 0) - (a.counts.continuity ?? 0));
+  // Reader-reaction findings — READER marks only (author question/continuity marks
+  // are the author's own queue, surfaced via `authorRevision`, never here).
+  const questionClusters = readerStats.filter(c => (c.counts.question ?? 0) >= 2).sort((a, b) => (b.counts.question ?? 0) - (a.counts.question ?? 0));
+  const continuityFlags = readerStats.filter(c => (c.counts.continuity ?? 0) >= 1).sort((a, b) => (b.counts.continuity ?? 0) - (a.counts.continuity ?? 0));
 
-  // Developmental-flag density: editorial *concern* annotations (question,
-  // continuity, structural, pacing, voice) per 1,000 words. The "where is the
-  // developmental work" lens — deliberately distinct from `hotspots` (which count
-  // engagement marks too) so a chapter dense in pacing/voice/continuity notes
-  // surfaces even when it drew few highlights. Same threshold shape as hotspots.
-  const devCount = (c: ChapterStat) => DEVELOPMENTAL_TYPES.reduce((s, t) => s + (c.counts[t] ?? 0), 0);
-  const devDensity = (c: ChapterStat) => (c.words > 0 ? (devCount(c) / c.words) * 1000 : 0);
-  const avgDevDensity = withWords.length ? withWords.reduce((s, c) => s + devDensity(c), 0) / withWords.length : 0;
-  const developmentalHotspots = hasWordData
-    ? allStats.filter(c => devCount(c) >= 2 && devDensity(c) >= avgDevDensity * 1.35).sort((a, b) => devDensity(b) - devDensity(a))
-    : allStats.filter(c => devCount(c) > 0).sort((a, b) => devCount(b) - devCount(a)).slice(0, 3);
+  // Developmental-flag density (question/continuity/structural/pacing/voice per
+  // 1,000 words): the "where is the developmental work" lens, distinct from
+  // `hotspots` (which count engagement too). Reader-only — the author's own
+  // developmental flags live in `authorRevision`, not in this reader-concern lens.
+  const developmentalHotspots = developmentalHotspotsFor(readerStats);
 
   // One entry per distinct reader identity (not per name string), so the count
   // is correct even when readers share a name or leave it blank.
   const readers = [...identityName.values()];
 
-  // Editorial signal clusters (confusion / continuity / structural / engagement runs).
-  const clusters = detectClusters(annotations, allStats);
+  // Editorial signal clusters (confusion / continuity / structural / engagement
+  // runs) — READER marks only. A solo author's own marks never masquerade as
+  // reader reaction here; they are grouped identically under `authorRevision`.
+  const clusters = detectClusters(readerAnns, readerStats);
+
+  // The author's own marks as a first-class revision queue — same run-detector,
+  // author-framed. Powers the "Your revision flags" band and the author-queue
+  // insight tier; strictly parallel to (never mixed with) the reader findings.
+  const authorRevision: AuthorRevisionSummary = {
+    totalFlags: authorAnns.length,
+    typeTotals: typeTotalsFor(authorAnns),
+    chapters: authorStats.filter(c => c.count > 0).sort((a, b) => b.count - a.count || a.index - b.index),
+    clusters: detectClusters(authorAnns, authorStats),
+  };
 
   // Reader consensus: only meaningful with 2+ beta readers. Surface the chapters
   // the most readers independently reacted to — the strongest revision signal.
@@ -198,15 +263,21 @@ export function computeReport(annotations: Annotation[], chapters: Chapter[], co
     ? allStats.filter(c => c.readerCount >= 2).sort((a, b) => b.readerCount - a.readerCount || b.count - a.count)
     : [];
 
-  // Engagement score (0–100): coverage 45 · volume 35 · balance 20.
+  // Engagement score (0–100): coverage 45 · volume 35 · balance 20. This measures
+  // READER engagement, so it is computed over reader marks only — an author's own
+  // concern flags must never lower their "engagement," and with no readers there is
+  // simply no engagement data yet (label 'No data yet'; exports omit the line).
+  const readerTypeTotals = typeTotalsFor(readerAnns);
+  const totalReaderAnns = readerAnns.length;
+  const readerCoverage = allStats.length ? readerStats.filter(c => c.count > 0).length / allStats.length : 0;
   const volumeTarget = (allStats.length || 1) * 4;
-  const volumeScore = Math.min(1, totalAnns / volumeTarget);
-  const concern = totalAnns ? ((typeTotals.question + typeTotals.continuity + typeTotals.structural) / totalAnns) : 0;
-  let score = Math.round(45 * coverage + 35 * volumeScore + 20 * (1 - concern));
+  const volumeScore = Math.min(1, totalReaderAnns / volumeTarget);
+  const concern = totalReaderAnns ? ((readerTypeTotals.question + readerTypeTotals.continuity + readerTypeTotals.structural) / totalReaderAnns) : 0;
+  let score = Math.round(45 * readerCoverage + 35 * volumeScore + 20 * (1 - concern));
   score = Math.max(0, Math.min(100, score));
 
   let label: string, blurb: string;
-  if (totalAnns === 0) { score = 0; label = 'No data yet'; blurb = 'Annotate as you read and the report fills in.'; }
+  if (totalReaderAnns === 0) { score = 0; label = 'No data yet'; blurb = 'Annotate as you read and the report fills in.'; }
   else if (score >= 80) { label = 'Excellent'; blurb = 'Strong, even engagement across the manuscript.'; }
   else if (score >= 65) { label = 'Good'; blurb = 'Solid engagement, with a few standout chapters below.'; }
   else if (score >= 45) { label = 'Mixed'; blurb = 'Engagement is uneven — note the quiet chapters below.'; }
@@ -232,5 +303,6 @@ export function computeReport(annotations: Annotation[], chapters: Chapter[], co
     blurb,
     clusters,
     consensus,
+    authorRevision,
   };
 }

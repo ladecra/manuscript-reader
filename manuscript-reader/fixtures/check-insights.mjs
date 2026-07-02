@@ -90,9 +90,11 @@ console.log('CASE: prose-only with a short outlier (no annotations)');
 console.log('\n' + '─'.repeat(60));
 console.log('CASE: developmental density (pacing/voice, no clusters)');
 {
-  // Ch.2 is dense in pacing + voice notes. detectClusters only models question/
-  // continuity/structural/engagement, so it produces NO cluster here — the
-  // developmental-density signal is the only thing that can surface this chapter.
+  // Ch.2 is dense in a beta reader's pacing + voice notes. detectClusters only
+  // models question/continuity/structural/engagement, so it produces NO cluster
+  // here — the developmental-density signal is the only thing that can surface
+  // this chapter. Reader-attributed (with a session) so it lands in the reaction
+  // tier; the parallel AUTHOR-marks path is covered by check-authorship.
   const md = chapter('One', 120) + chapter('Two', 120) + chapter('Three', 120);
   const chapters = [
     { id: 'ch-1', index: 1, title: 'One' },
@@ -100,11 +102,12 @@ console.log('CASE: developmental density (pacing/voice, no clusters)');
     { id: 'ch-3', index: 3, title: 'Three' },
   ];
   const anns = [
-    { id: 'p1', type: 'pacing', quote: 'word', chapterTitle: 'Two', chapterIndex: 2, note: '', readerName: null, createdAt: 1 },
-    { id: 'p2', type: 'pacing', quote: 'word', chapterTitle: 'Two', chapterIndex: 2, note: '', readerName: null, createdAt: 2 },
-    { id: 'v1', type: 'voice', quote: 'word', chapterTitle: 'Two', chapterIndex: 2, note: '', readerName: null, createdAt: 3 },
+    { id: 'p1', type: 'pacing', quote: 'word', chapterTitle: 'Two', chapterIndex: 2, note: '', readerName: 'Sam', readerId: 'r1', createdAt: 1 },
+    { id: 'p2', type: 'pacing', quote: 'word', chapterTitle: 'Two', chapterIndex: 2, note: '', readerName: 'Sam', readerId: 'r1', createdAt: 2 },
+    { id: 'v1', type: 'voice', quote: 'word', chapterTitle: 'Two', chapterIndex: 2, note: '', readerName: 'Sam', readerId: 'r1', createdAt: 3 },
   ];
-  const sig = computeEditorialSignals({ manuscriptId: 'dev', annotations: anns, chapters, sessions: [], combinedMarkdown: md });
+  const sessions = [{ id: 's1', manuscriptId: 'dev', readerId: 'r1', readerName: 'Sam', startedAt: 1, progress: 1, completedAt: 5, annotationIds: ['p1', 'p2', 'v1'] }];
+  const sig = computeEditorialSignals({ manuscriptId: 'dev', annotations: anns, chapters, sessions, combinedMarkdown: md });
   const insights = rankInsights(sig);
   show(insights);
   check('no annotation clusters for pacing/voice (engine blind spot confirmed)', sig.report.clusters.length === 0);

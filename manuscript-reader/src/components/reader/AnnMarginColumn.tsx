@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { Annotation } from '../../engine/types';
 import { ANNOTATION_LABELS, ANNOTATION_COLORS } from '../../engine/types';
 
@@ -49,11 +49,17 @@ export function AnnMarginColumn({ annotations, open, browse, selectedId, onJumpT
   // chapterIndex/offset after edits. Recomputed whenever the marks change;
   // annotations with no mark (orphaned) sort last by byDocumentOrder.
   const [markInfo, setMarkInfo] = useState<Record<string, MarkInfo>>({});
+  const [orphansOpen, setOrphansOpen] = useState(false);
+  // Whether the reader's chunked mark pass has had time to land. Until it settles,
+  // a not-yet-marked annotation is indistinguishable from a truly orphaned one, so
+  // hold off on diverting anything to the collapsed section (see ChangesMarginColumn).
+  const [settled, setSettled] = useState(false);
 
   useLayoutEffect(() => {
     if (!open) return;
     const content = document.getElementById('content');
     if (!content) return;
+    let raf = 0;
     const compute = () => {
       const next: Record<string, MarkInfo> = {};
       content.querySelectorAll('mark[data-ann]').forEach((m, i) => {
@@ -67,10 +73,28 @@ export function AnnMarginColumn({ annotations, open, browse, selectedId, onJumpT
         return next;
       });
     };
+    // Recompute on reflow (ResizeObserver) AND on mark add/remove. The marks are
+    // applied by a chunked, rAF-deferred pass in the reader, and wrapping inline
+    // text in a <mark> doesn't change #content's size — so a ResizeObserver alone
+    // never learns about freshly-marked annotations. A MutationObserver on the
+    // subtree catches those late-arriving marks; coalesce both into one rAF tick.
+    const schedule = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(compute); };
     compute();
-    const ro = new ResizeObserver(compute);
+    const ro = new ResizeObserver(schedule);
     ro.observe(content);
-    return () => ro.disconnect();
+    const mo = new MutationObserver(schedule);
+    mo.observe(content, { childList: true, subtree: true });
+    return () => { cancelAnimationFrame(raf); ro.disconnect(); mo.disconnect(); };
+  }, [open, annotations]);
+
+  // Give the chunked mark pass a beat to land before trusting markInfo to tell an
+  // anchored annotation from an orphaned one.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- gate the orphan partition until marks land
+    setSettled(false);
+    if (!open) return;
+    const t = setTimeout(() => setSettled(true), 200);
+    return () => clearTimeout(t);
   }, [open, annotations]);
 
   const sorted = [...annotations].sort((a, b) => {
@@ -80,6 +104,17 @@ export function AnnMarginColumn({ annotations, open, browse, selectedId, onJumpT
     if (rb != null) return 1;
     return byDocumentOrder(a, b);
   });
+
+  // An annotation is orphaned when the mark pass has settled but no mark exists for
+  // it in the prose — e.g. an edit split/renumbered its chapter so the anchor no
+  // longer resolves. In anchored mode these can't be placed beside any text, so
+  // rather than pile them (silently) after the last real card, collect them into a
+  // collapsed section. In browse mode the flat index already lists everything.
+  const orphanIds = (settled && !browse)
+    ? new Set(sorted.filter(a => markInfo[a.id] == null).map(a => a.id))
+    : new Set<string>();
+  const anchored = sorted.filter(a => !orphanIds.has(a.id));
+  const orphaned = sorted.filter(a => orphanIds.has(a.id));
 
   // Anchored layout: align each card to its <mark> in the prose, ordered by the
   // mark's ACTUAL vertical position (not creation time), cascading down so cards
@@ -106,16 +141,17 @@ export function AnnMarginColumn({ annotations, open, browse, selectedId, onJumpT
         .map(ann => {
           const card = cardRefs.current.get(ann.id);
           const mark = content.querySelector(`mark[data-ann="${CSS.escape(ann.id)}"]`) as HTMLElement | null;
-          const markTop = mark ? mark.getBoundingClientRect().top - cTop : Number.POSITIVE_INFINITY;
+          // Only marked annotations are placed beside the prose. Orphaned ones live
+          // in the collapsed section (static flow), so leave them out of the cascade.
+          const markTop = mark ? mark.getBoundingClientRect().top - cTop : null;
           return { card, markTop };
         })
-        .filter((x): x is { card: HTMLDivElement; markTop: number } => !!x.card)
+        .filter((x): x is { card: HTMLDivElement; markTop: number } => !!x.card && x.markTop != null)
         .sort((a, b) => a.markTop - b.markTop);
 
       let prevBottom = 0;
       for (const { card, markTop } of items) {
-        const target = Number.isFinite(markTop) ? markTop : prevBottom + GAP;
-        const top = Math.max(target, prevBottom ? prevBottom + GAP : 0);
+        const top = Math.max(markTop, prevBottom ? prevBottom + GAP : 0);
         card.style.top = `${Math.round(top)}px`;
         prevBottom = top + card.offsetHeight;
       }
@@ -123,14 +159,55 @@ export function AnnMarginColumn({ annotations, open, browse, selectedId, onJumpT
       container.style.height = `${content.offsetHeight}px`;
     };
 
+    // Re-anchor on reflow, on resize, and when marks are added/removed. The
+    // last matters most: the reader's chunked marking pass lands marks a frame
+    // or two after this effect first runs, so without watching mutations the
+    // freshly-marked cards keep their Infinity markTop and park off-screen at
+    // the bottom. Coalesce mutation bursts (24 marks per batch) into one rAF.
+    let raf = 0;
+    const schedule = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(layout); };
     layout();
-    const ro = new ResizeObserver(() => layout());
+    const ro = new ResizeObserver(schedule);
     ro.observe(content);
+    const mo = new MutationObserver(schedule);
+    mo.observe(content, { childList: true, subtree: true });
     window.addEventListener('resize', layout);
-    return () => { ro.disconnect(); window.removeEventListener('resize', layout); };
+    return () => { cancelAnimationFrame(raf); ro.disconnect(); mo.disconnect(); window.removeEventListener('resize', layout); };
   }, [open, browse, annotations]);
 
   const cls = `${open ? 'open' : ''}${browse ? ' browse' : ''}`.trim();
+
+  const renderCard = (ann: Annotation) => {
+    const isSel = selectedId === ann.id;
+    const faded = selectedId != null && !isSel;
+    // Prefer the mark's live chapter (renumbers with edits); fall back to
+    // the stored index only when the annotation is orphaned (no mark).
+    const liveChapter = markInfo[ann.id]?.chapter;
+    const chapterNum = liveChapter ?? (ann.chapterTitle ? ann.chapterIndex : null);
+    return (
+      <div
+        key={ann.id}
+        ref={el => { if (el) cardRefs.current.set(ann.id, el); else cardRefs.current.delete(ann.id); }}
+        className={`ann-margin-card${isSel ? ' emph' : ''}${faded ? ' faded' : ''}`}
+        onClick={() => onJumpTo(ann.id)}
+        style={{ borderLeftColor: isSel ? 'var(--gold)' : ANNOTATION_COLORS[ann.type] + '88' }}
+      >
+        <div className="ann-margin-tag">
+          {ANNOTATION_LABELS[ann.type]}
+          {chapterNum != null && (
+            <span className="ann-margin-chapter"> · Ch.&nbsp;{String(chapterNum).padStart(2, '0')}</span>
+          )}
+        </div>
+        {ann.quote && (
+          <div className="ann-margin-quote">
+            &ldquo;{ann.quote.length > 100 ? ann.quote.slice(0, 100) + '…' : ann.quote}&rdquo;
+          </div>
+        )}
+        {ann.note && <div className="ann-margin-note">{ann.note}</div>}
+        {ann.readerName && <div className="ann-margin-reader">— {ann.readerName}</div>}
+      </div>
+    );
+  };
 
   return (
     <div id="ann-margin" ref={containerRef} className={cls} aria-label="Annotations">
@@ -157,37 +234,26 @@ export function AnnMarginColumn({ annotations, open, browse, selectedId, onJumpT
       {sorted.length === 0 ? (
         <div className="ann-margin-empty">Select any passage to annotate.</div>
       ) : (
-        sorted.map(ann => {
-          const isSel = selectedId === ann.id;
-          const faded = selectedId != null && !isSel;
-          // Prefer the mark's live chapter (renumbers with edits); fall back to
-          // the stored index only when the annotation is orphaned (no mark).
-          const liveChapter = markInfo[ann.id]?.chapter;
-          const chapterNum = liveChapter ?? (ann.chapterTitle ? ann.chapterIndex : null);
-          return (
-            <div
-              key={ann.id}
-              ref={el => { if (el) cardRefs.current.set(ann.id, el); else cardRefs.current.delete(ann.id); }}
-              className={`ann-margin-card${isSel ? ' emph' : ''}${faded ? ' faded' : ''}`}
-              onClick={() => onJumpTo(ann.id)}
-              style={{ borderLeftColor: isSel ? 'var(--gold)' : ANNOTATION_COLORS[ann.type] + '88' }}
-            >
-              <div className="ann-margin-tag">
-                {ANNOTATION_LABELS[ann.type]}
-                {chapterNum != null && (
-                  <span className="ann-margin-chapter"> · Ch.&nbsp;{String(chapterNum).padStart(2, '0')}</span>
-                )}
-              </div>
-              {ann.quote && (
-                <div className="ann-margin-quote">
-                  &ldquo;{ann.quote.length > 100 ? ann.quote.slice(0, 100) + '…' : ann.quote}&rdquo;
-                </div>
-              )}
-              {ann.note && <div className="ann-margin-note">{ann.note}</div>}
-              {ann.readerName && <div className="ann-margin-reader">— {ann.readerName}</div>}
-            </div>
-          );
-        })
+        (browse ? sorted : anchored).map(renderCard)
+      )}
+
+      {orphaned.length > 0 && (
+        <div className={`ann-margin-orphans${orphansOpen ? ' open' : ''}`}>
+          <button type="button" className="ann-margin-orphans-head"
+            onClick={() => setOrphansOpen(v => !v)}
+            aria-expanded={orphansOpen}>
+            <span className="ann-margin-orphans-title">
+              Unlinked
+              <span className="ann-margin-orphans-count">{orphaned.length}</span>
+            </span>
+            <span className="ann-margin-orphans-chevron" aria-hidden="true">{orphansOpen ? '▾' : '▸'}</span>
+          </button>
+          {orphansOpen ? (
+            orphaned.map(renderCard)
+          ) : (
+            <div className="ann-margin-orphans-hint">Notes whose passage the current text no longer contains.</div>
+          )}
+        </div>
       )}
     </div>
   );

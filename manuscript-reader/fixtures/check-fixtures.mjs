@@ -51,7 +51,7 @@ async function plainToMarkdown(path) {
 }
 
 const files = (await readdir(here))
-  .filter(f => /\.(docx|md|txt)$/i.test(f))
+  .filter(f => /\.(docx|md|txt)$/i.test(f) && !f.startsWith('~$')) // skip Word ~$ lock files
   .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 
 let assertFailures = 0;
