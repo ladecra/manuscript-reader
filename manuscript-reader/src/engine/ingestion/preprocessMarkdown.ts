@@ -434,6 +434,71 @@ const hasContent = (body: string[]): boolean => body.some(l => l.trim());
  *    fence DROP/matter-classified sections as back matter (discard the TOC).
  * 6. Reconstruct: title comment · front fences · body · back fences.
  */
+// Lines on a title page that end (or aren't part of) the title: attribution,
+// legal, series, or "A Novel" tag lines. Latching the title stops here.
+const TITLE_STOP = /(copyright|©|isbn|also by|by the same|all rights reserved|this is a work of fiction|table of contents|a (novel|memoir|play|verse translation)\b|edited by|translat|publish|foreword|preface|introduction|contents)/i;
+const ATTRIB_LEAD = /^(by\s|written by\s|edited\b|translated\b|a\s+(verse\s+)?(translation|novel|memoir)\b)/i;
+// A short connector/article/preposition word — as a WHOLE line these separate a
+// title's words on a centered title page; a *lowercase, emphasized* one (mammoth's
+// `*of*`) signals an attribution connector ("… of Virgil") and ends the title.
+const CONNECTOR_WORD = /^(of|by|and|or|for|from|with|to|in|on|the|a|an|de|la|le|del|di|und|et)$/i;
+// A "title" made only of articles/connectors ("The", "A", "An", "A The") is never
+// a real title — no book is called "The" — so it's rejected and detection continues.
+const ARTICLE_ONLY = /^(?:(?:the|a|an|of|and|or|to|in|on|with|for|from)\b\s*)+$/i;
+
+function cleanTitleLine(raw: string): { text: string; emphasized: boolean } {
+  const trimmed = raw.replace(/^#+\s*/, '').trim();
+  const emphasized = /^[*_]/.test(trimmed);
+  return { text: trimmed.replace(/^[*_]+|[*_]+$/g, '').replace(/\s+/g, ' ').trim(), emphasized };
+}
+
+// How a title-page line reads: skippable noise, a hard boundary that ends the
+// title region, or a usable title fragment.
+type TitleLineKind = 'ignore' | 'boundary' | 'fragment';
+function classifyTitleLine(text: string): TitleLineKind {
+  if (!text || /^<!--/.test(text) || /^\d/.test(text) || /^[\W_]+$/.test(text)) return 'ignore';
+  if (text.length > 60 || text.split(/\s+/).length > 8) return 'boundary'; // prose, not a title line
+  if (TITLE_STOP.test(text) || ATTRIB_LEAD.test(text)) return 'boundary';
+  // A line that classifies as its own matter section (Dedication, Foreword…) or a
+  // drop heading ends the title page — the title, if any, precedes it. This is a
+  // hard STOP, never skipped past (else a dedication's body becomes the title).
+  if (classifyMatter(`# ${text}`) || isDropHeading(`# ${text}`)) return 'boundary';
+  return 'fragment';
+}
+
+/**
+ * Recover the book title from the ordered lines of the front region. Real title
+ * pages routinely split a multi-word title across centered lines — mammoth emits
+ * `THE` / `AENEID` / `*of*` / `VIRGIL` as separate paragraphs — so we must
+ * ACCUMULATE the consecutive title fragments rather than grab the first line
+ * (which yielded absurdities like a book titled "The" or "A"). The title sits at
+ * the TOP of the front region: we stop at the first boundary (attribution, legal
+ * line, or a matter/section heading), and reject an article-only result.
+ */
+function recoverTitle(rawLines: string[]): string {
+  const cleaned = rawLines.map(cleanTitleLine);
+  const parts: string[] = [];
+  let blanks = 0;
+  for (const { text, emphasized } of cleaned) {
+    const kind = classifyTitleLine(text);
+    // Title-page words arrive as separate paragraphs (`THE` ¶ `AENEID` ¶ …), so a
+    // blank line between fragments is normal — skip it. But a *big* gap (a page
+    // break / new section) ends the title.
+    if (kind === 'ignore') { if (text === '' && ++blanks > 2 && parts.length) break; continue; }
+    blanks = 0;
+    if (kind === 'boundary') break;
+    // "… of Virgil" / "… by Homer": an emphasized lowercase connector begins the
+    // attribution clause, not the title. (A plain, same-case connector like "and"
+    // inside "The Sound and the Fury" is kept.)
+    if (parts.length && emphasized && /^[a-z]/.test(text) && CONNECTOR_WORD.test(text)) break;
+    parts.push(text);
+    if (parts.join(' ').length > 60 || parts.length >= 8) break;
+  }
+  const title = parts.join(' ').replace(/\s+/g, ' ').trim();
+  if (!title || ARTICLE_ONLY.test(title)) return '';
+  return /[a-z]/.test(title) ? title : smartTitleCase(title);
+}
+
 export function structureManuscript(text: string): string {
   const lines = text.split('\n');
 
@@ -475,30 +540,13 @@ export function structureManuscript(text: string): string {
 
   const firstNarrativeLineIdx = headingLines[firstNarrativeIdx];
 
-  // ── Extract book title from forematter ──
-  let bookTitle = '';
-  for (let h = 0; h < firstNarrativeIdx; h++) {
-    const ln = lines[headingLines[h]].replace(/^# /, '').trim();
-    if (!ln || isDropHeading(`# ${ln}`)) continue;
-    // Skip lines that look like copyright / author attribution
-    if (/(copyright|\u00a9|isbn|also by|by the same|all rights reserved|this is a work of fiction|table of contents|a novel\b)/i.test(ln)) continue;
-    if (/^(by\s|written by\s)/i.test(ln)) continue;
-    if (ln.length > 70) continue;
-    bookTitle = /[a-z]/.test(ln) ? ln : smartTitleCase(ln);
-    break;
-  }
-
-  // ── Also check raw pre-heading text for a title ──
+  // ── Extract book title from forematter (accumulates multi-line titles) ──
+  // Prefer the heading lines of the front region; fall back to its raw text.
+  let bookTitle = recoverTitle(
+    headingLines.slice(0, firstNarrativeIdx).map(i => lines[i]),
+  );
   if (!bookTitle && firstNarrativeLineIdx > 0) {
-    for (const lnRaw of lines.slice(0, firstNarrativeLineIdx)) {
-      const ln = lnRaw.replace(/^#+\s*/, '').trim();
-      if (!ln || /^<!--/.test(ln)) continue;
-      if (/(copyright|\u00a9|isbn|also by|all rights reserved|table of contents|a novel\b|this is a work of fiction)/i.test(ln)) continue;
-      if (/^(by\s|written by\s)/i.test(ln)) continue;
-      if (ln.length > 70 || /^\d/.test(ln)) continue;
-      bookTitle = /[a-z]/.test(ln) ? ln : smartTitleCase(ln);
-      break;
-    }
+    bookTitle = recoverTitle(lines.slice(0, firstNarrativeLineIdx));
   }
 
   // ── Group the front region into classified, fenced sections ──
@@ -566,6 +614,28 @@ const CHAPTER_PATTERN = /^[ \t]*(chapter\s+(?:one|two|three|four|five|six|seven|
  * 5. Collapse excessive blank lines
  */
 export function preprocessMarkdown(text: string): string {
+  // 0. Drop embedded images. mammoth inlines DOCX images as base64 data-URIs
+  //    (`![alt](data:image/…;base64,…)`); a single figure can be millions of
+  //    characters and swamp the actual prose (a 6.6 MB TIFF became ~100% of one
+  //    real manuscript's ingested text). The engine has no image model, so these
+  //    are pure noise — strip them before anything downstream sees them. Keep any
+  //    alt text as a plain caption line so a meaningful label isn't lost.
+  text = text.replace(/!\[([^\]]*)\]\(data:[^)]*\)/g, (_m, alt) => (alt ? String(alt).trim() : ''));
+
+  // 0b. Strip mammoth's empty HTML anchors + footnote plumbing. Two sources of the
+  //     same noise: DOCX footnotes (`<a id="footnote-ref-1"></a>[[1]](#footnote-1)`
+  //     — the reading view showed `ripios<a…>[[1]](…).`), and Word TOC/heading
+  //     BOOKMARKS (`<a id="_Toc233…"></a>`) which our own publication export attaches
+  //     to every Heading 1. On re-import mammoth glues the bookmark to the heading
+  //     text, prefixing every chapter/matter title with an anchor — which broke
+  //     round-tripping our own DOCX (mis-classified matter, wrecked title-casing).
+  //     Strip ALL empty anchors; footnote note *text* at the doc end is kept.
+  //     (A real footnote model is logged as follow-up.)
+  text = text
+    .replace(/<a\s+[^>]*>\s*<\/a>/gi, '')                        // empty anchors: footnote + Word _Toc bookmarks
+    .replace(/\[\[?\d+\]?\]\(#footnote-[^)]*\)/gi, '')            // [[1]](#footnote-1) refs
+    .replace(/\[[↑^]\]\(#footnote-ref-[^)]*\)/gi, '');       // [↑](#footnote-ref-1) back-links
+
   // 1. Undo mammoth's over-escaping of punctuation. Word/mammoth backslash-escape
   //    a wide range of characters (- ( ) . , : ; etc.). We strip the backslash
   //    before punctuation that is harmless to unescape, but deliberately leave

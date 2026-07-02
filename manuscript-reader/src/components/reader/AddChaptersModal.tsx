@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback } from 'react';
 import { XIcon } from '../ui/Icons';
-import { readFilesToMarkdown, sortFiles } from '../../engine/ingestion/fileReader';
+import { readFilesToMarkdown, sortFiles, UnsupportedFileError } from '../../engine/ingestion/fileReader';
 
 interface AddChaptersModalProps {
   open: boolean;
@@ -48,7 +48,10 @@ export function AddChaptersModal({ open, manuscriptTitle, onClose, onAppend }: A
       setBusy(true);
       readFilesToMarkdown(files)
         .then(chunk => { onAppend(chunk); reset(); })
-        .catch(() => { window.alert('Could not read files.'); setBusy(false); });
+        .catch((err) => {
+          window.alert(err instanceof UnsupportedFileError ? err.message : 'Could not read files.');
+          setBusy(false);
+        });
     }
   };
 

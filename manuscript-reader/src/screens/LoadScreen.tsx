@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { readFilesToMarkdown, sortFiles } from '../engine/ingestion/fileReader';
+import { readFilesToMarkdown, sortFiles, UnsupportedFileError } from '../engine/ingestion/fileReader';
 import { preprocessMarkdown, hasHeading } from '../engine/ingestion/preprocessMarkdown';
 import { showToast } from '../components/ui/Toast';
 import { XIcon } from '../components/ui/Icons';
@@ -39,8 +39,8 @@ export function LoadModal({ onLoad, onClose }: LoadModalProps) {
     try {
       const combined = await readFilesToMarkdown(files);
       onLoad(combined);
-    } catch {
-      showToast('Could not read one or more files.');
+    } catch (err) {
+      showToast(err instanceof UnsupportedFileError ? err.message : 'Could not read one or more files.');
     } finally {
       setLoading(false);
     }

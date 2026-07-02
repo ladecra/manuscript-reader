@@ -878,9 +878,13 @@ export function ReaderScreen({ onChapterLabelChange }: ReaderScreenProps) {
       if (!usesTouchFriendlyEditing()) setupEditable(c, true);
     }
     c.classList.toggle('edit-mode', editMode);
-    if (editMode) { stripAnnotationMarks(c); stripChangeMarks(c); }
+    // Abort any in-flight chunked marking before stripping — otherwise a pass that
+    // started when we landed on Annotations keeps re-adding marks after the strip,
+    // and its last (freshest) batch is the one most likely to be dropped when the
+    // next transition cancels it.
+    if (editMode) { cancelPendingMarks(); stripAnnotationMarks(c); stripChangeMarks(c); }
     else syncAnnotationDOM(); // restore marks for whatever posture we return to
-  }, [editMode, syncAnnotationDOM]);
+  }, [editMode, syncAnnotationDOM, cancelPendingMarks]);
 
   // Switching reader mode (Manuscript / Annotations) dismisses the floating
   // annotate command menu — it belongs to a live selection in Reading.

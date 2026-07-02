@@ -40,7 +40,7 @@ export function ReportView({ signals, onJump }: { signals: EditorialSignals | nu
   // render once there's at least one annotation.
   return (
     <>
-      {insights.length > 0 && <InsightsSection insights={insights} solo={(signals?.readerCount ?? 0) === 0} onJump={onJump} />}
+      {insights.length > 0 && <InsightsSection insights={insights} onJump={onJump} />}
       {hasProse && <ProseSection prose={prose!} onJump={onJump} />}
       {hasAnnotations && <ReportBody signals={signals!} onJump={onJump} />}
       {!hasAnnotations && hasProse && (
@@ -56,9 +56,13 @@ export function ReportView({ signals, onJump }: { signals: EditorialSignals | nu
 
 function ReportBody({ signals, onJump }: { signals: EditorialSignals; onJump: JumpFn }) {
   const report = signals.report;
-  // No beta readers ⇒ these findings are the author's own marks. Same data, but
-  // never described as reader reaction (see isReaderAnnotation in engine/types).
-  const solo = signals.readerCount === 0;
+  // Framing keys on whether READER-authored marks exist (not session count): the
+  // reader-reaction findings (developmental/question/continuity) are reader-only
+  // and thus empty for a solo author; the author's own marks show in their own
+  // "Your revision flags" band below. `hasReaderMarks` only tunes the voice of the
+  // descriptive all-marks findings (hotspots/silent).
+  const hasReaderMarks = report.readers.length > 0;
+  const authorRevision = report.authorRevision;
   const maxT = Math.max(1, ...ANNOTATION_TYPES.map(t => report.typeTotals[t] ?? 0));
 
   return (
@@ -114,15 +118,13 @@ function ReportBody({ signals, onJump }: { signals: EditorialSignals; onJump: Ju
           })}
       </Section>
 
-      {/* ── Findings ── */}
+      {/* ── Reader reactions (READER marks only — empty until beta readers annotate) ── */}
       <Section title="Findings">
         {report.developmentalHotspots.length > 0 && (
           <Finding
             color="var(--ann-structural-solid)"
             title="Developmental flags"
-            desc={solo
-              ? "Chapters densest in your own editorial flags — questions, continuity, structural, pacing, voice. Where you've concentrated revision attention."
-              : "Chapters densest in editorial concerns — questions, continuity, structural, pacing, voice. Where the revision work concentrates, regardless of where readers leaned in."}
+            desc="Chapters densest in reader concerns — questions, continuity, structural, pacing, voice. Where the developmental work concentrates, regardless of where readers simply leaned in."
             chips={report.developmentalHotspots}
             chipLabel={c => `${devCount(c)}`}
             onJump={onJump}
@@ -132,9 +134,9 @@ function ReportBody({ signals, onJump }: { signals: EditorialSignals; onJump: Ju
         <Finding
           color="var(--ann-question-solid)"
           title="Hotspots"
-          desc={solo
-            ? "Chapters carrying your densest marks overall — engagement and concern together, usually where something is working hard."
-            : "Chapters drawing the densest feedback overall — engagement and concern together, usually where something is working hard."}
+          desc={hasReaderMarks
+            ? "Chapters drawing the densest feedback overall — engagement and concern together, usually where something is working hard."
+            : "Chapters carrying your densest marks overall — engagement and concern together, usually where something is working hard."}
           chips={report.hotspots}
           chipLabel={c => `${c.count}`}
           onJump={onJump}
@@ -143,9 +145,9 @@ function ReportBody({ signals, onJump }: { signals: EditorialSignals; onJump: Ju
         <Finding
           color="var(--dim)"
           title="Silent chapters"
-          desc={solo
-            ? "Chapters you haven't marked. Could be smooth — or could be where attention drifts."
-            : "Little or no reader reaction. Could be smooth — or could be where attention drifts."}
+          desc={hasReaderMarks
+            ? "Little or no reader reaction. Could be smooth — or could be where attention drifts."
+            : "Chapters you haven't marked. Could be smooth — or could be where attention drifts."}
           chips={report.silent}
           onJump={onJump}
         />
@@ -154,9 +156,7 @@ function ReportBody({ signals, onJump }: { signals: EditorialSignals; onJump: Ju
           <Finding
             color="var(--ann-question-solid)"
             title="Question clusters"
-            desc={solo
-              ? "Where you flagged the most questions — your own open setups to resolve."
-              : "Where readers asked the most — possible confusion or unanswered setups."}
+            desc="Where readers asked the most — possible confusion or unanswered setups."
             chips={report.questionClusters}
             chipLabel={c => `${c.counts.question ?? 0}?`}
             onJump={onJump}
@@ -167,13 +167,30 @@ function ReportBody({ signals, onJump }: { signals: EditorialSignals; onJump: Ju
           <Finding
             color="var(--ann-continuity-solid)"
             title="Continuity flags"
-            desc="Chapters carrying continuity notes worth a focused pass."
+            desc="Chapters carrying reader continuity notes worth a focused pass."
             chips={report.continuityFlags}
             chipLabel={c => `${c.counts.continuity ?? 0}`}
             onJump={onJump}
           />
         )}
       </Section>
+
+      {/* ── Your revision flags (the author's OWN marks — a queue, not reader reaction) ── */}
+      {authorRevision.totalFlags > 0 && (
+        <Section title="Your revision flags">
+          <div className="rp-finding-desc">
+            Your own marks — a revision queue, not reader reaction. {authorRevision.totalFlags} flag{authorRevision.totalFlags === 1 ? '' : 's'} across {authorRevision.chapters.length} chapter{authorRevision.chapters.length === 1 ? '' : 's'}.
+          </div>
+          <Finding
+            color="var(--ann-note-solid)"
+            title="Where your flags cluster"
+            desc="Chapters you’ve marked most — your own questions, notes, and revision to-dos to work through. Jump in to pick up the thread."
+            chips={authorRevision.chapters}
+            chipLabel={c => `${c.count}`}
+            onJump={onJump}
+          />
+        </Section>
+      )}
     </>
   );
 }
@@ -185,15 +202,16 @@ function ReportBody({ signals, onJump }: { signals: EditorialSignals; onJump: Ju
 // Authorship-aware: with no beta readers the reaction tier is the AUTHOR's own
 // revision flags, never "reader reactions" (the data is identical; the framing
 // must not be). Consensus only ever appears when readers exist.
-function tierLabel(tier: ManuscriptInsight['tier'], solo: boolean): string {
+function tierLabel(tier: ManuscriptInsight['tier']): string {
   switch (tier) {
-    case 'consensus': return 'Reader agreement';
-    case 'reaction':  return solo ? 'Your revision flags' : 'Reader reactions';
-    case 'prose':     return 'Prose';
+    case 'consensus':    return 'Reader agreement';
+    case 'reaction':     return 'Reader reactions';
+    case 'author-queue': return 'Your revision flags';
+    case 'prose':        return 'Prose';
   }
 }
 
-function InsightsSection({ insights, solo, onJump }: { insights: ManuscriptInsight[]; solo: boolean; onJump: JumpFn }) {
+function InsightsSection({ insights, onJump }: { insights: ManuscriptInsight[]; onJump: JumpFn }) {
   return (
     <Section title="Worth a look">
       <div className="rp-finding-desc">
@@ -220,7 +238,7 @@ function InsightsSection({ insights, solo, onJump }: { insights: ManuscriptInsig
               title={i.chapter != null ? `Jump to Chapter ${i.chapter}` : undefined}
             >
               <span className="rp-insight-main">
-                <span className="rp-insight-tier">{tierLabel(i.tier, solo)}</span>
+                <span className="rp-insight-tier">{tierLabel(i.tier)}</span>
                 <span className="rp-insight-headline">{i.headline}</span>
                 {showDetail && <span className="rp-insight-detail">{i.detail}</span>}
               </span>

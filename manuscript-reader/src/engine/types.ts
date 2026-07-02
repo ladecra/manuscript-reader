@@ -284,8 +284,26 @@ export interface Report {
   score: number;                // engagement score 0–100
   label: string;                // engagement label
   blurb: string;                // engagement blurb
-  clusters: AnnotationCluster[];// detected editorial signals (confusion / continuity / structural / engagement)
+  clusters: AnnotationCluster[];// detected editorial signals (confusion / continuity / structural / engagement) — READER marks only
   consensus: ChapterStat[];     // chapters multiple beta readers reacted to, sorted by reader agreement (empty for <2 readers)
+  authorRevision: AuthorRevisionSummary; // the author's OWN marks projected as a revision queue (never reader reaction)
+}
+
+/**
+ * The author's own annotations projected as a revision queue — their to-dos,
+ * NOT reader reactions. Built over author marks only (isAuthorAnnotation) so an
+ * author questioning their own line is never counted as reader confusion, and
+ * kept strictly apart from Report's reader-sourced findings (clusters,
+ * developmentalHotspots, questionClusters, continuityFlags, engagement score).
+ * Empty (zeroed) when the author has left no marks. Same run-detector as the
+ * reader clusters, so multi-chapter grouping is preserved — only the framing
+ * differs. See author-signal-and-matter-brief.md Part 1.
+ */
+export interface AuthorRevisionSummary {
+  totalFlags: number;                                  // total author annotations, all types
+  typeTotals: Partial<Record<AnnotationType, number>>; // author flags by type
+  chapters: ChapterStat[];                             // per-chapter author-flag stats, densest first (author counts; readerCount always 0)
+  clusters: AnnotationCluster[];                        // run-grouped author flags (same detector as reader clusters, author-framed)
 }
 
 // ─── Export ──────────────────────────────────────────────────────────────────
@@ -602,7 +620,9 @@ export interface EditorialSignals {
 
   // ── Cross-reader signal ──
   readerAgreement: ChapterAgreementSignal[]; // chapters ranked by independent-reader agreement
-  unresolvedConcerns: number;   // open (not 'resolved') question/continuity/structural annotations
+  unresolvedConcerns: number;         // open (not 'resolved') question/continuity/structural — ALL marks (author + reader); kept for cross-version delta continuity
+  unresolvedReaderConcerns: number;   // of those, the reader-authored ones (the true "reader concern" number)
+  openAuthorFlags: number;            // of those, the author's own open to-dos (revision queue, not reader concern). unresolvedConcerns === unresolvedReaderConcerns + openAuthorFlags
 
   // ── Engagement shape ──
   engagementCurve: number[];    // per-chapter normalized engagement, in chapter order
@@ -624,7 +644,10 @@ export interface EditorialSignals {
 // — never an editorial verdict. Evidence stays STRUCTURED (numbers, not
 // pre-formatted strings) so each surface formats for its own medium; the prose
 // lives only in `headline`/`detail`.
-export type InsightTier = 'consensus' | 'reaction' | 'prose';
+// 'author-queue' is the author's OWN revision flags surfaced as navigational
+// pointers — distinct from 'reaction' (reader marks). An author flagging their
+// own line is not reader confusion, so it never shares the reaction tier's copy.
+export type InsightTier = 'consensus' | 'reaction' | 'author-queue' | 'prose';
 
 export interface ManuscriptInsight {
   id: string;

@@ -11,12 +11,15 @@
 // to reader actions (the author is one reader among any betas).
 //
 // Ranking is by tier, most-actionable first:
-//   1. consensus — several readers independently reacted to the same chapter
-//   2. reaction  — a concentrated annotation cluster (confusion/continuity first)
-//   3. prose     — a chapter whose length is a self-relative outlier
-// Consensus above reaction is what lets agreement outrank solo hotspot noise. We
-// never emit a standalone "hotspot" insight: a lone dense chapter is too easy to
-// overstate for a solo author; only concentrated clusters surface.
+//   1. consensus    — several readers independently reacted to the same chapter
+//   2. reaction     — a concentrated READER cluster (confusion/continuity first)
+//   3. author-queue — the author's OWN flags, run-grouped, as revision pointers
+//   4. prose        — a chapter whose length is a self-relative outlier
+// Reader signal (consensus, reaction) outranks the author's own queue, which
+// outranks text-only prose. Author marks and reader marks are different speech
+// acts (Part 1): reader marks are reactions, author marks are revision intent, and
+// they never share a tier or its copy. We never emit a standalone "hotspot"
+// insight: a lone dense chapter is too easy to overstate; only clusters surface.
 
 import type { EditorialSignals, ManuscriptInsight, AnnotationCluster, ChapterStat } from '../types';
 import { DEVELOPMENTAL_TYPES, ANNOTATION_LABELS } from '../types';
@@ -29,20 +32,16 @@ import { chapterLengthInsightFlag } from '../prose/chapterLengthOutlier';
 // length, the classic two-chapters-merged tell. Short chapters surface at ≤0.25×
 // — much stricter than the table's 0.6× — for likely false breaks (orphaned headings).
 
-const MAX_CONSENSUS = 2, MAX_CLUSTERS = 2, MAX_REACTION = 3, MAX_PROSE = 2, MAX_TOTAL = 5;
+const MAX_CONSENSUS = 2, MAX_CLUSTERS = 2, MAX_REACTION = 3, MAX_AUTHORQUEUE = 2, MAX_PROSE = 2, MAX_TOTAL = 5;
 
 export function rankInsights(signals: EditorialSignals): ManuscriptInsight[] {
   return [
-    ...consensusInsights(signals),
-    ...reactionInsights(signals),
-    ...proseInsights(signals),
+    ...consensusInsights(signals),   // several readers agreed (reader marks)
+    ...reactionInsights(signals),    // a concentrated reader cluster (reader marks)
+    ...authorQueueInsights(signals), // the author's own revision flags (author marks)
+    ...proseInsights(signals),       // a self-relative length outlier (text)
   ].slice(0, MAX_TOTAL);
 }
-
-/** With no beta readers, the annotation clusters are the AUTHOR's own marks — a
- *  revision queue, not reader reaction. The framing (not the data) changes:
- *  "you flagged" / "your own notes", never "possible reader confusion". */
-const isSolo = (signals: EditorialSignals): boolean => signals.readerCount === 0;
 
 // ── Consensus: chapters several readers reacted to independently ──────────────
 function consensusInsights(signals: EditorialSignals): ManuscriptInsight[] {
@@ -69,32 +68,56 @@ function consensusInsights(signals: EditorialSignals): ManuscriptInsight[] {
     });
 }
 
-// ── Reaction: concentrated annotation clusters + developmental density ────────
-function reactionInsights(signals: EditorialSignals): ManuscriptInsight[] {
-  const solo = isSolo(signals);
-  // Clusters (confusion/continuity/structural/engagement runs) are pre-sorted by
-  // severity then volume — preserve that, just nudge positive engagement to the
-  // back of the revision-pointing signals.
-  const ranked = [...signals.report.clusters].sort(
-    (a, b) => signalRank(a.signal) - signalRank(b.signal),
-  );
-  const clusters = dedupeByRange(ranked).slice(0, MAX_CLUSTERS);
-  const out = clusters.map(c => clusterInsight(c, solo));
+type Framing = 'reader' | 'author';
 
-  // Chapters already spoken for by a cluster — don't double-flag the same chapter.
+// ── Reaction: concentrated READER clusters + reader developmental density ─────
+// Reader marks only. Empty by construction when no readers have annotated — a
+// solo author's own marks never surface here; they flow to the author-queue tier.
+function reactionInsights(signals: EditorialSignals): ManuscriptInsight[] {
+  return clusterAndDevInsights(
+    signals.report.clusters,
+    signals.report.developmentalHotspots,
+    'reader',
+  ).slice(0, MAX_REACTION);
+}
+
+// ── Author queue: the author's OWN flags as navigational pointers ─────────────
+// Same run-detector as the reader reaction tier, over author marks — so "3
+// questions across Ch 3–5" is preserved — but framed as the author's revision
+// queue ("you flagged"), never as reader confusion.
+function authorQueueInsights(signals: EditorialSignals): ManuscriptInsight[] {
+  const ar = signals.report.authorRevision;
+  return clusterAndDevInsights(ar.clusters, ar.chapters, 'author')
+    .slice(0, MAX_AUTHORQUEUE);
+}
+
+// Shared shape for reaction (reader) and author-queue (author): the pre-sorted
+// clusters, plus one developmental-density pointer for the densest concern
+// chapter a cluster didn't already cover (this is what surfaces pacing/voice
+// work, which the cluster model doesn't track at all).
+function clusterAndDevInsights(
+  clustersIn: AnnotationCluster[],
+  devChapters: ChapterStat[],
+  framing: Framing,
+): ManuscriptInsight[] {
+  const ranked = [...clustersIn].sort((a, b) => signalRank(a.signal) - signalRank(b.signal));
+  const clusters = dedupeByRange(ranked).slice(0, MAX_CLUSTERS);
+  const out = clusters.map(c => clusterInsight(c, framing));
+
   const claimed = new Set<number>();
   for (const c of clusters) for (let i = c.chapterRange[0]; i <= c.chapterRange[1]; i++) claimed.add(i);
 
-  // One developmental-density pointer for the densest editorial-concern chapter a
-  // cluster didn't already cover. This is what surfaces pacing/voice work, which
-  // the cluster model doesn't track at all.
-  const dev = signals.report.developmentalHotspots.find(c => !claimed.has(c.index));
-  if (dev) out.push(developmentalInsight(dev, solo));
+  const dev = devChapters
+    .filter(c => !claimed.has(c.index) && devCountOf(c) >= 2)
+    .sort((a, b) => devCountOf(b) - devCountOf(a))[0];
+  if (dev) out.push(developmentalInsight(dev, framing));
 
-  return out.slice(0, MAX_REACTION);
+  return out;
 }
 
-function developmentalInsight(c: ChapterStat, solo: boolean): ManuscriptInsight {
+const devCountOf = (c: ChapterStat) => DEVELOPMENTAL_TYPES.reduce((s, t) => s + (c.counts[t] ?? 0), 0);
+
+function developmentalInsight(c: ChapterStat, framing: Framing): ManuscriptInsight {
   const present = DEVELOPMENTAL_TYPES
     .map(t => ({ t, n: c.counts[t] ?? 0 }))
     .filter(x => x.n > 0)
@@ -103,13 +126,14 @@ function developmentalInsight(c: ChapterStat, solo: boolean): ManuscriptInsight 
   const lead = present[0]?.t;
   const where = chapterName(c.title, c.index);
   const mostly = lead ? `, mostly ${ANNOTATION_LABELS[lead].toLowerCase()}` : '';
+  const author = framing === 'author';
   return {
-    id: `insight-dev-${c.index}`,
-    tier: 'reaction',
-    headline: solo
+    id: author ? `insight-authordev-${c.index}` : `insight-dev-${c.index}`,
+    tier: author ? 'author-queue' : 'reaction',
+    headline: author
       ? `${where} carries the most revision flags you’ve left`
       : `${where} carries the densest developmental flags`,
-    detail: solo
+    detail: author
       ? `${total} of your own editorial note${plural(total)}${mostly} — where you’ve concentrated revision attention.`
       : `${total} editorial note${plural(total)}${mostly} — concentrated revision attention, distinct from where readers simply leaned in.`,
     chapter: c.index,
@@ -122,15 +146,19 @@ function developmentalInsight(c: ChapterStat, solo: boolean): ManuscriptInsight 
   };
 }
 
-function clusterInsight(c: AnnotationCluster, solo: boolean): ManuscriptInsight {
+function clusterInsight(c: AnnotationCluster, framing: Framing): ManuscriptInsight {
   const [from, to] = c.chapterRange;
   const where = rangeLabel(from, to);
   const copy = CLUSTER_COPY[c.signal];
+  const f = copy[framing];
+  const author = framing === 'author';
   return {
-    id: `insight-${c.id}`,
-    tier: 'reaction',
-    headline: copy.headline(c.count, where, solo),
-    detail: solo ? copy.soloDetail : copy.detail,
+    // Reader and author clusters share detectClusters' id namespace; prefix the
+    // author ones so a mixed manuscript never collides on the same range.
+    id: author ? `insight-author-${c.id}` : `insight-${c.id}`,
+    tier: author ? 'author-queue' : 'reaction',
+    headline: f.headline(c.count, where),
+    detail: f.detail,
     chapter: from,
     chapterRange: [from, to],
     evidence: {
@@ -142,39 +170,32 @@ function clusterInsight(c: AnnotationCluster, solo: boolean): ManuscriptInsight 
   };
 }
 
-// Each signal carries reader-framed copy and an author-framed (`solo`) variant —
-// the same counts, never described as reader reaction when the author is alone.
+// Each signal carries a reader-framed variant (reaction tier) and an author-framed
+// variant (author-queue tier) — the SAME counts, but reader marks read as reaction
+// and author marks read as a revision queue. The two are never interchangeable.
 const CLUSTER_COPY: Record<AnnotationCluster['signal'], {
-  headline: (n: number, where: string, solo: boolean) => string;
-  detail: string;
-  soloDetail: string;
+  reader: { headline: (n: number, where: string) => string; detail: string };
+  author: { headline: (n: number, where: string) => string; detail: string };
   label: (n: number) => string;
 }> = {
   confusion: {
-    headline: (n, where, solo) =>
-      solo ? `${n} question${plural(n)} you flagged ${where}` : `${n} question${plural(n)} cluster ${where}`,
-    detail: 'Possible confusion or an unanswered setup — worth a close read on your next pass.',
-    soloDetail: 'Your own open questions — worth resolving on your next pass.',
+    reader: { headline: (n, where) => `${n} question${plural(n)} cluster ${where}`, detail: 'Possible confusion or an unanswered setup — worth a close read on your next pass.' },
+    author: { headline: (n, where) => `${n} question${plural(n)} you flagged ${where}`, detail: 'Your own open questions — worth resolving on your next pass.' },
     label: n => `${n} question${plural(n)}`,
   },
   'continuity-break': {
-    headline: (n, where, solo) =>
-      solo ? `${n} continuity flag${plural(n)} you left ${where}` : `${n} continuity flag${plural(n)} ${where}`,
-    detail: 'Worth a focused consistency pass across these chapters.',
-    soloDetail: 'Your own continuity notes — worth a focused consistency pass across these chapters.',
+    reader: { headline: (n, where) => `${n} continuity flag${plural(n)} ${where}`, detail: 'Worth a focused consistency pass across these chapters.' },
+    author: { headline: (n, where) => `${n} continuity flag${plural(n)} you left ${where}`, detail: 'Your own continuity notes — worth a focused consistency pass across these chapters.' },
     label: n => `${n} continuity`,
   },
   'structural-issue': {
-    headline: (n, where, solo) =>
-      solo ? `${n} structural note${plural(n)} you left ${where}` : `${n} structural note${plural(n)} ${where}`,
-    detail: 'Pacing, scene order, or chapter shape — worth a look while the run is fresh.',
-    soloDetail: 'Your own structural notes — pacing, scene order, or chapter shape to revisit.',
+    reader: { headline: (n, where) => `${n} structural note${plural(n)} ${where}`, detail: 'Pacing, scene order, or chapter shape — worth a look while the run is fresh.' },
+    author: { headline: (n, where) => `${n} structural note${plural(n)} you left ${where}`, detail: 'Your own structural notes — pacing, scene order, or chapter shape to revisit.' },
     label: n => `${n} structural`,
   },
   engagement: {
-    headline: (n, where) => `A concentration of ${n} highlights and bookmarks ${where}`,
-    detail: 'This is landing — useful to know what to protect in revision.',
-    soloDetail: 'Passages you marked to keep — useful to know what to protect in revision.',
+    reader: { headline: (n, where) => `A concentration of ${n} highlights and bookmarks ${where}`, detail: 'This is landing — useful to know what to protect in revision.' },
+    author: { headline: (n, where) => `${n} passage${plural(n)} you marked to keep ${where}`, detail: 'Passages you marked to keep — useful to know what to protect in revision.' },
     label: n => `${n} marks`,
   },
 };

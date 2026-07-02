@@ -215,13 +215,17 @@ function buildDoc(data: {
   // signals) — so the download and the screen never tell different stories. The
   // engagement summary stays as a closing line of context, not a ranked pointer.
   children.push(label('Key Takeaways', { before: 200, after: 140 }));
-  const tierColor: Record<InsightTier, string> = { consensus: INK, reaction: HEX.question, prose: META };
+  const tierColor: Record<InsightTier, string> = { consensus: INK, reaction: HEX.question, 'author-queue': HEX.note, prose: META };
   const takeaways: { color: string; title: string; desc: string }[] = rankInsights(signals).map(i => ({
     color: tierColor[i.tier],
     title: i.headline,
     desc: i.detail ?? '',
   }));
-  takeaways.push({ color: HEX.bookmark, title: `${signals.readerCount === 0 ? 'Engagement' : 'Reader Engagement'}: ${rep.label}`, desc: rep.blurb });
+  // Engagement is a READER measure — only append it when reader-authored marks
+  // exist; a solo author's own flags never close the report as "engagement".
+  if (rep.readers.length > 0) {
+    takeaways.push({ color: HEX.bookmark, title: `Reader Engagement: ${rep.label}`, desc: rep.blurb });
+  }
   takeaways.forEach(t => {
     children.push(new Paragraph({
       children: [new TextRun({ text: `●  ${t.title}`, font: SANS, size: 18, bold: true, color: t.color })],
@@ -334,7 +338,7 @@ function buildDoc(data: {
       detail('Total Words', rep.totalWords.toLocaleString()),
       detail('Chapters', chapters.length),
       detail('Total Readers', rep.readers.length ? `${rep.readers.length} — ${rep.readers.join(', ')}` : 'You only'),
-      detail('Engagement', `${rep.score} / 100 · ${rep.label}`),
+      detail('Engagement', rep.readers.length ? `${rep.score} / 100 · ${rep.label}` : 'Awaiting reader feedback'),
       detail('Generated', dateStr),
     ] }));
 
