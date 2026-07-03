@@ -19,10 +19,13 @@ import { preprocessMarkdown, hasHeading, MAMMOTH_STYLE_MAP } from '../src/engine
 import { countWords } from '../src/engine/ingestion/parseMarkdown.ts';
 import { buildManuscriptStructure } from '../src/engine/ingestion/manuscriptStructure.ts';
 import { extractFrontMatterCandidates } from '../src/engine/ingestion/frontMatterExtract.ts';
+import { extractDocxSignals } from '../src/engine/ingestion/docxSignals.ts';
+import { segmentDocx } from '../src/engine/ingestion/docxSegment.ts';
+import { applySignalsToMarkdown } from '../src/engine/ingestion/docxBridge.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-// Mirror fileReader.readDocx / plainToMarkdown exactly.
+// Mirror fileReader.readDocx / plainToMarkdown exactly (incl. the signal bridge).
 async function toMarkdown(path) {
   const isDocx = extname(path).toLowerCase() === '.docx';
   let text;
@@ -30,6 +33,10 @@ async function toMarkdown(path) {
     const buffer = await readFile(path);
     const { value } = await mammoth.convertToMarkdown({ buffer }, { styleMap: MAMMOTH_STYLE_MAP });
     text = preprocessMarkdown(value.trim());
+    try {
+      const seg = segmentDocx(await extractDocxSignals(buffer));
+      text = applySignalsToMarkdown(text, seg);
+    } catch { /* signals are an enhancement, not a requirement */ }
   } else {
     text = preprocessMarkdown((await readFile(path, 'utf8')).trim());
   }

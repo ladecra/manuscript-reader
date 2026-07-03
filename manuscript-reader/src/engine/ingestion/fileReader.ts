@@ -1,5 +1,8 @@
 import { preprocessMarkdown, hasHeading, MAMMOTH_STYLE_MAP } from './preprocessMarkdown';
 import { assertIngestibleFormat, looksBinary, UnsupportedFileError } from './fileFormat';
+import { extractDocxSignals } from './docxSignals';
+import { segmentDocx } from './docxSegment';
+import { applySignalsToMarkdown } from './docxBridge';
 
 export { UnsupportedFileError } from './fileFormat';
 
@@ -34,14 +37,26 @@ async function readDocx(file: File, ab: ArrayBuffer): Promise<string> {
     );
   }
   let text = preprocessMarkdown(result.value.trim());
+
+  // Augment with DOCX layout signals (augment-first): the title page's font
+  // pyramid and centered author line — which mammoth flattens away — recover a
+  // real title/author the text pipeline routinely misses. Best-effort: a signal
+  // failure must never block a working text ingestion, so it's guarded.
+  try {
+    const segmentation = segmentDocx(await extractDocxSignals(ab));
+    text = applySignalsToMarkdown(text, segmentation);
+  } catch {
+    // Signals are an enhancement, not a requirement — fall through to text-only.
+  }
+
   const title = file.name.replace(/\.docx$/i, '').replace(/[-_]/g, ' ').trim();
   if (!hasHeading(text)) {
     // No structure at all — wrap the whole thing under a filename heading.
     text = `# ${title}\n\n${text}`;
   } else if (!/<!--\s*title:/i.test(text)) {
     // Chapters were found but the document had no title page (common for DOCX
-    // exports). Use the filename as the book title so the library/topbar don't
-    // show the first chapter's name as the manuscript title.
+    // exports) and signals gave no confident title. Use the filename so the
+    // library/topbar don't show the first chapter's name as the manuscript title.
     text = `<!-- title: ${title} -->\n\n${text}`;
   }
   return text;

@@ -328,7 +328,11 @@ export function promoteHeadinglessChapters(text: string): string {
       // the next non-blank line. Consume it when it reads like a heading.
       const j = nextNonBlank(i + 1);
       if (j !== -1) {
-        const t = unwrapEmphasis(lines[j]);
+        // The title may arrive as its own real heading (`# Title`) — e.g. our own
+        // publication DOCX emits "CHAPTER N" + the title as HEADING_1. Strip the
+        // leading `#` before combining, or it survives into the subtitle and shifts
+        // smartTitleCase's token 0 (lowercasing the real first word: "the Escape…").
+        const t = unwrapEmphasis(lines[j].replace(/^#+\s*/, ''));
         if (looksLikeTitle(t) && !isChapterLabel(t) && !isChapterBody(t)) {
           combined = `${label} — ${t}`;
           consumedUpto = j;
