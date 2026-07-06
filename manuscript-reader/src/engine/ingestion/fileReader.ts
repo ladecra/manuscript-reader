@@ -2,7 +2,9 @@ import { preprocessMarkdown, hasHeading, MAMMOTH_STYLE_MAP } from './preprocessM
 import { assertIngestibleFormat, looksBinary, UnsupportedFileError } from './fileFormat';
 import { extractDocxSignals } from './docxSignals';
 import { segmentDocx } from './docxSegment';
-import { applySignalsToMarkdown } from './docxBridge';
+import { applySignalsToMarkdown, injectSignalStructure, textPipelineUnderSegmented } from './docxBridge';
+import { getParsedManuscript } from './parseCache';
+import { countWords } from './parseMarkdown';
 
 export { UnsupportedFileError } from './fileFormat';
 
@@ -36,14 +38,30 @@ async function readDocx(file: File, ab: ArrayBuffer): Promise<string> {
       `“${file.name}” could not be read as a Word document — it may be corrupt. Re-save it from Word as .docx and try again.`,
     );
   }
-  let text = preprocessMarkdown(result.value.trim());
+  const raw = result.value.trim();
+  let text = preprocessMarkdown(raw);
 
   // Augment with DOCX layout signals (augment-first): the title page's font
   // pyramid and centered author line — which mammoth flattens away — recover a
-  // real title/author the text pipeline routinely misses. Best-effort: a signal
-  // failure must never block a working text ingestion, so it's guarded.
+  // real title/author the text pipeline routinely misses; and when the text
+  // pipeline fails to segment at all (a headingless book left as one giant
+  // chapter), the signal-detected chapter/matter boundaries are injected so it
+  // splits and its front/back matter strips. Best-effort: a signal failure must
+  // never block a working text ingestion, so it's guarded.
   try {
-    const segmentation = segmentDocx(await extractDocxSignals(ab));
+    const signals = await extractDocxSignals(ab);
+    const segmentation = segmentDocx(signals);
+
+    // If the text pipeline collapsed the whole book into one chapter but the
+    // signals found real structure, re-run the pipeline over signal-injected
+    // markdown (headings the text layer couldn't see) so matter fences + title
+    // recovery happen the normal way.
+    const { chapters } = getParsedManuscript(text);
+    if (segmentation.anchored && textPipelineUnderSegmented(chapters.length, countWords(text)) && segmentation.headings.length > 1) {
+      const injected = injectSignalStructure(raw, signals, segmentation);
+      text = preprocessMarkdown(injected);
+    }
+
     text = applySignalsToMarkdown(text, segmentation);
   } catch {
     // Signals are an enhancement, not a requirement — fall through to text-only.

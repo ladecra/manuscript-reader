@@ -14,6 +14,7 @@
     "check-signals": "tsx fixtures/check-signals.mjs",
     "check-segmentation": "tsx fixtures/check-segmentation.mjs",
     "check-docx-signals": "tsx fixtures/check-docx-signals.mjs",
+    "check-import-summary": "tsx fixtures/check-import-summary.mjs",
     "check-sessions": "tsx fixtures/check-sessions.mjs",
     "check-snapshots": "tsx fixtures/check-snapshots.mjs",
     "check-snapshot-sync": "tsx fixtures/check-snapshot-sync.mjs",
@@ -33,7 +34,9 @@
     "check-readiness": "tsx fixtures/check-readiness.mjs",
     "check-assembly": "tsx fixtures/check-assembly.mjs",
     "check-matter-edit": "tsx fixtures/check-matter-edit.mjs",
-    "check-share-parity": "tsx fixtures/check-share-parity.mjs"
+    "check-structure-edit": "tsx fixtures/check-structure-edit.mjs",
+    "check-share-parity": "tsx fixtures/check-share-parity.mjs",
+    "check-revision": "tsx fixtures/check-revision.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",

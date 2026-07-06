@@ -3,6 +3,8 @@ import type { Manuscript, ManuscriptStatus, PublishingMetadata } from '../engine
 import { MANUSCRIPT_STATUSES } from '../engine/types';
 import { loadLibrary, saveLibrary, uniqueManuscriptId, savePosition, loadPosition, clearManuscriptTombstone, type StoredManuscript } from '../engine/storage';
 import { parseMarkdown, countWords } from '../engine/ingestion/parseMarkdown';
+import { buildManuscriptStructure } from '../engine/ingestion/manuscriptStructure';
+import { extractFrontMatterCandidates, applyFrontMatterCandidates } from '../engine/ingestion/frontMatterExtract';
 
 function toManuscript(s: StoredManuscript): Manuscript {
   return {
@@ -60,6 +62,12 @@ export const useLibraryStore = create<LibraryStore>((_set, _get) => {
       const titleComment = md.match(/<!--\s*title:\s*(.+?)\s*-->/i);
       const h1Match = md.match(/^# (.+)$/m);
       const title = titleComment ? titleComment[1].trim() : h1Match ? h1Match[1].trim() : 'Untitled';
+      const structure = buildManuscriptStructure(md);
+      const candidates = extractFrontMatterCandidates(structure);
+      const merged = applyFrontMatterCandidates(
+        { author: candidates.author, publishing: {} },
+        candidates,
+      );
       const id = uniqueManuscriptId(title, stored.map(m => m.id));
       const { chapters } = parseMarkdown(md);
       const wordCount = countWords(md);
@@ -68,6 +76,8 @@ export const useLibraryStore = create<LibraryStore>((_set, _get) => {
         status: 'Draft',
         combinedMarkdown: md,
         revision: 1,
+        author: merged.author,
+        publishing: Object.keys(merged.publishing).length ? merged.publishing : undefined,
       };
       stored.unshift(flat);
       clearManuscriptTombstone(id);

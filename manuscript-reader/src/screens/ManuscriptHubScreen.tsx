@@ -33,6 +33,10 @@ import { heroTitleClass } from '../components/ui/heroTitle';
 import { CoverImage } from '../components/ui/CoverImage';
 import { ManuscriptWorkspaceRail, type HubPane } from '../components/layout/ManuscriptWorkspaceRail';
 import { FeedbackTab } from '../components/hub/FeedbackTab';
+import { RevisionTab } from '../components/hub/RevisionTab';
+import { useConcernStore } from '../state/concernStore';
+import { suggestConcernGroups } from '../engine/concerns/suggestGroups';
+import { exportRevisionContext } from '../engine/exports/revisionContext';
 import { PublishingDetailsForm } from '../components/hub/PublishingDetailsForm';
 
 // The manuscript page: a book's antechamber. Shared `.instrument-*` list styling
@@ -103,6 +107,18 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
     () => resolveAnnotationChapters(rawAnnotations, combinedMarkdown),
     [rawAnnotations, combinedMarkdown],
   );
+  // Revision-concern graph: hydrate alongside the manuscript so the Revision
+  // pane, rail badge, and context export all read the same store.
+  const { graph: concernGraph, hydrated: concernsHydrated, hydrate: hydrateConcerns } = useConcernStore();
+  useEffect(() => {
+    if (manuscriptId) void hydrateConcerns(manuscriptId);
+  }, [manuscriptId, hydrateConcerns]);
+  const revisionCount = useMemo(() => {
+    if (!concernsHydrated) return 0;
+    const active = concernGraph.concerns.filter(c => c.status === 'active').length;
+    return active + suggestConcernGroups(annotations, concernGraph).length;
+  }, [concernsHydrated, concernGraph, annotations]);
+
   const pct = manuscript ? Math.round(getReadingPosition(manuscript.id) * 100) : 0;
   const progressFrac = manuscript ? getReadingPosition(manuscript.id) : 0;
 
@@ -254,6 +270,24 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
       showToast('Report data exported.');
     }).catch(e => { console.error('JSON export error:', e); showToast('Export failed — see console.'); });
   }, [manuscript, annotations, chapters, sessions, exportMeta]);
+
+  // The single-file revision briefing: goals, threads, marks, changes — first-
+  // class even with zero threads (grouping enriches it, never gates it).
+  const handleExportRevisionContext = useCallback(() => {
+    if (!manuscript) return;
+    exportRevisionContext(
+      {
+        title: exportMeta().title,
+        author: manuscript.metadata.author,
+        annotations,
+        edits,
+        graph: useConcernStore.getState().graph,
+        combinedMarkdown,
+      },
+      manuscript.id,
+    );
+    showToast('REVISION_CONTEXT.md exported.');
+  }, [manuscript, annotations, edits, combinedMarkdown, exportMeta]);
 
   const handleExportRevisionLog = useCallback(() => {
     if (!manuscript || !edits.length) { showToast('No edits yet.'); return; }
@@ -603,6 +637,17 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
               />
             )}
 
+            {pane === 'revision' && (
+              <RevisionTab
+                manuscriptTitle={title}
+                authorName={manuscript.metadata.author}
+                annotations={annotations}
+                edits={edits}
+                combinedMarkdown={combinedMarkdown}
+                onJump={jumpToChapter}
+              />
+            )}
+
             {pane === 'versions' && (
               <VersionsTab
                 versions={versions}
@@ -658,6 +703,7 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
                 onExportReportHtml={handleExportReportHtml}
                 onExportReportJson={handleExportReportJson}
                 onExportRevisionLog={handleExportRevisionLog}
+                onExportRevisionContext={handleExportRevisionContext}
                 onOpenShareReader={openShareReader}
               />
             )}
@@ -670,6 +716,7 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
         pane={pane}
         annotationCount={annotations.length}
         versionCount={versions.length}
+        revisionCount={revisionCount}
         savedLabel={savedLabel}
         wayfinding={wayfinding}
         note={{ value: note, onChange: onNoteChange }}
@@ -932,13 +979,14 @@ function VersionRow({ version, ordinal, manuscriptAvailable, onRestore, onRelabe
 function ExportsTab({
   manuscriptAvailable, annCount, editCount,
   onExportReportDocx, onExportReportHtml, onExportReportJson, onExportRevisionLog,
-  onOpenShareReader,
+  onExportRevisionContext, onOpenShareReader,
 }: {
   manuscriptAvailable: boolean; annCount: number; editCount: number;
   onExportReportDocx: () => void | Promise<void>;
   onExportReportHtml: () => void;
   onExportReportJson: () => void;
   onExportRevisionLog: () => void;
+  onExportRevisionContext: () => void;
   onOpenShareReader: (mode: 'reading' | 'annotating') => void;
 }) {
   const noManuscript = !manuscriptAvailable;
@@ -952,6 +1000,11 @@ function ExportsTab({
       <section className="hub-export-section">
         <div className="hub-export-section-label">Revisions</div>
         <div className="hub-export-cards">
+          <ExportCard chip="MD" title="Revision context"
+            disabled={noManuscript}
+            disabledHint={noManuscriptHint}
+            desc="One briefing file — goals, revision threads, your marks, and recent changes — ready for any drafting environment or AI review."
+            onClick={onExportRevisionContext} />
           <ExportCard chip="LOG" title="Revision log"
             disabled={editCount === 0}
             disabledHint="Edit a chapter in the reader to start a revision log"

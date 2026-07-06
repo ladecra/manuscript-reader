@@ -21,8 +21,7 @@ import { sortLibraryManuscripts } from '../engine/library';
 import { loadAnnotations, loadSnapshot } from '../engine/storage';
 import { useManuscriptArtifactExports } from '../hooks/useManuscriptArtifactExports';
 import { getParsedManuscript } from '../engine/ingestion/parseCache';
-import { chapterWordCounts } from '../engine/reading/manuscriptPages';
-import { ChapterAtlasList } from '../components/hub/ChapterAtlasList';
+import { StructureEditor } from '../components/library/StructureEditor';
 import { StudioAssemblyRail, type AssemblyUnmetItem } from '../components/studio/StudioAssemblyRail';
 import { StudioEditionPicker } from '../components/studio/StudioEditionPicker';
 import { studioFormat, type StudioFormatId } from '../components/studio/studioFormats';
@@ -230,6 +229,18 @@ export function PublishingStudioScreen({ onExit, onOpenManuscript }: PublishingS
     showToast('Matter updated.');
   }, [selected, openId, replaceMarkdown, openManuscript]);
 
+  // Structural edits (rename / merge / reclassify chapter⇄matter) write the same
+  // combined markdown and persist the same way — re-parse, no re-preprocess.
+  const handleSaveStructure = useCallback((newMarkdown: string) => {
+    if (!selected) return;
+    const refreshed = replaceMarkdown(selected.id, newMarkdown);
+    if (refreshed && selected.id === openId) {
+      const md = refreshed.metadata.combinedMarkdown;
+      if (md) openManuscript(refreshed, getParsedManuscript(md).chapters);
+    }
+    showToast('Structure updated.');
+  }, [selected, openId, replaceMarkdown, openManuscript]);
+
   const handleSaveVersion = useCallback(() => {
     if (!selected || selected.id !== openId) return;
     const meta = saveVersion(selected);
@@ -363,7 +374,7 @@ export function PublishingStudioScreen({ onExit, onOpenManuscript }: PublishingS
             )}
 
             {prepPane === 'chapters' && (
-              <ChapterMapPane structure={structure} combinedMarkdown={combinedMarkdown} />
+              <ChapterMapPane structure={structure} combinedMarkdown={combinedMarkdown} onChange={handleSaveStructure} />
             )}
 
             {prepPane === 'matter' && (
@@ -583,23 +594,21 @@ const MATTER_LABELS: Record<MatterRole, string> = {
   'excerpt': 'Excerpt', 'other': 'Section',
 };
 
-// ── Verify Chapter Map: a read-only view of what the ingestion engine detected —
-// front/back matter and the chapter sequence. Chapters are often *reconstructed*
-// by heuristic (headingless promotion), so this lets the author confirm the
-// boundaries and titles before exporting. Renders straight from the structural
-// model; it makes no decisions of its own. ──
+// ── Chapter Map: the EDITABLE spine — the same Structure editor the author first
+// meets at import, now persisted. Ingestion often *reconstructs* chapters from
+// visual cues, so this is where the author fixes what it got wrong: rename a
+// chapter, merge a stray one, or move a section that isn't really a chapter into
+// front/back matter. Every edit rewrites the combined markdown and re-parses (no
+// re-preprocess) via onChange. ──
 function ChapterMapPane({
   structure,
   combinedMarkdown,
+  onChange,
 }: {
   structure: ManuscriptStructure | null;
   combinedMarkdown: string;
+  onChange: (markdown: string) => void;
 }) {
-  const wordsByIndex = useMemo(
-    () => (combinedMarkdown ? chapterWordCounts(combinedMarkdown) : new Map<number, number>()),
-    [combinedMarkdown],
-  );
-
   if (!structure || structure.chapters.length === 0) {
     return (
       <div className="hub-panel">
@@ -608,55 +617,16 @@ function ChapterMapPane({
       </div>
     );
   }
-  const { frontMatter, chapters, backMatter } = structure;
-  const atlasRows = chapters.map(c => ({
-    key: c.id,
-    index: c.index,
-    title: c.title,
-    sceneBreakCount: c.sceneBreakCount,
-  }));
 
   return (
     <div className="hub-panel studio-chaptermap">
       <h2 className="hub-panel-title">Chapter map</h2>
       <p className="hub-panel-lead">
-        What the engine detected in your draft. Chapter breaks are often reconstructed from
-        visual cues — confirm the sequence and titles read correctly before you export.
-        Counts are per chapter; flags appear at ≤0.25× or ≥2.1× your average chapter length.
+        What the engine detected in your draft — now editable. Confirm the sequence and titles
+        read correctly, and fix anything it mis-read, before you export. Changes here flow into
+        the reader and every export.
       </p>
-
-      {frontMatter.length > 0 && (
-        <>
-          <div className="instrument-group-label pub-section-label">Front matter</div>
-          <ul className="studio-matter-list">
-            {frontMatter.map((s, i) => (
-              <li key={`fm-${i}`} className="studio-matter-row">
-                <span className="studio-matter-role">{MATTER_LABELS[s.role]}</span>
-                {s.title && <span className="studio-matter-title">{s.title}</span>}
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-
-      <div className="instrument-group-label pub-section-label">
-        {chapters.length} chapter{chapters.length !== 1 ? 's' : ''}
-      </div>
-      <ChapterAtlasList rows={atlasRows} wordsByIndex={wordsByIndex} />
-
-      {backMatter.length > 0 && (
-        <>
-          <div className="instrument-group-label pub-section-label">Back matter</div>
-          <ul className="studio-matter-list">
-            {backMatter.map((s, i) => (
-              <li key={`bm-${i}`} className="studio-matter-row">
-                <span className="studio-matter-role">{MATTER_LABELS[s.role]}</span>
-                {s.title && <span className="studio-matter-title">{s.title}</span>}
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
+      <StructureEditor markdown={combinedMarkdown} onChange={onChange} />
     </div>
   );
 }
@@ -711,7 +681,7 @@ function StudioPreviewPane({
       <ol className="studio-preview-chapters">
         {chapters.map(c => (
           <li key={c.id} className="studio-preview-chapter">
-            <span className="studio-preview-ch-num">{c.index + 1}</span>
+            <span className="studio-preview-ch-num">{c.index}</span>
             <span className="studio-preview-ch-title">{c.title}</span>
           </li>
         ))}
@@ -756,6 +726,11 @@ function MatterEditorPane({
     const { front, back } = listMatterSections(combinedMarkdown);
     const keep = (s: AuthoredMatter) => !!authorableSpec(s.role);
     return { front: front.filter(keep), back: back.filter(keep) };
+  }, [combinedMarkdown]);
+  const ingested = useMemo(() => {
+    const { front, back } = listMatterSections(combinedMarkdown);
+    const skip = (s: AuthoredMatter) => !!authorableSpec(s.role);
+    return { front: front.filter(s => !skip(s)), back: back.filter(s => !skip(s)) };
   }, [combinedMarkdown]);
   const present = useMemo(() => {
     const byRole = new Map<MatterRole, AuthoredMatter>();
@@ -826,6 +801,21 @@ function MatterEditorPane({
     );
   }
 
+  const renderIngestedGroup = (label: string, items: AuthoredMatter[]) => items.length > 0 && (
+    <>
+      <div className="instrument-group-label pub-section-label">{label}</div>
+      <ul className="studio-matter-list">
+        {items.map((s, i) => (
+          <li key={`${s.role}-${i}`} className="studio-matter-row">
+            <span className="studio-matter-role">{MATTER_LABELS[s.role] ?? s.role}</span>
+            {s.title && <span className="studio-matter-title">{s.title}</span>}
+            <span className="studio-matter-preview">{s.body.replace(/\n+/g, ' · ').slice(0, 80)}</span>
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+
   const renderGroup = (region: MatterRegion, label: string, items: AuthoredMatter[]) => (
     items.length > 0 && (
       <>
@@ -860,12 +850,25 @@ function MatterEditorPane({
       <h2 className="hub-panel-title">Front &amp; back matter</h2>
       <p className="hub-panel-lead">
         Authored sections that frame the body, shown here in the order they’ll appear in
-        your exports — reorder with the arrows. Title page, copyright, and dedication are set
-        in <strong>Publishing Details</strong>.
+        your exports — reorder with the arrows. Title page, copyright, dedication, cast,
+        and other sections ingested from your file are corrected in <strong>Structure</strong>
+        {' '}(type, merge, move to chapter); prose-only sections below are edited here.
       </p>
 
-      {renderGroup('front', 'Front matter', ordered.front)}
-      {renderGroup('back', 'Back matter', ordered.back)}
+      {(ingested.front.length > 0 || ingested.back.length > 0) && (
+        <>
+          <div className="instrument-group-label pub-section-label">From your manuscript</div>
+          <p className="hub-panel-note">
+            These came from ingestion. Open <strong>Structure</strong> to reclassify, merge
+            (e.g. cast lead-in + list), or promote to a chapter.
+          </p>
+          {renderIngestedGroup('Front matter', ingested.front)}
+          {renderIngestedGroup('Back matter', ingested.back)}
+        </>
+      )}
+
+      {renderGroup('front', 'Editable sections — front', ordered.front)}
+      {renderGroup('back', 'Editable sections — back', ordered.back)}
 
       {addable.length > 0 && (
         <>

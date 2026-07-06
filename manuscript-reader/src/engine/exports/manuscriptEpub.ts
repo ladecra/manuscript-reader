@@ -9,7 +9,9 @@
 // properties="cover-image" and a cover.xhtml at the front of the spine.
 
 import { type ExportManuscriptMeta, cleanManuscriptMarkdown, exportSlug, copyrightLine } from './manuscriptMarkdown';
-import { stripChapterLabel } from '../ingestion/parseMarkdown';
+import { buildManuscriptStructure } from '../ingestion/manuscriptStructure';
+import { LIST_MATTER_ROLES } from '../manuscript/matterEdit';
+import type { ChapterSection, MatterSection, StructuralBlock } from '../types';
 import { zipStore, utf8, type ZipEntry } from './zipStore';
 
 // ── Escaping ──────────────────────────────────────────────────────────────────
@@ -33,65 +35,113 @@ function inlineXhtml(s: string): string {
   return s;
 }
 
-function blocksXhtml(body: string): string {
-  const lines = body.replace(/\r\n/g, '\n').split('\n');
+function renderStructuralBlocksXhtml(blocks: StructuralBlock[]): string {
   let html = '';
-  let i = 0;
-  while (i < lines.length) {
-    const line = lines[i];
-    if (/^<!--[\s\S]*?-->\s*$/.test(line.trim())) { i++; continue; }
-    if (/^### /.test(line)) { html += `<h3>${inlineXhtml(line.slice(4).trim())}</h3>`; i++; continue; }
-    if (/^## /.test(line)) { html += `<h2>${inlineXhtml(line.slice(3).trim())}</h2>`; i++; continue; }
-    if (/^(-{3,}|\*{3,}|_{3,})$/.test(line.trim())) { html += '<hr/>'; i++; continue; }
-    if (/^> /.test(line)) {
-      let bq = '';
-      while (i < lines.length && /^> /.test(lines[i])) { bq += inlineXhtml(lines[i].replace(/^> /, '')) + ' '; i++; }
-      html += `<blockquote><p>${bq.trim()}</p></blockquote>`;
-      continue;
+  for (const b of blocks) {
+    switch (b.role) {
+      case 'scene-break': html += '<hr/>'; break;
+      case 'subheading':
+        html += b.level === 3
+          ? `<h3>${inlineXhtml(b.text)}</h3>`
+          : `<h2>${inlineXhtml(b.text)}</h2>`;
+        break;
+      case 'blockquote': html += `<blockquote><p>${inlineXhtml(b.text)}</p></blockquote>`; break;
+      case 'list':
+        html += '<ul>';
+        for (const li of b.text.split('\n').filter(Boolean)) html += `<li>${inlineXhtml(li)}</li>`;
+        html += '</ul>';
+        break;
+      case 'paragraph':
+      case 'code':
+        if (b.text.trim()) html += `<p>${inlineXhtml(b.text)}</p>`;
+        break;
+      default: break;
     }
-    if (/^[-*+] /.test(line)) {
-      html += '<ul>';
-      while (i < lines.length && /^[-*+] /.test(lines[i])) { html += `<li>${inlineXhtml(lines[i].replace(/^[-*+] /, ''))}</li>`; i++; }
-      html += '</ul>';
-      continue;
-    }
-    if (/^\d+\. /.test(line)) {
-      html += '<ol>';
-      while (i < lines.length && /^\d+\. /.test(lines[i])) { html += `<li>${inlineXhtml(lines[i].replace(/^\d+\. /, ''))}</li>`; i++; }
-      html += '</ol>';
-      continue;
-    }
-    if (line.trim() === '') { i++; continue; }
-    const buf: string[] = [];
-    while (
-      i < lines.length && lines[i].trim() !== '' &&
-      !/^#{1,3} /.test(lines[i]) && !/^[-*+] /.test(lines[i]) && !/^\d+\. /.test(lines[i]) &&
-      !/^> /.test(lines[i]) && !/^(-{3,}|\*{3,}|_{3,})$/.test(lines[i].trim())
-    ) { buf.push(lines[i]); i++; }
-    if (buf.join(' ').trim()) html += `<p>${inlineXhtml(buf.join(' ').trim())}</p>`;
   }
   return html;
 }
 
-// ── Chapter segmentation (split on ATX h1, same rule as the reader) ───────────
-interface EpubChapter { title: string; body: string }
-function splitChapters(md: string): { lead: string; chapters: EpubChapter[] } {
-  const lines = md.split('\n');
-  const chapters: EpubChapter[] = [];
-  const lead: string[] = [];
-  let cur: { title: string; body: string[] } | null = null;
-  for (const line of lines) {
-    if (/^# /.test(line)) {
-      if (cur) chapters.push({ title: cur.title, body: cur.body.join('\n').trim() });
-      cur = { title: stripChapterLabel(line.replace(/^# /, '').trim()), body: [] };
-    } else if (cur) {
-      cur.body.push(line);
-    } else {
-      lead.push(line);
+// Front-matter prose sections after dedication/epigraph, before chapters — kept in
+// sync with manuscriptDocx.ts FRONT_PROSE_ORDER.
+const FRONT_PROSE_ORDER = ['cast', 'list-of-illustrations', 'foreword', 'preface', 'introduction', 'author-note', 'other'];
+
+function matterDisplayTitle(sec: MatterSection): string {
+  return sec.title.trim() || sec.role.replace(/-/g, ' ');
+}
+
+function listMatterXhtml(sec: MatterSection): string {
+  const title = matterDisplayTitle(sec);
+  const items = sec.blocks
+    .filter(b => (b.role === 'paragraph' || b.role === 'list') && b.text.trim())
+    .flatMap(b => b.text.split('\n').filter(l => l.trim()))
+    .map(line => `<p class="matter-list-item">${inlineXhtml(line)}</p>`)
+    .join('\n');
+  return `<h1>${inlineXhtml(title)}</h1>\n${items}`;
+}
+
+function proseMatterXhtml(sec: MatterSection, centered: boolean): string {
+  const title = matterDisplayTitle(sec);
+  const cls = centered ? ' class="epigraph"' : '';
+  const head = title && !centered ? `<h1>${inlineXhtml(title)}</h1>\n` : '';
+  const body = centered
+    ? sec.blocks.filter(b => b.text.trim()).map(b => `<p${cls}>${inlineXhtml(b.text)}</p>`).join('\n')
+    : renderStructuralBlocksXhtml(sec.blocks);
+  return head + body;
+}
+
+/** Captured front/back matter from the structural model (comment fences stripped). */
+function matterDocs(sections: MatterSection[], lang: string, region: 'front' | 'back', idStart: number): { docs: Doc[]; nextId: number } {
+  const docs: Doc[] = [];
+  let n = idStart;
+  for (const sec of sections) {
+    if (region === 'front') {
+      if (['half-title', 'title-page', 'frontispiece', 'copyright', 'dedication'].includes(sec.role)) continue;
+      if (sec.role === 'epigraph') {
+        const body = proseMatterXhtml(sec, true);
+        if (!body.trim()) continue;
+        docs.push({
+          id: `matter-${n}`, href: `matter-${String(n).padStart(3, '0')}.xhtml`,
+          title: matterDisplayTitle(sec),
+          xhtml: page(lang, matterDisplayTitle(sec), `<section epub:type="epigraph" class="epigraph-page">\n${body}\n</section>`, 'frontmatter'),
+          inToc: false,
+        });
+        n++;
+        continue;
+      }
+      if (LIST_MATTER_ROLES.has(sec.role)) {
+        docs.push({
+          id: `matter-${n}`, href: `matter-${String(n).padStart(3, '0')}.xhtml`,
+          title: matterDisplayTitle(sec),
+          xhtml: page(lang, matterDisplayTitle(sec), `<section class="matter-list">\n${listMatterXhtml(sec)}\n</section>`, 'frontmatter'),
+          inToc: false,
+        });
+        n++;
+        continue;
+      }
+      if (!FRONT_PROSE_ORDER.includes(sec.role)) continue;
+    } else if (LIST_MATTER_ROLES.has(sec.role)) {
+      docs.push({
+        id: `matter-${n}`, href: `matter-${String(n).padStart(3, '0')}.xhtml`,
+        title: matterDisplayTitle(sec),
+        xhtml: page(lang, matterDisplayTitle(sec), `<section class="matter-list">\n${listMatterXhtml(sec)}\n</section>`, 'backmatter'),
+        inToc: false,
+      });
+      n++;
+      continue;
     }
+
+    const epubType = region === 'back' && sec.role === 'acknowledgements' ? 'acknowledgments' : sec.role;
+    const body = proseMatterXhtml(sec, false);
+    if (!body.trim()) continue;
+    docs.push({
+      id: `matter-${n}`, href: `matter-${String(n).padStart(3, '0')}.xhtml`,
+      title: matterDisplayTitle(sec),
+      xhtml: page(lang, matterDisplayTitle(sec), `<section epub:type="${attresc(epubType)}" class="matter-prose">\n${body}\n</section>`, region === 'front' ? 'frontmatter' : 'backmatter'),
+      inToc: region === 'front' && FRONT_PROSE_ORDER.includes(sec.role),
+    });
+    n++;
   }
-  if (cur) chapters.push({ title: cur.title, body: cur.body.join('\n').trim() });
-  return { lead: lead.join('\n').trim(), chapters };
+  return { docs, nextId: n };
 }
 
 // ── BCP47 language ────────────────────────────────────────────────────────────
@@ -248,6 +298,10 @@ code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 0.92em; }
 .tp-series { font-size: 0.9em; color: #777; margin-top: 0.8em; }
 .copyright { text-align: center; margin-top: 30%; font-size: 0.85em; color: #555; }
 .dedication { text-align: center; margin-top: 30%; font-style: italic; }
+.epigraph-page, .epigraph { text-align: center; font-style: italic; }
+.matter-list-item { text-align: center; font-style: italic; text-indent: 0; }
+.matter-prose h1 { text-align: center; }
+.backmatter p { text-indent: 0; }
 `;
 }
 
@@ -260,21 +314,22 @@ export function buildEpubFiles(meta: ExportManuscriptMeta, id: string, combinedM
   const modified = now.toISOString().replace(/\.\d+Z$/, 'Z');
 
   const clean = cleanManuscriptMarkdown(combinedMarkdown);
-  const { lead, chapters } = splitChapters(clean);
+  const st = buildManuscriptStructure(clean);
 
   const docs: Doc[] = [...frontMatterDocs(meta, lang)];
 
-  // Any prose before the first chapter heading becomes an opening section.
-  if (lead) {
-    docs.push({ id: 'frontmatter-prose', href: 'frontmatter.xhtml', title: 'Frontmatter', xhtml: page(lang, meta.title, blocksXhtml(lead), 'frontmatter'), inToc: false });
-  }
+  const frontCaptured = matterDocs(st.frontMatter, lang, 'front', 1);
+  docs.push(...frontCaptured.docs);
 
-  chapters.forEach((ch, idx) => {
+  st.chapters.forEach((ch: ChapterSection, idx: number) => {
     const n = String(idx + 1).padStart(3, '0');
     const heading = ch.title ? `<h1>${inlineXhtml(ch.title)}</h1>\n` : '';
-    const body = `<section epub:type="chapter">\n${heading}${blocksXhtml(ch.body)}\n</section>`;
+    const body = `<section epub:type="chapter">\n${heading}${renderStructuralBlocksXhtml(ch.blocks)}\n</section>`;
     docs.push({ id: `chap-${n}`, href: `chap-${n}.xhtml`, title: ch.title || `Chapter ${idx + 1}`, xhtml: page(lang, ch.title || `Chapter ${idx + 1}`, body), inToc: true });
   });
+
+  const backCaptured = matterDocs(st.backMatter, lang, 'back', frontCaptured.nextId);
+  docs.push(...backCaptured.docs);
 
   const tocDocs = docs.filter(d => d.inToc);
 

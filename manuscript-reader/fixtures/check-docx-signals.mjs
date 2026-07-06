@@ -9,7 +9,7 @@
 // Run: npm run check-docx-signals
 import { parseDocxParagraphs } from '../src/engine/ingestion/docxSignals.ts';
 import { segmentDocx } from '../src/engine/ingestion/docxSegment.ts';
-import { buildImportReview, applySignalsToMarkdown } from '../src/engine/ingestion/docxBridge.ts';
+import { buildImportReview, applySignalsToMarkdown, injectSignalStructure, textPipelineUnderSegmented } from '../src/engine/ingestion/docxBridge.ts';
 
 let failures = 0;
 const fail = (msg) => { console.log('   ❌', msg); failures++; };
@@ -53,6 +53,7 @@ ${p({ sz: 24 }, BODY)}
 ${p({ br: true, jc: 'center', caps: true, b: true, sz: 22 }, 'CHAPTER 2')}
 ${p({ jc: 'center', caps: true, sz: 28 }, 'THE MIDDLE')}
 ${p({ sz: 24 }, BODY)}
+${p({ sz: 24 }, BODY)}
 ${p({ br: true, jc: 'center', caps: true, sz: 22 }, 'ACKNOWLEDGEMENTS')}
 ${p({ sz: 24 }, 'With thanks to everyone who read the early drafts and said nothing kind but everything useful.')}
 </w:body></w:document>`;
@@ -61,7 +62,7 @@ ${p({ sz: 24 }, 'With thanks to everyone who read the early drafts and said noth
 console.log('parseDocxParagraphs:');
 const paras = parseDocxParagraphs(xml);
 const nonEmpty = paras.filter((x) => !x.empty);
-eq('non-empty paragraph count', nonEmpty.length, 16);
+eq('non-empty paragraph count', nonEmpty.length, 17);
 const titleP = paras.find((x) => x.text === 'Frostglass');
 eq('title alignment', titleP.alignment, 'center');
 eq('title font size', titleP.fontSizeHalfPts, 72);
@@ -75,6 +76,7 @@ eq('author allCaps', authorP.allCaps, true);
 // ── segmentDocx ──────────────────────────────────────────────────────────────
 console.log('segmentDocx:');
 const seg = segmentDocx({ paragraphs: paras, bodyFontSizeHalfPts: 24 });
+eq('anchored (found a body start)', seg.anchored, true);
 eq('detected title', seg.title?.text, 'Frostglass');
 eq('detected author', seg.author?.text, 'JANE DOE');
 const chapters = seg.headings.filter((h) => h.role === 'chapter');
@@ -90,6 +92,27 @@ eq('matter role', matter[0].matterRole, 'acknowledgements');
 (chapters.every((c) => c.index > authorP.index))
   ? ok('title-page lines not misread as chapters')
   : fail('a title-page line was misclassified as a chapter');
+
+// ── injectSignalStructure (the one-giant-chapter fix) ────────────────────────
+// Simulate a headingless import: raw markdown with one line per paragraph and NO
+// `#` headings (mammoth flattened them). Injection must promote the detected
+// chapter/matter boundaries and drop the TOC.
+console.log('injectSignalStructure:');
+const rawMd = paras.filter((x) => !x.empty).map((x) => x.text).join('\n\n');
+(!/^#\s/m.test(rawMd)) ? ok('raw markdown starts headingless') : fail('raw fixture already had headings');
+const injected = injectSignalStructure(rawMd, { paragraphs: paras, bodyFontSizeHalfPts: 24 }, seg);
+(/^# CHAPTER 1 THE BEGINNING$/m.test(injected))
+  ? ok('chapter heading injected (label+title merged)') : fail('chapter heading not injected');
+(/^# CHAPTER 2 THE MIDDLE$/m.test(injected))
+  ? ok('second chapter heading injected') : fail('second chapter not injected');
+(/^# ACKNOWLEDGEMENTS$/m.test(injected))
+  ? ok('matter heading injected (short section exempt from gap filter)') : fail('matter heading not injected');
+(!/^# Frostglass$/m.test(injected) && !/^# JANE DOE$/m.test(injected))
+  ? ok('title-page lines not promoted to headings') : fail('a title-page line became a heading');
+(!/The Beginning\s+1/.test(injected))
+  ? ok('TOC entry rows dropped') : fail('TOC entry survived injection');
+eq('under-segmentation trigger (1 chapter, 6000 words)', textPipelineUnderSegmented(1, 6000), true);
+eq('no trigger for a real short single-chapter piece', textPipelineUnderSegmented(1, 800), false);
 
 // ── buildImportReview ────────────────────────────────────────────────────────
 console.log('buildImportReview:');

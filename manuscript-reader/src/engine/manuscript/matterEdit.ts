@@ -32,11 +32,23 @@ export interface AuthoredMatter {
 export const CANONICAL_ORDER: MatterRole[] = [
   // front
   'half-title', 'frontispiece', 'title-page', 'copyright', 'dedication', 'epigraph',
-  'foreword', 'preface', 'introduction', 'cast', 'list-of-illustrations',
-  // back
-  'acknowledgements', 'afterword', 'about-author', 'also-by', 'appendix', 'glossary',
+  'foreword', 'preface', 'introduction', 'list-of-illustrations',
+  // back (cast is conventionally back matter — e.g. fixture-6's character list)
+  'cast', 'acknowledgements', 'afterword', 'about-author', 'also-by', 'appendix', 'glossary',
   'bibliography', 'notes', 'index', 'reading-group-guide', 'excerpt', 'colophon', 'other',
 ];
+
+/** Roles valid for each region — drives Structure-editor pickers (not the full cross-list). */
+export const MATTER_ROLES_BY_REGION: Record<MatterRegion, MatterRole[]> = {
+  front: [
+    'half-title', 'frontispiece', 'title-page', 'copyright', 'dedication', 'epigraph',
+    'foreword', 'preface', 'introduction', 'list-of-illustrations',
+  ],
+  back: [
+    'cast', 'acknowledgements', 'afterword', 'about-author', 'also-by', 'appendix', 'glossary',
+    'bibliography', 'notes', 'index', 'reading-group-guide', 'excerpt', 'colophon', 'other',
+  ],
+};
 
 const canonicalIndex = (role: MatterRole): number => {
   const i = CANONICAL_ORDER.indexOf(role);
@@ -69,9 +81,13 @@ function emit(s: AuthoredMatter): string {
   return `<!-- matter:${s.region} role="${s.role}" title="${title}" -->\n${body}\n<!-- /matter -->`;
 }
 
-interface Parsed { title: string; front: AuthoredMatter[]; body: string; back: AuthoredMatter[]; }
+/** The decomposition of a stored combined markdown into its structural parts:
+ *  the `<!-- title -->` comment, the front/back matter fences, and the chapter-
+ *  bearing body between them. Shared with structureEdit so chapter reclassification
+ *  and matter editing operate on ONE fence-format authority. */
+export interface MatterDoc { title: string; front: AuthoredMatter[]; body: string; back: AuthoredMatter[]; }
 
-function parse(md: string): Parsed {
+export function parseMatterDoc(md: string): MatterDoc {
   const tm = titleRe().exec(md.trim());
   const title = tm ? tm[0] : '';
   const front: AuthoredMatter[] = [];
@@ -96,7 +112,7 @@ function parse(md: string): Parsed {
 
 /** Reassemble in the canonical order ingestion uses: title · front fences · body ·
  *  back fences — normalized, so the output matches a freshly-structured manuscript. */
-function reassemble(p: Parsed): string {
+export function reassembleMatterDoc(p: MatterDoc): string {
   const titleComment = p.title ? p.title.trim() + '\n\n' : '';
   const parts = [...p.front.map(emit), p.body, ...p.back.map(emit)].filter(Boolean);
   return (titleComment + parts.join('\n\n')).trim();
@@ -107,7 +123,7 @@ function reassemble(p: Parsed): string {
  *  replacing one keeps its current position. List-matter bodies (also-by…) are
  *  normalized so each line survives as its own item. Returns the new markdown. */
 export function upsertMatterSection(md: string, section: AuthoredMatter): string {
-  const p = parse(md);
+  const p = parseMatterDoc(md);
   const sec: AuthoredMatter = isListMatter(section.role)
     ? { ...section, body: normalizeListBody(section.body) }
     : section;
@@ -121,31 +137,45 @@ export function upsertMatterSection(md: string, section: AuthoredMatter): string
     if (at < 0) list.push(sec);
     else list.splice(at, 0, sec);
   }
-  return reassemble(p);
+  return reassembleMatterDoc(p);
 }
 
 /** Move a section one step earlier (dir -1) or later (dir +1) within its region.
  *  No-op at the ends. Order is the published order. */
 export function moveMatterSection(md: string, region: MatterRegion, role: MatterRole, dir: -1 | 1): string {
-  const p = parse(md);
+  const p = parseMatterDoc(md);
   const list = region === 'front' ? p.front : p.back;
   const i = list.findIndex(s => s.role === role);
   const j = i + dir;
   if (i < 0 || j < 0 || j >= list.length) return md;
   [list[i], list[j]] = [list[j], list[i]];
-  return reassemble(p);
+  return reassembleMatterDoc(p);
 }
 
-/** Remove the section of this region+role, if present. */
+/** Remove one matter section by its 0-based index within the region (document order).
+ *  Ingestion can emit duplicate roles (e.g. two `title-page` fences); index is the
+ *  stable handle the Structure editor uses — never remove by role alone. */
+export function removeMatterSectionAt(md: string, region: MatterRegion, index: number): string {
+  const p = parseMatterDoc(md);
+  const list = region === 'front' ? p.front : p.back;
+  if (index < 0 || index >= list.length) return md;
+  list.splice(index, 1);
+  return reassembleMatterDoc(p);
+}
+
+/** Remove the first section of this region+role. Prefer `removeMatterSectionAt` when
+ *  the UI knows which section the author selected (duplicate roles are common). */
 export function removeMatterSection(md: string, region: MatterRegion, role: MatterRole): string {
-  const p = parse(md);
-  if (region === 'front') p.front = p.front.filter(s => s.role !== role);
-  else p.back = p.back.filter(s => s.role !== role);
-  return reassemble(p);
+  const p = parseMatterDoc(md);
+  const list = region === 'front' ? p.front : p.back;
+  const i = list.findIndex(s => s.role === role);
+  if (i < 0) return md;
+  list.splice(i, 1);
+  return reassembleMatterDoc(p);
 }
 
 /** The authored/captured matter sections currently in the markdown (for listing). */
 export function listMatterSections(md: string): { front: AuthoredMatter[]; back: AuthoredMatter[] } {
-  const p = parse(md);
+  const p = parseMatterDoc(md);
   return { front: p.front, back: p.back };
 }

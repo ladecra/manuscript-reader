@@ -7,7 +7,7 @@
 // added later WITHOUT an IndexedDB version bump / upgrade migration.
 
 import { openDB, type IDBPDatabase } from 'idb';
-import type { Annotation, Edit, ReaderSession, Snapshot, SnapshotMeta } from '../types';
+import type { Annotation, Edit, ReaderSession, RevisionGraph, Snapshot, SnapshotMeta } from '../types';
 import type { StorageProvider, StoredManuscript, SnapshotRecord } from './provider';
 import { key, MANUSCRIPT_PREFIX } from './provider';
 
@@ -67,6 +67,7 @@ export class IndexedDbProvider implements StorageProvider {
       tx.store.delete(key.sessions(id)),
       tx.store.delete(key.position(id)),
       tx.store.delete(key.cover(id)),
+      tx.store.delete(key.revisionGraph(id)),
       ...snapKeys.map(k => tx.store.delete(k)),
       ...bodyKeys.map(k => tx.store.delete(k)),
       tx.done,
@@ -127,6 +128,16 @@ export class IndexedDbProvider implements StorageProvider {
   async loadNote(id: string): Promise<string> {
     const db = await this.db();
     return ((await db.get(STORE, key.note(id))) as string) ?? '';
+  }
+
+  async loadRevisionGraph(id: string): Promise<RevisionGraph | null> {
+    const db = await this.db();
+    return ((await db.get(STORE, key.revisionGraph(id))) as RevisionGraph) ?? null;
+  }
+
+  async saveRevisionGraph(id: string, graph: RevisionGraph): Promise<void> {
+    const db = await this.db();
+    await db.put(STORE, graph, key.revisionGraph(id));
   }
 
   async saveNote(id: string, text: string): Promise<void> {

@@ -16,7 +16,7 @@
 // floated a per-reader `session:{id}:{readerId}` key; a per-manuscript list is
 // simpler and consistent with how every other child entity is stored.)
 
-import type { Annotation, Edit, ReaderSession, PublishingMetadata, Snapshot, SnapshotMeta } from '../types';
+import type { Annotation, Edit, ReaderSession, PublishingMetadata, RevisionGraph, Snapshot, SnapshotMeta } from '../types';
 
 /** The flat record persisted per manuscript (matches the v0.9 localStorage schema
  *  for backward compatibility). `combinedMarkdown` is the source of truth. */
@@ -69,6 +69,14 @@ export interface StorageProvider {
   loadNote(id: string): Promise<string>;
   saveNote(id: string, text: string): Promise<void>;
 
+  /** The manuscript's revision-concern graph (concerns + membership links +
+   *  answered suggestions). One blob per manuscript, same as annotations/edits.
+   *  Local-first for now — cloud sync needs its own updatedAt reconcile (the
+   *  manuscript `revision` counter only bumps on TEXT changes, and concern work
+   *  never touches text), a deliberate follow-up. Returns null when unset. */
+  loadRevisionGraph(id: string): Promise<RevisionGraph | null>;
+  saveRevisionGraph(id: string, graph: RevisionGraph): Promise<void>;
+
   // ── Version snapshots (Phase 8) ──
   // Split read on purpose: list the light index without paying for the (large,
   // content-addressed) frozen bodies; load a single full snapshot on demand.
@@ -106,6 +114,7 @@ export const key = {
   position: (id: string) => `position:${id}`,
   cover: (id: string) => `cover:${id}`,
   note: (id: string) => `note:${id}`,
+  revisionGraph: (id: string) => `revisionGraph:${id}`,
   snapshot: (msId: string, snapId: string) => `snapshot:${msId}:${snapId}`,
   snapshotPrefix: (msId: string) => `snapshot:${msId}:`,
   snapshotBody: (msId: string, versionId: string) => `snapbody:${msId}:${versionId}`,

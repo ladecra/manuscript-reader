@@ -254,6 +254,106 @@ export interface ChangeEntry {
   renderedMarkAnchor?: TextAnchor;
 }
 
+// ─── Revision concerns (author Layer-3 intent) ────────────────────────────────
+//
+// A RevisionConcern is a durable revision theme ("World Detail", tracking the
+// word "without" manuscript-wide). It sits BESIDE annotations: an annotation is
+// a captured thought; a concern is the theme several thoughts share. Concerns
+// are never demanded at capture time — the reader stays free-form — they are
+// RATIFIED at review time from deterministic engine suggestions (shared note
+// terms, shared entities, bare word-flags) or created by hand in the hub.
+// Membership is many-to-many via ConcernAnnotationLink; only AUTHOR annotations
+// are linkable (reader reactions stay Layer 2 — a concern may later cite them,
+// but v1 keeps the lens clean). Resolution lives on the LINK, not the
+// annotation: a mark resolved for one concern can stay open in another, and
+// Annotation.status keeps its own meaning.
+
+export type ConcernStatus = 'active' | 'resolved' | 'archived';
+
+/** 'group' = a ratified cluster of marks. 'sweep' = a manuscript-wide term watch
+ *  born from a bare highlight ("without") — its extent is COMPUTED from the live
+ *  text (termSweep), never stored. */
+export type ConcernKind = 'group' | 'sweep';
+
+export interface RevisionConcern {
+  id: string;
+  manuscriptId: string;
+  title: string;
+  summary?: string;          // optional one-line intent, author-worded
+  kind: ConcernKind;
+  term?: string;             // kind 'sweep': the flagged text, matched case-insensitively
+  status: ConcernStatus;
+  createdAt: number;
+  updatedAt: number;
+  resolvedAt?: number;       // set when status flips to 'resolved' (age/velocity analytics)
+}
+
+/** Many-to-many membership of an author annotation in a concern. */
+export interface ConcernAnnotationLink {
+  id: string;
+  concernId: string;
+  annotationId: string;
+  createdAt: number;
+  status?: AnnotationStatus; // per-concern resolution; absent = open
+  resolvedAt?: number;
+}
+
+/** The per-manuscript persisted blob (`revisionGraph:{id}` — same one-key-per-
+ *  child pattern as annotations/edits). `dismissedSuggestions` holds the stable
+ *  basis signatures the author has already answered (ratified OR dismissed), so
+ *  triage never re-asks a settled question. Derived data (chapters affected,
+ *  sweep counts, ages) is never stored here — recompute from annotations +
+ *  markdown at read time. */
+export interface RevisionGraph {
+  concerns: RevisionConcern[];
+  links: ConcernAnnotationLink[];
+  dismissedSuggestions: string[];
+  updatedAt: number;
+}
+
+/** An engine-proposed action awaiting the author's yes/no. Two shapes:
+ *  a NEW thread (grouping detectors) or an ADDITION of new marks to an
+ *  existing thread (`addToConcernId` set — ratified threads act as magnets
+ *  for later marks that match their signals). Deterministic — the `basis`
+ *  copy states exactly why. */
+export interface ConcernSuggestion {
+  /** Stable key recorded in dismissedSuggestions on ratify/dismiss, so a
+   *  settled question stays settled. New-thread suggestions key on the BASIS
+   *  (`terms:…`, `entity:…`) — but additions key on the exact
+   *  (concern, annotation) pair, so declining one mark never silences
+   *  future, different matches. */
+  signature: string;
+  kind: ConcernKind;
+  suggestedTitle: string;
+  basis: string;             // human-readable why, shown in the triage strip
+  term?: string;             // sweep suggestions
+  annotationIds: string[];
+  /** Set ⇒ this proposes linking the marks into an EXISTING concern. */
+  addToConcernId?: string;
+}
+
+/** Computed extent of a sweep concern — always derived from the live text
+ *  (termSweep), never persisted. Counts exact; snippets bounded. */
+export interface SweepResult {
+  term: string;
+  total: number;
+  chapters: { chapterIndex: number; chapterTitle: string; count: number; snippets: string[] }[];
+}
+
+/** Deterministic per-concern rollup (concernAnalytics) — recomputed at read/
+ *  export time from graph + annotations + markdown, same rule as
+ *  EditorialSignals. `now` is injectable so ages are testable. */
+export interface ConcernAnalytics {
+  concernId: string;
+  linkedCount: number;
+  openCount: number;          // links without status 'resolved'
+  resolvedCount: number;
+  chaptersAffected: number[]; // distinct current chapter indices of linked marks, sorted
+  ageDays: number;            // since concern.createdAt
+  oldestOpenDays: number | null; // age of the oldest still-open link; null when none
+  sweep?: SweepResult;        // kind 'sweep' with markdown available
+}
+
 // ─── Report ──────────────────────────────────────────────────────────────────
 
 export interface ChapterStat {
