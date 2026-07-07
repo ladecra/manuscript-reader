@@ -5,7 +5,7 @@
 // Because it keeps the exact legacy keys, an existing user's data is readable
 // here without any conversion.
 
-import type { Annotation, Edit, ReaderSession, Snapshot, SnapshotMeta } from '../types';
+import type { Annotation, Edit, ReaderSession, RevisionGraph, Snapshot, SnapshotMeta } from '../types';
 import type { StorageProvider, StoredManuscript, SnapshotRecord } from './provider';
 
 const LIBRARY_KEY = 'ms_library_v2';
@@ -15,6 +15,7 @@ const EDIT_KEY = 'ms_edits_';
 const SESSION_KEY = 'ms_sessions_';
 const COVER_KEY = 'ms_cover_';
 const NOTE_KEY = 'ms_note_';
+const REVGRAPH_KEY = 'ms_revgraph_';
 const SNAP_KEY = 'ms_snap_';        // ms_snap_{msId}_{snapId} → SnapshotRecord
 const SNAPBODY_KEY = 'ms_snapbody_'; // ms_snapbody_{msId}_{versionId} → markdown
 const TOMBSTONES_KEY = 'ms_tombstones_v1';
@@ -56,6 +57,7 @@ export class LocalStorageProvider implements StorageProvider {
     localStorage.removeItem(SESSION_KEY + id);
     localStorage.removeItem(POSITION_KEY + id);
     localStorage.removeItem(COVER_KEY + id);
+    localStorage.removeItem(REVGRAPH_KEY + id);
     for (const k of keysWithPrefix(`${SNAP_KEY}${id}_`)) localStorage.removeItem(k);
     for (const k of keysWithPrefix(`${SNAPBODY_KEY}${id}_`)) localStorage.removeItem(k);
   }
@@ -113,6 +115,18 @@ export class LocalStorageProvider implements StorageProvider {
     if (!text) { localStorage.removeItem(NOTE_KEY + id); return; }
     try { localStorage.setItem(NOTE_KEY + id, text); }
     catch { /* QuotaExceededError — note won't persist on this backend */ }
+  }
+
+  async loadRevisionGraph(id: string): Promise<RevisionGraph | null> {
+    try {
+      const raw = localStorage.getItem(REVGRAPH_KEY + id);
+      return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+  }
+
+  async saveRevisionGraph(id: string, graph: RevisionGraph): Promise<void> {
+    try { localStorage.setItem(REVGRAPH_KEY + id, JSON.stringify(graph)); }
+    catch { /* QuotaExceededError — graph won't persist on this backend */ }
   }
 
   // ── Version snapshots ──

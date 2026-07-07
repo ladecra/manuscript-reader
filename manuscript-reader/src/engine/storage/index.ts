@@ -9,7 +9,7 @@
 // This is what lets us swap localStorage → IndexedDB (→ future SQLite/cloud)
 // without changing a single caller.
 
-import type { Annotation, Edit, ReaderSession, Snapshot, SnapshotMeta } from '../types';
+import type { Annotation, Edit, ReaderSession, RevisionGraph, Snapshot, SnapshotMeta } from '../types';
 import type { WorkMode } from '../reader/positionIntent';
 import type { StorageProvider, StoredManuscript } from './provider';
 import { LocalStorageProvider } from './localStorageProvider';
@@ -111,6 +111,8 @@ async function migrateFromLocalStorage(target: StorageProvider): Promise<void> {
     await target.saveEdits(m.id, await legacy.loadEdits(m.id));
     await target.saveSessions(m.id, await legacy.loadSessions(m.id));
     await target.savePosition(m.id, await legacy.loadPosition(m.id));
+    const graph = await legacy.loadRevisionGraph(m.id);
+    if (graph) await target.saveRevisionGraph(m.id, graph);
     for (const meta of await legacy.listSnapshots(m.id)) {
       const snap = await legacy.loadSnapshot(m.id, meta.id);
       if (snap) await target.saveSnapshot(snap);
@@ -327,6 +329,22 @@ export function loadNote(id: string): Promise<string> {
 
 export function saveNote(id: string, text: string): void {
   persist(() => provider.saveNote(id, text));
+}
+
+// ── Revision-concern graph ────────────────────────────────────────────────────
+// One blob per manuscript (concerns + membership links + answered suggestions).
+// Loaded on demand (the cover/note pattern — the concern store holds it while a
+// manuscript is open), saved through the serialized write chain. Local-first:
+// NOT synced yet — the pull reconcile keys off the manuscript `revision`
+// counter, which only bumps on text changes, and concern work never touches
+// text; graph sync needs its own updatedAt reconcile (deliberate follow-up).
+
+export function loadRevisionGraph(id: string): Promise<RevisionGraph | null> {
+  return provider.loadRevisionGraph(id);
+}
+
+export function saveRevisionGraph(id: string, graph: RevisionGraph): void {
+  persist(() => provider.saveRevisionGraph(id, graph));
 }
 
 // ── Version snapshots (Phase 8) ──────────────────────────────────────────────

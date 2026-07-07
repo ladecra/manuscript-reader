@@ -7,7 +7,7 @@ import {
   CheckIcon,
   LayersIcon,
 } from '../ui/Icons';
-export type HubPane = 'contents' | 'details' | 'feedback' | 'report' | 'exports' | 'share' | 'versions';
+export type HubPane = 'contents' | 'details' | 'feedback' | 'report' | 'exports' | 'share' | 'versions' | 'revision';
 
 type RailTool = {
   id: HubPane;
@@ -36,6 +36,8 @@ interface ManuscriptWorkspaceRailProps {
   pane: HubPane;
   annotationCount: number;
   versionCount?: number;
+  /** Open suggestions + active revision threads (hub badge). */
+  revisionCount?: number;
   savedLabel: string;
   readerSubtext?: string;
   wayfinding?: RailWayfinding;
@@ -56,6 +58,7 @@ const MANUSCRIPT_TOOLS: RailTool[] = [
   { id: 'exports', label: 'Exports & Sharing', sub: 'Files & reader copies', Icon: ExportTrayIcon },
   { id: 'report', label: 'Editorial Report', sub: 'Patterns from reader actions', Icon: ReportIcon },
   { id: 'feedback', label: 'Annotations', sub: 'Notes & marks across the manuscript', Icon: PencilIcon },
+  { id: 'revision', label: 'Revision Threads', sub: 'Themes across your own marks', Icon: LayersIcon },
 ];
 
 export function ManuscriptWorkspaceRail({
@@ -63,6 +66,7 @@ export function ManuscriptWorkspaceRail({
   pane,
   annotationCount,
   versionCount = 0,
+  revisionCount = 0,
   savedLabel,
   readerSubtext = 'Resume in the reader',
   wayfinding,
@@ -101,6 +105,7 @@ export function ManuscriptWorkspaceRail({
           {MANUSCRIPT_TOOLS.map(t => {
             const badge = t.id === 'feedback' && annotationCount > 0 ? annotationCount
               : t.id === 'versions' && versionCount > 0 ? versionCount
+              : t.id === 'revision' && revisionCount > 0 ? revisionCount
               : t.badge;
             return (
               <button

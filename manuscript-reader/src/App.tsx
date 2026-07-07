@@ -8,6 +8,7 @@ import { usesTouchFriendlyEditing } from './lib/touchEditing';
 import { LandingScreen } from './screens/LandingScreen';
 import { LibraryScreen } from './screens/LibraryScreen';
 import { LoadModal } from './screens/LoadScreen';
+import { ImportStructureScreen } from './screens/ImportStructureScreen';
 import { ReaderScreen } from './screens/ReaderScreen';
 import { ManuscriptHubScreen } from './screens/ManuscriptHubScreen';
 import { PublishingStudioScreen } from './screens/PublishingStudioScreen';
@@ -95,6 +96,9 @@ export function App() {
   const [chapterLabel, setChapterLabel] = React.useState('');
   const [libraryFilter, setLibraryFilter] = useState<LibraryNavFilter>('all');
   const [loadModalOpen, setLoadModalOpen] = useState(false);
+  // Ingested markdown awaiting the author's import-review confirmation (title,
+  // author, structure) before the manuscript is created and opened.
+  const [reviewMarkdown, setReviewMarkdown] = useState<string | null>(null);
   // The reader rail is collapsed (icon-only) by default; the user can expand it.
   const [readerRailCollapsed, setReaderRailCollapsed] = useState(true);
 
@@ -188,15 +192,24 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [screen, handleUndo, handleRedo]);
 
+  // Files/paste were ingested — hand off to the import review card for one-time
+  // confirmation (title, author, structure) before creating the manuscript.
   function handleLoad(combinedMarkdown: string) {
-    const ms = importManuscript(combinedMarkdown);
-    const { chapters } = getParsedManuscript(combinedMarkdown);
+    setLoadModalOpen(false);
+    setReviewMarkdown(combinedMarkdown);
+  }
+
+  // The author confirmed the review (with any title/author corrections applied) —
+  // create the manuscript, capture its import baseline, and drop into the reader.
+  function confirmImport(finalMarkdown: string) {
+    const ms = importManuscript(finalMarkdown);
+    const { chapters } = getParsedManuscript(finalMarkdown);
     openManuscript(ms, chapters);
     // Capture the import baseline (Draft 0) for this fresh manuscript. The
     // version history the revision-impact features depend on can only start if
     // it starts now.
     useSnapshotStore.getState().captureBaseline(ms);
-    setLoadModalOpen(false);
+    setReviewMarkdown(null);
     setScreen('reader');
     showToast(`Loaded ${chapters.length} chapter${chapters.length !== 1 ? 's' : ''}.`);
   }
@@ -270,6 +283,21 @@ export function App() {
   // The marketing front door owns the full viewport — no app topbar.
   if (screen === 'landing') {
     return <LandingScreen onOpenApp={handleLibraryNav} />;
+  }
+
+  // A fresh import takes over the viewport for the Structure stage — the author
+  // confirms/corrects the spine before the manuscript is created (pre-save).
+  if (reviewMarkdown !== null) {
+    return (
+      <>
+        <ImportStructureScreen
+          markdown={reviewMarkdown}
+          onConfirm={confirmImport}
+          onCancel={() => { setReviewMarkdown(null); setLoadModalOpen(true); }}
+        />
+        <Toast message={toastState.message} visible={toastState.visible} />
+      </>
+    );
   }
 
   // The library + manuscript hub are "bare": no global topbar — the rail carries

@@ -51,7 +51,15 @@ What she packed:
 - the journal
 - one match
 
-And so it began.`;
+And so it began.
+
+<!-- matter:front role="epigraph" title="" -->
+Add an epigraph for the frostwood.
+<!-- /matter -->
+
+<!-- matter:front role="introduction" title="Introduction" -->
+Add an introduction to the valley.
+<!-- /matter -->`;
 
 let failures = 0;
 const check = (label, cond) => { console.log(`  ${cond ? '✓' : '✗ FAIL'}  ${label}`); if (!cond) failures++; };
@@ -75,6 +83,9 @@ check('OPF identifier is ISBN urn', opf.includes('urn:isbn:9781234567890'));
 check('OPF carries dcterms:modified', /dcterms:modified/.test(opf));
 check('chapter label stripped ("Into the Valley")', fileByName['OEBPS/chap-001.xhtml'].includes('<h1>Into the Valley</h1>'));
 check('ampersand escaped in prose', fileByName['OEBPS/chap-001.xhtml'].includes('Tom &amp; Eliza'));
+check('matter fences not leaked into XHTML', !Object.values(fileByName).some(x => x.includes('/matter')));
+check('captured epigraph prose present', Object.values(fileByName).some(x => x.includes('Add an epigraph for the frostwood')));
+check('captured introduction prose present', Object.values(fileByName).some(x => x.includes('Add an introduction to the valley')));
 
 // spine → manifest → file integrity
 const manifest = Object.fromEntries([...opf.matchAll(/<item id="([^"]+)" href="([^"]+)"/g)].map(m => [m[1], m[2]]));

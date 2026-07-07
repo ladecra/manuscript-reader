@@ -43,36 +43,54 @@ function isPlaceholder(v: string): boolean {
 const keep = (v: string | undefined): string | undefined =>
   v && !isPlaceholder(v) ? v : undefined;
 
+/** Parse the copyright-block fields (©/year/holder, ISBN, edition, publication
+ *  date) out of a block of prose. Reused for BOTH a real `copyright`-role section
+ *  and the title-page fallback — many self-published manuscripts (and flattened
+ *  imports) fold the whole copyright notice into the title page as body prose, so
+ *  there is no distinct copyright section to read. Returns only what it finds. */
+function parseCopyrightFields(text: string): Partial<FrontMatterCandidates> {
+  const out: Partial<FrontMatterCandidates> = {};
+  const cYear = /(?:©|\(c\)|copyright)\s*(?:©|\(c\)\s*)?(\d{4})/i.exec(text);
+  if (cYear) out.copyrightYear = cYear[1];
+  // "© 2025 Jane Marlowe" / "Copyright 2025 by Jane Marlowe" → holder
+  const holder = /(?:©|\(c\)|copyright)\s*(?:©\s*)?\d{4}\s+(?:by\s+)?([^.,\n©]+?)(?:[.,\n]|\s+all rights|$)/i.exec(text);
+  if (holder) out.copyrightHolder = clean(holder[1]);
+  const isbn = /ISBN(?:-1[03])?[:\s]*((?:97[89][\s\-–]?)?[\d][\d\s\-–X]{8,16}[\dX])/i.exec(text);
+  if (isbn) out.isbn = clean(isbn[1].replace(/\s/g, ''));
+  const ed = /\b((?:first|second|third|fourth|fifth|\d+(?:st|nd|rd|th))\s+edition)\b/i.exec(text);
+  if (ed) out.edition = clean(ed[1]);
+  const date = /\b(?:(?:first|second|third|\d+(?:st|nd|rd|th))\s+(?:edition|printing)[,\s]+)?((?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4})\b/i.exec(text);
+  if (date) out.publicationDate = clean(date[1]);
+  return out;
+}
+
+/** Fill only the still-empty candidate keys from `src`. */
+function fill(out: FrontMatterCandidates, src: Partial<FrontMatterCandidates>): void {
+  for (const [k, v] of Object.entries(src) as [keyof FrontMatterCandidates, string | undefined][]) {
+    if (v && out[k] == null) out[k] = v;
+  }
+}
+
 export function extractFrontMatterCandidates(structure: ManuscriptStructure): FrontMatterCandidates {
   const front = structure.frontMatter;
   const out: FrontMatterCandidates = {};
 
   // ── Title page: author ("by …"), publisher ──
   const titlePage = firstOf(front, 'title-page');
+  const titlePageText = titlePage ? sectionText(titlePage) : '';
   if (titlePage) {
-    const text = sectionText(titlePage);
-    const by = /^\s*(?:by|written by)\s+(.+?)\s*$/im.exec(text);
+    const by = /^\s*(?:by|written by)\s+(.+?)\s*$/im.exec(titlePageText);
     if (by) out.author = clean(by[1]);
-    const pub = /^\s*(?:published by|publisher:?)\s+(.+?)\s*$/im.exec(text);
+    const pub = /^\s*(?:published by|publisher:?)\s+(.+?)\s*$/im.exec(titlePageText);
     if (pub) out.publisher = clean(pub[1]);
   }
 
   // ── Copyright page: ©/year/holder, ISBN, edition, publication date ──
   const cr = firstOf(front, 'copyright');
-  if (cr) {
-    const text = sectionText(cr);
-    const cYear = /(?:©|\(c\)|copyright)\s*(?:©|\(c\)\s*)?(\d{4})/i.exec(text);
-    if (cYear) out.copyrightYear = cYear[1];
-    // "© 2025 Jane Marlowe" / "Copyright 2025 by Jane Marlowe" → holder
-    const holder = /(?:©|\(c\)|copyright)\s*(?:©\s*)?\d{4}\s+(?:by\s+)?([^.,\n©]+?)(?:[.,\n]|\s+all rights|$)/i.exec(text);
-    if (holder) out.copyrightHolder = clean(holder[1]);
-    const isbn = /ISBN(?:-1[03])?[:\s]*((?:97[89][\s\-–]?)?[\d][\d\s\-–X]{8,16}[\dX])/i.exec(text);
-    if (isbn) out.isbn = clean(isbn[1].replace(/\s/g, ''));
-    const ed = /\b((?:first|second|third|fourth|fifth|\d+(?:st|nd|rd|th))\s+edition)\b/i.exec(text);
-    if (ed) out.edition = clean(ed[1]);
-    const date = /\b(?:(?:first|second|third|\d+(?:st|nd|rd|th))\s+(?:edition|printing)[,\s]+)?((?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4})\b/i.exec(text);
-    if (date) out.publicationDate = clean(date[1]);
-  }
+  if (cr) fill(out, parseCopyrightFields(sectionText(cr)));
+  // Fallback: the copyright notice frequently lives inside the title-page prose
+  // (no separate copyright section) — read the same fields there for what's missing.
+  if (titlePageText) fill(out, parseCopyrightFields(titlePageText));
 
   // ── Author fallback: the copyright holder, when the title page gave none ──
   if (!out.author && out.copyrightHolder) out.author = out.copyrightHolder;

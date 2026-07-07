@@ -43,11 +43,20 @@ export interface StructuralProposal {
   evidence: string[];
   /** For `matter`, the classified role; for `division`/`chapter`, filled later. */
   matterRole?: MatterRole;
+  /** The source paragraph indices this heading covers — one, or two when an
+   *  adjacent label + title were merged ("CHAPTER 1" ¶ "WHITE HUNGER"). The bridge
+   *  uses these to inject the heading and remove the consumed title paragraph. */
+  sourceIndices: number[];
 }
 
 export interface DocxSegmentation {
   title?: StructuralProposal;
   author?: StructuralProposal;
+  /** True when a confident body-start anchor was found — i.e. the front matter / title
+   *  page could be separated from the body. When false, the layout gave no reliable
+   *  chapter anchor (title-page apparatus reads as body), so callers must NOT trust
+   *  the chapters enough to inject them — the structure is unanchored guesswork. */
+  anchored: boolean;
   /** Structural headings in document order (divisions, chapters, matter). */
   headings: StructuralProposal[];
   /** Paragraph indices that belong to a table of contents (drop these). */
@@ -176,6 +185,7 @@ function detectTitleAuthor(
   const title: StructuralProposal = {
     index: titleParts[0].index, role: 'title', text: titleText,
     confidence: squash(2 + (body ? (maxRel - 1) * 2 : 0)), evidence: titleEv,
+    sourceIndices: titleParts.map(p => p.index),
   };
 
   // Author: the next centered, non-legal line after the title block, smaller than
@@ -190,6 +200,7 @@ function detectTitleAuthor(
     author = {
       index: authorP.index, role: 'author', text: authorP.text.replace(/^by\s+/i, '').trim(),
       confidence: squash(1.5 + (authorP.allCaps ? 0.5 : 0)), evidence: ev,
+      sourceIndices: [authorP.index],
     };
   }
   const consumed = [...titleParts.map(p => p.index), ...(authorP ? [authorP.index] : [])];
@@ -240,14 +251,16 @@ function findBodyStart(paras: DocxParagraph[], tocIdx: Set<number>): number {
       /^\d{1,3}$/.test(p.text.trim());
     if (strong) return p.index;
   }
-  return 0; // no clear title page — treat the whole document as body
+  return -1; // no confident body-start anchor found
 }
 
 export function segmentDocx(signals: DocxSignals): DocxSegmentation {
   const paras = signals.paragraphs;
   const body = signals.bodyFontSizeHalfPts;
   const tocIdx = findTocIndices(paras);
-  const bodyStart = findBodyStart(paras, tocIdx);
+  const anchor = findBodyStart(paras, tocIdx);
+  const anchored = anchor >= 0;
+  const bodyStart = anchored ? anchor : 0; // unanchored: treat all as body (nothing injected)
 
   // Title & author live on the title page — the front region before bodyStart.
   // Detect them first so their lines are never mistaken for chapters.
@@ -269,7 +282,7 @@ export function segmentDocx(signals: DocxSignals): DocxSegmentation {
 
     if (matterRole && (h || p.pageBreakBefore || isChapterStyle(p.styleName))) {
       const ev = ['recognized matter heading', ...(h?.evidence ?? [])];
-      headings.push({ index: i, role: 'matter', text: p.text, matterRole, confidence: squash(2.2 + (h?.weight ?? 0) / 2), evidence: ev });
+      headings.push({ index: i, role: 'matter', text: p.text, matterRole, confidence: squash(2.2 + (h?.weight ?? 0) / 2), evidence: ev, sourceIndices: [i] });
       continue;
     }
     if (p.index < bodyStart) continue; // front-region apparatus, not a chapter
@@ -287,14 +300,16 @@ export function segmentDocx(signals: DocxSignals): DocxSegmentation {
     // "1" ¶ "THE PROCESSION") into a single heading — the number line and the
     // title line are one chapter opener split across two paragraphs.
     let text = p.text;
+    const sourceIndices = [p.index];
     if (!isDivision && /^(chapter\s+)?(\d{1,3}|[ivxlcdm]+)\.?$/i.test(p.text) && next && isShort(next.text) && !isBodyProse(next) && scoreHeading(next, body, nextNonEmpty(paras, next.index + 1))) {
       text = `${p.text} ${next.text}`.replace(/\s+/g, ' ').trim();
       ev.push('number + title merged');
+      sourceIndices.push(next.index);
       i = next.index; // consume the title paragraph
     }
 
-    headings.push({ index: p.index, role, text, confidence: squash(h.weight), evidence: ev });
+    headings.push({ index: p.index, role, text, confidence: squash(h.weight), evidence: ev, sourceIndices });
   }
 
-  return { title, author, headings, tocIndices: [...tocIdx].sort((a, b) => a - b) };
+  return { title, author, anchored, headings, tocIndices: [...tocIdx].sort((a, b) => a - b) };
 }

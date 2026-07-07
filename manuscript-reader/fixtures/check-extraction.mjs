@@ -21,7 +21,8 @@ import { buildManuscriptStructure } from '../src/engine/ingestion/manuscriptStru
 import { extractFrontMatterCandidates } from '../src/engine/ingestion/frontMatterExtract.ts';
 import { extractDocxSignals } from '../src/engine/ingestion/docxSignals.ts';
 import { segmentDocx } from '../src/engine/ingestion/docxSegment.ts';
-import { applySignalsToMarkdown } from '../src/engine/ingestion/docxBridge.ts';
+import { applySignalsToMarkdown, injectSignalStructure, textPipelineUnderSegmented } from '../src/engine/ingestion/docxBridge.ts';
+import { getParsedManuscript } from '../src/engine/ingestion/parseCache.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -32,9 +33,15 @@ async function toMarkdown(path) {
   if (isDocx) {
     const buffer = await readFile(path);
     const { value } = await mammoth.convertToMarkdown({ buffer }, { styleMap: MAMMOTH_STYLE_MAP });
-    text = preprocessMarkdown(value.trim());
+    const raw = value.trim();
+    text = preprocessMarkdown(raw);
     try {
-      const seg = segmentDocx(await extractDocxSignals(buffer));
+      const signals = await extractDocxSignals(buffer);
+      const seg = segmentDocx(signals);
+      const { chapters } = getParsedManuscript(text);
+      if (seg.anchored && textPipelineUnderSegmented(chapters.length, countWords(text)) && seg.headings.length > 1) {
+        text = preprocessMarkdown(injectSignalStructure(raw, signals, seg));
+      }
       text = applySignalsToMarkdown(text, seg);
     } catch { /* signals are an enhancement, not a requirement */ }
   } else {
