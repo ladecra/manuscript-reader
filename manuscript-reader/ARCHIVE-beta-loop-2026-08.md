@@ -34,7 +34,7 @@ Run from `files/manuscript-reader/`:
 
 ## High-risk paths preserved in this snapshot
 
-**Deleted in tree (recover from this commit):**
+**Deleted in tree (recover from parent of archive commit `725b5b9`, i.e. `725b5b9^`):**
 
 - `files/manuscript-reader/src/engine/storage/supabaseClient.ts`
 - `files/manuscript-reader/src/engine/storage/supabaseSync.ts`
