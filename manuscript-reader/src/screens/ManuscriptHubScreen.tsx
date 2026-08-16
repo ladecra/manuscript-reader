@@ -1,14 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useReaderStore } from '../state/readerStore';
 import { useLibraryStore } from '../state/libraryStore';
-import { useUIStore } from '../state/uiStore';
-import { computeEditorialSignals } from '../engine/editorialSignals';
-import { deriveWorkflowStatus } from '../engine/library';
 import { resolveAnnotationChapters } from '../engine/annotations/chapterResolve';
 import { buildImportSummary } from '../engine/ingestion/importSummary';
 import { isReaderAnnotation } from '../engine/types';
-import type { Annotation, ReaderProgress, ResponseBreakdown } from '../engine/types';
-import { ReportView, type JumpFn } from '../components/reports/ReportView';
+import type { Annotation, ReaderProgress } from '../engine/types';
 import { CoverImage } from '../components/ui/CoverImage';
 import { ChevronLeftIcon, DotsIcon, BookIcon } from '../components/ui/Icons';
 import { showToast } from '../components/ui/Toast';
@@ -20,30 +16,24 @@ import { getSyncClient, syncEndpoint, isSyncConfigured } from '../sync/config';
 import { SyncError } from '../sync/client';
 import type { ShareHandle } from '../engine/types';
 
-// The manuscript console (reframe): one manuscript, its whole beta-reader loop, on
-// one page. Import verified → shared by link → feedback merges → editorial report.
-// Every tab answers one step of the loop; the old workspace rail, Revision/Versions
-// tabs, working notes, and export cards are cut (see redesign-build-progress memory).
+// Manuscript record: one work — structure, exports, and optional share (secondary).
 
 interface ManuscriptHubScreenProps {
   onRead: () => void;   // enter the immersive reader at the resume position
   onExit: () => void;   // back to the library
 }
 
-type ConsoleTab = 'overview' | 'sharing' | 'feedback' | 'structure' | 'export' | 'report';
+type ConsoleTab = 'overview' | 'structure' | 'export' | 'sharing';
 
 const TABS: { id: ConsoleTab; label: string }[] = [
   { id: 'overview', label: 'Overview' },
-  { id: 'sharing', label: 'Sharing' },
-  { id: 'feedback', label: 'Feedback' },
   { id: 'structure', label: 'Structure' },
   { id: 'export', label: 'Export' },
+  { id: 'sharing', label: 'Share' },
 ];
 
-// The trailing breadcrumb crumb — Report is a Feedback sub-view, not its own tab.
 const CRUMB_LABEL: Record<ConsoleTab, string> = {
-  overview: 'Overview', sharing: 'Sharing', feedback: 'Feedback',
-  structure: 'Structure', export: 'Export', report: 'Report',
+  overview: 'Overview', sharing: 'Share', structure: 'Structure', export: 'Export',
 };
 
 // The publishable-artifact catalog, disciplined to four formats. Print + Ebook
@@ -63,21 +53,7 @@ const EXTENT_LABELS: { id: ExtentChoice; label: string }[] = [
   { id: 'words', label: 'First 10,000 words' },
 ];
 
-/** Reader responses split by the reframe's default taxonomy. Editorial notes
- *  (pacing / continuity / voice / structure) fold into Notes; bookmarks are a
- *  private reading aid and never counted. */
-function deriveBreakdown(annotations: Annotation[]): ResponseBreakdown {
-  let highlights = 0, notes = 0, questions = 0;
-  for (const a of annotations) {
-    if (!isReaderAnnotation(a)) continue;
-    if (a.type === 'highlight') highlights++;
-    else if (a.type === 'question') questions++;
-    else if (a.type === 'bookmark') continue;
-    else notes++;
-  }
-  return { highlights, notes, questions };
-}
-
+/** Reader identities from imported or synced sessions (share tab roster). */
 function deriveReaders(annotations: Annotation[]): ReaderProgress[] {
   const names = new Map<string, string>();
   for (const a of annotations) {
@@ -96,7 +72,6 @@ function initials(name: string): string {
 export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps) {
   const { manuscript, chapters, annotations: rawAnnotations, sessions, importSession } = useReaderStore();
   const { deleteManuscript, saveShare } = useLibraryStore();
-  const { setPendingChapterIndex, setPendingReaderIntent } = useUIStore();
   const [tab, setTab] = useState<ConsoleTab>('overview');
   const [menuOpen, setMenuOpen] = useState(false);
   const [smfExtent, setSmfExtent] = useState<ExtentChoice>('full');
@@ -115,12 +90,6 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
     () => (combinedMarkdown ? buildImportSummary(combinedMarkdown) : null),
     [combinedMarkdown],
   );
-  const signals = useMemo(
-    () => (manuscript
-      ? computeEditorialSignals({ manuscriptId: manuscript.id, annotations, chapters, sessions, combinedMarkdown })
-      : null),
-    [manuscript, annotations, chapters, sessions, combinedMarkdown],
-  );
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -131,26 +100,6 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
     return () => document.removeEventListener('mousedown', onDoc);
   }, [menuOpen]);
 
-  // Live feedback: while the console is open on a live share, pull responses on open
-  // and then every 15s, folding each session in through the same merge as import. All
-  // silent — the manual "Check for responses" is what surfaces errors/confirmation.
-  useEffect(() => {
-    if (!share || share.state === 'revoked') return;
-    let cancelled = false;
-    const pull = async () => {
-      try {
-        const { sessions: pulled } = await getSyncClient().listSessions(share.shareId, share.authorToken);
-        if (cancelled) return;
-        for (const payload of pulled) {
-          if (Array.isArray(payload.annotations)) importSession(payload);
-        }
-      } catch { /* silent — the manual pull reports failures */ }
-    };
-    void pull();
-    const timer = setInterval(pull, 15000);
-    return () => { cancelled = true; clearInterval(timer); };
-  }, [share, importSession]);
-
   if (!manuscript) return null;
 
   const m = manuscript.metadata;
@@ -158,10 +107,6 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
   const genre = m.publishing?.genre?.trim();
   const available = !!combinedMarkdown;
 
-  const breakdown = m.responses ?? deriveBreakdown(annotations);
-  const responsesTotal = breakdown.highlights + breakdown.notes + breakdown.questions;
-  // Prefer real reader sessions (they carry progress + completion) once any have been
-  // pulled or imported; fall back to the flat annotation-derived list otherwise.
   const readers: ReaderProgress[] = sessions.length
     ? sessions.map((s): ReaderProgress => ({
         name: s.readerName,
@@ -169,36 +114,21 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
         state: s.completedAt ? 'finished' : 'reading',
       }))
     : (m.readers ?? deriveReaders(annotations));
-  const readerCount = readers.length;
   const shareLive = !!share && share.state !== 'revoked';
   const shared = share ? shareLive : (m.shared ?? readers.length > 0);
-  const newResponses = m.newResponses ?? 0;
-  // The manuscript's position in the beta-reader loop — the hero the Hub hangs
-  // off (loop-completion brief). Sharing is the control beneath it.
-  const workflow = deriveWorkflowStatus({
-    shareState: share?.state,
-    legacyShared: m.shared,
-    readerCount,
-    newResponses,
-  });
 
   const setAside = importSummary ? importSummary.front.length + importSummary.back.length : 0;
   const chapterCount = m.chapterCount || chapters.length;
   const totalWords = m.wordCount || importSummary?.totalWords || 0;
+  const readPct = m.progress != null ? Math.round(m.progress * 100) : null;
+  const personalMarkCount = annotations.filter(a => !isReaderAnnotation(a)).length;
   const importedLabel = m.importedAt
     ? new Date(m.importedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
     : null;
 
-  const jumpToChapter: JumpFn = (index, opts) => {
-    setPendingChapterIndex(index);
-    if (opts?.annotate) setPendingReaderIntent('annotate');
-    onRead();
-  };
-
-  // The reader link, minus scheme, for display. Falls back to a placeholder only
-  // before a share exists (the create panel is shown then, not this).
   const readerUrl = share?.readerUrl ?? '';
   const linkDisplay = readerUrl.replace(/^https?:\/\//, '');
+
   const copyLink = () => {
     if (!readerUrl) return;
     navigator.clipboard?.writeText(readerUrl).then(
@@ -322,20 +252,21 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
             <div className="console-byline">
               {m.author}{m.author && genre ? ' · ' : ''}{genre}
             </div>
-            <div className={`console-status console-status--${workflow.tone}`}>
-              <span className="console-status-pip" />
-              <span className="console-status-label">{workflow.label}</span>
-              {workflow.readerCount > 0 && (
-                <span className="console-status-sub">· <span className="tnum">{workflow.readerCount}</span> reader{workflow.readerCount === 1 ? '' : 's'}</span>
-              )}
-              {workflow.newResponses > 0 && (
-                <span className="console-status-new"><span className="tnum">{workflow.newResponses}</span> new</span>
+            <div className="console-byline console-byline--meta">
+              <span className="tnum">{totalWords.toLocaleString()}</span> words
+              <span className="console-sep"> · </span>
+              <span className="tnum">{chapterCount}</span> chapter{chapterCount === 1 ? '' : 's'}
+              {readPct != null && (
+                <>
+                  <span className="console-sep"> · </span>
+                  <span className="tnum">{readPct}%</span> read
+                </>
               )}
             </div>
           </div>
           <div className="console-cta">
             <button type="button" className="console-open" onClick={onRead} disabled={!available}>
-              Open in reader
+              Continue reading
             </button>
             <div className="console-kebab-wrap" ref={menuRef}>
               <button
@@ -349,7 +280,7 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
               </button>
               {menuOpen && (
                 <div className="console-menu" role="menu">
-                  <button type="button" role="menuitem" className="console-menu-item" onClick={() => { setMenuOpen(false); onRead(); }} disabled={!available}>Open in reader</button>
+                  <button type="button" role="menuitem" className="console-menu-item" onClick={() => { setMenuOpen(false); onRead(); }} disabled={!available}>Continue reading</button>
                   <button
                     type="button"
                     role="menuitem"
@@ -373,8 +304,8 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
               key={t.id}
               type="button"
               role="tab"
-              aria-selected={tab === t.id || (t.id === 'feedback' && tab === 'report')}
-              className={`console-tab${tab === t.id || (t.id === 'feedback' && tab === 'report') ? ' active' : ''}`}
+              aria-selected={tab === t.id}
+              className={`console-tab${tab === t.id ? ' active' : ''}`}
               onClick={() => setTab(t.id)}
             >
               {t.label}
@@ -404,54 +335,16 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
             )}
 
             <div className="console-panels">
-              {/* Sharing */}
               <section className="console-panel">
                 <div className="panel-head">
-                  <span className="panel-name">Sharing</span>
-                  {shared && <button type="button" className="panel-link" onClick={() => setTab('sharing')}>Manage <ChevronLeftIcon size={11} /></button>}
+                  <span className="panel-name">Your marks</span>
                 </div>
-                {shared ? (
-                  <>
-                    <div className="share-state"><span className="console-pip" /> Shared with {readerCount} reader{readerCount === 1 ? '' : 's'}</div>
-                    <div className="roster">
-                      {readers.slice(0, 3).map((r, i) => (
-                        <div className="reader" key={i}>
-                          <span className="reader-av">{initials(r.name)}</span>
-                          <div className="reader-main">
-                            <span className="reader-name">{r.name}</span>
-                            <span className="prog"><i style={{ width: `${Math.round(r.progress * 100)}%` }} /></span>
-                          </div>
-                          <span className="reader-pct tnum">{Math.round(r.progress * 100)}%</span>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                ) : (
-                  <div className="panel-empty">
-                    <p>Not shared yet.</p>
-                    <button type="button" className="panel-link" onClick={() => setTab('sharing')}>Create a share link <ChevronLeftIcon size={11} /></button>
-                  </div>
-                )}
-              </section>
-
-              {/* Feedback */}
-              <section className="console-panel">
-                <div className="panel-head"><span className="panel-name">Feedback</span></div>
-                <div className="fb-big tnum">{responsesTotal} <small>response{responsesTotal === 1 ? '' : 's'} · {readerCount} reader{readerCount === 1 ? '' : 's'}</small></div>
-                {newResponses > 0 && (
-                  <div className="fb-new"><span className="console-np" /> <span className="tnum">{newResponses} new</span> since your last visit</div>
-                )}
-                <button type="button" className="panel-block" onClick={() => setTab('report')} disabled={responsesTotal === 0}>
-                  View editorial report
+                <div className="st-line"><span>Notes and highlights</span><b className="tnum">{personalMarkCount}</b></div>
+                <button type="button" className="panel-link" onClick={onRead} disabled={!available}>
+                  Continue in reader <ChevronLeftIcon size={11} />
                 </button>
-                <div className="fb-break">
-                  <div className="fb-line"><span>Highlights</span><b className="tnum">{breakdown.highlights}</b></div>
-                  <div className="fb-line"><span>Notes</span><b className="tnum">{breakdown.notes}</b></div>
-                  <div className="fb-line"><span>Questions</span><b className="tnum">{breakdown.questions}</b></div>
-                </div>
               </section>
 
-              {/* Structure */}
               <section className="console-panel">
                 <div className="panel-head">
                   <span className="panel-name">Structure</span>
@@ -461,6 +354,21 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
                 <div className="st-line"><span>Set aside at import</span><b className="tnum">{setAside} section{setAside === 1 ? '' : 's'}</b></div>
                 <div className="st-line"><span>Total words</span><b className="tnum">{totalWords.toLocaleString()}</b></div>
                 <p className="panel-foot">Set-aside sections (title page, dedication, TOC…) are kept, never discarded — promote any to a chapter in Review.</p>
+              </section>
+
+              <section className="console-panel">
+                <div className="panel-head">
+                  <span className="panel-name">Share</span>
+                  {shared && <button type="button" className="panel-link" onClick={() => setTab('sharing')}>Manage <ChevronLeftIcon size={11} /></button>}
+                </div>
+                {shared ? (
+                  <p className="panel-foot" style={{ marginTop: 0 }}>A read-only link is active for this work. Manage it on the Share tab.</p>
+                ) : (
+                  <div className="panel-empty">
+                    <p>Optional — send a read-only link when you want someone else to read.</p>
+                    <button type="button" className="panel-link" onClick={() => setTab('sharing')}>Share settings <ChevronLeftIcon size={11} /></button>
+                  </div>
+                )}
               </section>
             </div>
           </div>
@@ -549,25 +457,6 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
                 )}
               </div>
             )}
-          </div>
-        )}
-
-        {/* ── FEEDBACK ── */}
-        {tab === 'feedback' && (
-          <div className="console-body">
-            <div className="console-panel console-panel--wide">
-              <div className="panel-head"><span className="panel-name">Feedback</span></div>
-              <div className="fb-big tnum">{responsesTotal} <small>response{responsesTotal === 1 ? '' : 's'} · {readerCount} reader{readerCount === 1 ? '' : 's'}</small></div>
-              <div className="fb-break fb-break--row">
-                <div className="fb-line"><span>Highlights</span><b className="tnum">{breakdown.highlights}</b></div>
-                <div className="fb-line"><span>Notes</span><b className="tnum">{breakdown.notes}</b></div>
-                <div className="fb-line"><span>Questions</span><b className="tnum">{breakdown.questions}</b></div>
-              </div>
-              <button type="button" className="panel-block" onClick={() => setTab('report')} disabled={responsesTotal === 0}>
-                View editorial report
-              </button>
-              <p className="panel-foot">Responses merge from every reader into one ranked report. The full report body fills in as reader annotations arrive (JSON import today, sync worker next).</p>
-            </div>
           </div>
         )}
 
@@ -662,18 +551,6 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
               </div>
 
               <p className="panel-foot">Every export is built from the current saved text on this device. Formats respect your set-aside sections — front &amp; back matter are placed, never dropped.</p>
-            </div>
-          </div>
-        )}
-
-        {/* ── REPORT ── */}
-        {tab === 'report' && (
-          <div className="console-body">
-            <button type="button" className="console-back console-back--sub" onClick={() => setTab('feedback')}>
-              <ChevronLeftIcon size={13} /> Feedback
-            </button>
-            <div className="console-report">
-              <ReportView signals={signals} onJump={jumpToChapter} />
             </div>
           </div>
         )}
