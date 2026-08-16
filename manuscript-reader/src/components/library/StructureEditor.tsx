@@ -1,39 +1,35 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { buildImportSummary } from '../../engine/ingestion/importSummary';
-import type { ImportSection, ImportSummary } from '../../engine/ingestion/importSummary';
-import {
-  renameChapter, mergeChapterUp, reclassifyChapterAsMatter, reclassifyMatterAsChapter,
-  reclassifyMatterRole,
-} from '../../engine/manuscript/structureEdit';
-import { MATTER_ROLES_BY_REGION } from '../../engine/manuscript/matterEdit';
+import type { ImportSection } from '../../engine/ingestion/importSummary';
+import { renameChapter, reclassifyChapterAsMatter, reclassifyMatterAsChapter } from '../../engine/manuscript/structureEdit';
 import type { MatterRegion, MatterRole } from '../../engine/types';
-import { ChevronRightIcon } from '../ui/Icons';
+import { PlusIcon } from '../ui/Icons';
 
 // ─── The Structure editor — the author's correction surface for what ingestion
-// detected. Controlled: it renders buildImportSummary(markdown) and, for every
-// structural edit, hands a fresh markdown to onChange (each op is a pure engine
-// transform). Built ONCE and mounted in two places: the pre-save import screen
-// (working buffer) and the Studio (persisted via replaceMarkdown). Ingestion
-// proposes; here the author disposes — rename, merge, and reclassify chapter⇄matter,
-// with a prose preview so the decision is informed. ───
+// detected, simplified (reframe) to ONE decision: is this a chapter, or set aside?
+// The nine matter-roles are retired from the UI — set-aside is untyped here; the
+// engine still records a role under the hood (region 'back' / 'other') so exports
+// stay well-formed, but the author never picks one. Controlled: renders
+// buildImportSummary(markdown) and hands a fresh markdown to onChange for each
+// pure engine transform (rename · set-aside · make-a-chapter). Detection still
+// runs; its smell flags surface at the top. ───
 
+// Kept for read-only display of what a set-aside section is (never editable here).
 const ROLE_LABELS: Record<string, string> = {
   'half-title': 'Half title', 'title-page': 'Title page', 'about-author': 'About the author',
   'author-note': "Author's note", 'reading-group-guide': 'Reading group guide',
   'list-of-illustrations': 'List of illustrations', 'also-by': 'Also by the author',
+  'other': 'Set aside',
 };
 const roleLabel = (role: string): string =>
   ROLE_LABELS[role] ?? role.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 
 const words = (n: number) => `${n.toLocaleString()} word${n === 1 ? '' : 's'}`;
 
-/** Detected publishing values, shown so the author reviews them AT import (not
- *  buried in Studio → Details later). Read-only here — the fields are applied
- *  downstream; the point is that they're seen. */
-const META_LABELS: [keyof ImportSummary['metadata'] | string, string][] = [
-  ['copyrightYear', 'Copyright'], ['copyrightHolder', '© holder'], ['publisher', 'Publisher'],
-  ['isbn', 'ISBN'], ['edition', 'Edition'], ['publicationDate', 'Published'],
-];
+// A chapter the author sets aside becomes untyped back-matter ("other"). Region only
+// affects export ordering; set-aside is left out of the reading view regardless.
+const SET_ASIDE_REGION: MatterRegion = 'back';
+const SET_ASIDE_ROLE: MatterRole = 'other';
 
 interface StructureEditorProps {
   markdown: string;
@@ -42,27 +38,10 @@ interface StructureEditorProps {
 
 export function StructureEditor({ markdown, onChange }: StructureEditorProps) {
   const summary = useMemo(() => buildImportSummary(markdown), [markdown]);
-  const [openKey, setOpenKey] = useState<string | null>(null);
-  const toggle = (key: string) => setOpenKey(k => (k === key ? null : key));
-
-  const meta = META_LABELS.filter(([k]) => summary.metadata[k as string]);
+  const aside = [...summary.front, ...summary.back];
 
   return (
     <div className="se">
-      {meta.length > 0 && (
-        <div className="se-meta">
-          <div className="se-group-title">Detected details</div>
-          <div className="se-meta-grid">
-            {meta.map(([k, label]) => (
-              <div className="se-meta-item" key={k as string}>
-                <span className="se-meta-label">{label}</span>
-                <span className="se-meta-value">{summary.metadata[k as string]}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
       {summary.flags.length > 0 && (
         <ul className="se-flags">
           {summary.flags.map((f, i) => (
@@ -71,173 +50,99 @@ export function StructureEditor({ markdown, onChange }: StructureEditorProps) {
         </ul>
       )}
 
-      <div className="se-spine">
-        {summary.front.length > 0 && (
-          <div className="se-group">
-            <div className="se-group-title">Front matter</div>
-            {summary.front.map((s, i) => (
-              <MatterRow key={`f${i}`} section={s} open={openKey === `f${i}`} onToggle={() => toggle(`f${i}`)}
-                onReclassifyAsChapter={() => onChange(reclassifyMatterAsChapter(markdown, s.region!, s.matterIndex!))}
-                onReclassifyRole={(role) => onChange(reclassifyMatterRole(markdown, s.region!, s.matterIndex!, role))} />
+      <div className="se-buckets">
+        {/* ── Chapters ── */}
+        <div className="se-bucket">
+          <div className="se-bucket-head">
+            <span className="se-bucket-name">Chapters · <span className="tnum">{summary.chapters.length}</span></span>
+            <span className="se-bucket-hint">Rename inline</span>
+          </div>
+          <div className="se-bucket-list">
+            {summary.chapters.length === 0 && <div className="se-empty">No chapters detected.</div>}
+            {summary.chapters.map((s, i) => (
+              <ChapterRow
+                key={`c${s.chapterIndex}:${s.title}`}
+                section={s}
+                ordinal={i + 1}
+                onRename={title => onChange(renameChapter(markdown, s.chapterIndex!, title))}
+                onSetAside={() => onChange(reclassifyChapterAsMatter(markdown, s.chapterIndex!, SET_ASIDE_REGION, SET_ASIDE_ROLE))}
+              />
             ))}
           </div>
-        )}
-
-        <div className="se-group">
-          <div className="se-group-title">
-            {summary.chapters.length} chapter{summary.chapters.length !== 1 ? 's' : ''}
-          </div>
-          {summary.chapters.length === 0 && <div className="ir-empty">No chapters detected.</div>}
-          {summary.chapters.map((s, i) => (
-            <ChapterRow
-              key={`c${s.chapterIndex}:${s.title}`}
-              section={s}
-              open={openKey === `c${i}`}
-              onToggle={() => toggle(`c${i}`)}
-              onRename={title => onChange(renameChapter(markdown, s.chapterIndex!, title))}
-              onMergeUp={i > 0 ? () => onChange(mergeChapterUp(markdown, s.chapterIndex!)) : undefined}
-              onReclassify={(region, role) => onChange(reclassifyChapterAsMatter(markdown, s.chapterIndex!, region, role))}
-            />
-          ))}
         </div>
 
-        {summary.back.length > 0 && (
-          <div className="se-group">
-            <div className="se-group-title">Back matter</div>
-            {summary.back.map((s, i) => (
-              <MatterRow key={`b${i}`} section={s} open={openKey === `b${i}`} onToggle={() => toggle(`b${i}`)}
-                onReclassifyAsChapter={() => onChange(reclassifyMatterAsChapter(markdown, s.region!, s.matterIndex!))}
-                onReclassifyRole={(role) => onChange(reclassifyMatterRole(markdown, s.region!, s.matterIndex!, role))} />
-            ))}
+        {/* ── Set aside ── */}
+        <div className="se-bucket">
+          <div className="se-bucket-head">
+            <span className="se-bucket-name">Set aside · <span className="tnum">{aside.length}</span></span>
+            <span className="se-bucket-hint">Kept, not shared</span>
           </div>
-        )}
+          <div className="se-bucket-list">
+            {aside.length === 0 && <div className="se-empty">Nothing set aside — every section is a chapter.</div>}
+            {aside.map((s, i) => (
+              <AsideRow
+                key={`a${s.region}:${s.matterIndex}:${i}`}
+                section={s}
+                onMakeChapter={() => onChange(reclassifyMatterAsChapter(markdown, s.region!, s.matterIndex!))}
+              />
+            ))}
+            <p className="se-aside-note">
+              Front &amp; back matter (title page, dedication, TOC, acknowledgements…) are kept with the
+              manuscript but left out of the reading view. Promote anything that should be a chapter.
+            </p>
+          </div>
+        </div>
       </div>
     </div>
   );
 }
 
-// ── A chapter row: inline rename, expandable drawer with preview + reclassify/merge ──
-function ChapterRow({ section, open, onToggle, onRename, onMergeUp, onReclassify }: {
+// ── A chapter row: number · inline rename · words · "Set aside". ──
+function ChapterRow({ section, ordinal, onRename, onSetAside }: {
   section: ImportSection;
-  open: boolean;
-  onToggle: () => void;
+  ordinal: number;
   onRename: (title: string) => void;
-  onMergeUp?: () => void;
-  onReclassify: (region: MatterRegion, role: MatterRole) => void;
+  onSetAside: () => void;
 }) {
   // Uncontrolled + re-seeded via the row's `key` (which includes the title): a
-  // committed rename rebuilds the summary and remounts the row with the new value,
-  // so no setState-in-effect is needed to keep the field in sync.
+  // committed rename rebuilds the summary and remounts the row with the new value.
   const commit = (value: string) => {
     const v = value.trim();
     if (v && v !== section.title) onRename(v);
   };
-
   return (
-    <div className={`se-row${open ? ' se-row--open' : ''}`}>
-      <div className="se-row-head">
-        <button type="button" className="se-caret" onClick={onToggle} aria-expanded={open} aria-label="Details">
-          <ChevronRightIcon size={12} />
-        </button>
-        <input
-          className="se-title-input"
-          defaultValue={section.title}
-          onBlur={e => commit(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') { e.currentTarget.blur(); } }}
-          placeholder="Untitled chapter"
-          aria-label="Chapter title"
-        />
-        <span className="se-row-meta">
-          {section.sceneBreaks ? <span className="ir-scenes">{section.sceneBreaks} break{section.sceneBreaks !== 1 ? 's' : ''}</span> : null}
-          <span className="ir-words">{words(section.words)}</span>
-        </span>
-      </div>
-      {open && (
-        <div className="se-drawer">
-          {section.preview && <p className="se-preview">{section.preview}</p>}
-          <div className="se-actions">
-            {onMergeUp && (
-              <button type="button" className="se-action" onClick={onMergeUp}>Merge into previous</button>
-            )}
-            <ReclassifyControl onApply={onReclassify} />
-          </div>
-        </div>
-      )}
+    <div className="se-row">
+      <span className="se-num tnum">{ordinal}</span>
+      <input
+        className="se-title-input"
+        defaultValue={section.title}
+        onBlur={e => commit(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter') { e.currentTarget.blur(); } }}
+        placeholder="Untitled chapter"
+        aria-label={`Chapter ${ordinal} title`}
+      />
+      <span className="se-row-words">{words(section.words)}</span>
+      <button type="button" className="se-move" onClick={onSetAside}>
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.4" aria-hidden="true"><path d="M5 12h14" /></svg> Set aside
+      </button>
     </div>
   );
 }
 
-// ── A matter row: role + title, expandable preview, one-click "make a chapter" ──
-function MatterRow({ section, open, onToggle, onReclassifyAsChapter, onReclassifyRole }: {
+// ── A set-aside row: what it is (read-only) · "Make a chapter". ──
+function AsideRow({ section, onMakeChapter }: {
   section: ImportSection;
-  open: boolean;
-  onToggle: () => void;
-  onReclassifyAsChapter: () => void;
-  onReclassifyRole: (role: MatterRole) => void;
+  onMakeChapter: () => void;
 }) {
   return (
-    <div className={`se-row${open ? ' se-row--open' : ''}`}>
-      <div className="se-row-head">
-        <button type="button" className="se-caret" onClick={onToggle} aria-expanded={open} aria-label="Details">
-          <ChevronRightIcon size={12} />
-        </button>
-        <span className="se-matter-label">
-          {roleLabel(section.role)}
-          {section.title && <span className="se-matter-title"> · {section.title}</span>}
-        </span>
-        <span className="se-row-meta"><span className="ir-words">{words(section.words)}</span></span>
-      </div>
-      {open && (
-        <div className="se-drawer">
-          {section.preview && <p className="se-preview">{section.preview}</p>}
-          <div className="se-actions">
-            <button type="button" className="se-action" onClick={onReclassifyAsChapter}>Make this a chapter</button>
-            <MatterReclassifyControl currentRole={section.role as MatterRole} onApply={onReclassifyRole} />
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** Reclassify matter in place (e.g. mis-filed title page → foreword). */
-function MatterReclassifyControl({ currentRole, onApply }: { currentRole: MatterRole; onApply: (role: MatterRole) => void }) {
-  const region = MATTER_ROLES_BY_REGION.front.includes(currentRole) ? 'front' : 'back';
-  const roles = MATTER_ROLES_BY_REGION[region];
-  const [role, setRole] = useState<MatterRole>(roles.includes(currentRole) ? currentRole : roles[0]);
-  return (
-    <div className="se-reclassify">
-      <span className="se-reclassify-lead">Wrong type? Change to</span>
-      <select className="se-select" value={role} onChange={e => setRole(e.target.value as MatterRole)} aria-label="Matter role">
-        {roles.map(r => <option key={r} value={r}>{roleLabel(r)}</option>)}
-      </select>
-      <button type="button" className="se-action" disabled={role === currentRole}
-        onClick={() => onApply(role)}>Update</button>
-    </div>
-  );
-}
-
-// ── Reclassify a chapter → front/back matter: pick a region + a role, then move. ──
-function ReclassifyControl({ onApply }: { onApply: (region: MatterRegion, role: MatterRole) => void }) {
-  const [region, setRegion] = useState<MatterRegion>('back');
-  const roles = MATTER_ROLES_BY_REGION[region];
-  const [role, setRole] = useState<MatterRole>('about-author');
-  const onRegionChange = (next: MatterRegion) => {
-    setRegion(next);
-    const nextRoles = MATTER_ROLES_BY_REGION[next];
-    setRole(r => (nextRoles.includes(r) ? r : nextRoles[0]));
-  };
-  return (
-    <div className="se-reclassify">
-      <span className="se-reclassify-lead">Not a chapter? Move to</span>
-      <select className="se-select" value={region} onChange={e => onRegionChange(e.target.value as MatterRegion)} aria-label="Region">
-        <option value="front">Front matter</option>
-        <option value="back">Back matter</option>
-      </select>
-      <select className="se-select" value={role} onChange={e => setRole(e.target.value as MatterRole)} aria-label="Role">
-        {roles.map(r => <option key={r} value={r}>{roleLabel(r)}</option>)}
-      </select>
-      <button type="button" className="se-action" onClick={() => onApply(region, role)}>Move</button>
+    <div className="se-aside-row">
+      <span className="se-aside-name">
+        {section.title || roleLabel(section.role)}
+        {section.title && section.role !== 'other' && <span className="se-aside-role"> · {roleLabel(section.role)}</span>}
+      </span>
+      <button type="button" className="se-move" onClick={onMakeChapter}>
+        <PlusIcon size={12} /> Make a chapter
+      </button>
     </div>
   );
 }

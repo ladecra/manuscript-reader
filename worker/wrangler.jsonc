@@ -1,0 +1,18 @@
+{
+  // Vellibris sync worker — see DESIGN.md. IDs are filled in at provision time
+  // (Stage B of the setup checklist): `wrangler kv namespace create SHARES` prints
+  // the id; the R2 bucket name must match the one created in the dashboard/CLI.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vellibris-sync",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-11-01",
+  "observability": { "enabled": true },
+  "kv_namespaces": [
+    { "binding": "SHARES", "id": "05a0b547287e470682b22c52d5104950" }
+  ],
+  "r2_buckets": [
+    { "binding": "BLOBS", "bucket_name": "vellibris-shares" }
+  ]
+  // SHARE_SIGNING_KEY is a secret, not a var: `wrangler secret put SHARE_SIGNING_KEY`
+  // (prod) and `.dev.vars` (local dev). Never commit it.
+}

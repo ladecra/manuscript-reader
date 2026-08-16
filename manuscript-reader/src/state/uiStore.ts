@@ -1,9 +1,7 @@
 import { create } from 'zustand';
 import { loadTheme, saveTheme, loadFontSize, saveFontSize } from '../engine/storage';
-import type { HubPane } from '../components/layout/ManuscriptWorkspaceRail';
-import { workspaceRailOpenByDefault, WORKSPACE_RAIL_MOBILE_MAX_PX } from '../engine/ui/workspaceRail';
 
-export type Screen = 'landing' | 'library' | 'load' | 'manuscript' | 'reader' | 'publishing';
+export type Screen = 'landing' | 'library' | 'load' | 'manuscript' | 'reader';
 
 /** The reader's postures (Vellibris model). Derived from boolean flags so all
  *  legacy effects keep working:
@@ -34,8 +32,6 @@ interface UIStore {
   annSidebarCollapsed: boolean;
   editMode: boolean;
   changesOpen: boolean;   // Changes (revision review) mode — see ReaderMode
-  workspaceRailOpen: boolean;
-  hubPane: HubPane;
 
   // A chapter index the reader should scroll to on its next mount, set when the
   // hub (e.g. a Report chip) sends the author into the prose at a specific spot.
@@ -77,10 +73,6 @@ interface UIStore {
   exitEditMode: () => void;
   setReaderMode: (m: ReaderMode) => void;
 
-  toggleWorkspaceRail: () => void;
-  openWorkspaceRail: () => void;
-  closeWorkspaceRail: () => void;
-  setHubPane: (p: HubPane) => void;
 
   closeAllPanels: () => void;
 
@@ -102,25 +94,18 @@ export const useUIStore = create<UIStore>((set, get) => ({
   annSidebarCollapsed: false,
   editMode: false,
   changesOpen: false,
-  workspaceRailOpen: false,
-  hubPane: 'contents',
   pendingChapterIndex: null,
   pendingReaderIntent: null,
   pendingAnnotationId: null,
   pendingResumeFrac: null,
 
   setScreen(s) {
-    let workspaceRailOpen = get().workspaceRailOpen;
-    if (s === 'manuscript') workspaceRailOpen = workspaceRailOpenByDefault('manuscript', window.innerWidth <= WORKSPACE_RAIL_MOBILE_MAX_PX);
-    else if (s === 'reader') workspaceRailOpen = workspaceRailOpenByDefault('reader', false);
-
     set({
       screen: s,
       navOpen: false,
       annSidebarOpen: false,
       editMode: false,
       changesOpen: false,
-      workspaceRailOpen,
     });
     // Apply theme class whenever screen changes (safe to re-apply)
     document.documentElement.classList.toggle('light', get().theme === 'light');
@@ -171,10 +156,6 @@ export const useUIStore = create<UIStore>((set, get) => ({
     else                          set({ editMode: false, annSidebarOpen: false, annSidebarCollapsed: false, changesOpen: false });
   },
 
-  toggleWorkspaceRail() { set(s => ({ workspaceRailOpen: !s.workspaceRailOpen })); },
-  openWorkspaceRail()   { set({ workspaceRailOpen: true }); },
-  closeWorkspaceRail()  { set({ workspaceRailOpen: false }); },
-  setHubPane(p) { set({ hubPane: p }); },
 
   closeAllPanels() { set({ navOpen: false, annSidebarOpen: false, changesOpen: false }); },
 

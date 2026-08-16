@@ -1,24 +1,20 @@
-import React, { useEffect, useLayoutEffect, useMemo, useState } from 'react';
-import { useUIStore, readerModeOf, type ReaderMode } from './state/uiStore';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useUIStore } from './state/uiStore';
 import { useLibraryStore } from './state/libraryStore';
 import { useReaderStore } from './state/readerStore';
 import { useSnapshotStore } from './state/snapshotStore';
-import { hasMeaningfulEdits } from './engine/manuscript/changeList';
-import { usesTouchFriendlyEditing } from './lib/touchEditing';
 import { LandingScreen } from './screens/LandingScreen';
 import { LibraryScreen } from './screens/LibraryScreen';
 import { LoadModal } from './screens/LoadScreen';
 import { ImportStructureScreen } from './screens/ImportStructureScreen';
 import { ReaderScreen } from './screens/ReaderScreen';
 import { ManuscriptHubScreen } from './screens/ManuscriptHubScreen';
-import { PublishingStudioScreen } from './screens/PublishingStudioScreen';
 import { ReaderRail } from './components/layout/ReaderRail';
 import { Toast, useToast } from './components/ui/Toast';
 import { SettingsMenu } from './components/ui/SettingsMenu';
 import { AppShell, type LibraryNavFilter } from './components/layout/AppShell';
-import { QuillIcon, MenuIcon, LibraryIcon, UndoIcon, RedoIcon, ChevronLeftIcon } from './components/ui/Icons';
+import { QuillIcon, MenuIcon, LibraryIcon, UndoIcon, RedoIcon, ChevronLeftIcon, AnnotateIcon, PencilIcon, FontDownIcon, PlusIcon } from './components/ui/Icons';
 import { getParsedManuscript } from './engine/ingestion/parseCache';
-import { workspaceRailOpenByDefault, WORKSPACE_RAIL_MOBILE_MAX_PX } from './engine/ui/workspaceRail';
 import type { Manuscript } from './engine/types';
 
 function IconBtn({ onClick, active, title, label, disabled, children }: {
@@ -37,45 +33,89 @@ function IconBtn({ onClick, active, title, label, disabled, children }: {
   );
 }
 
-/** The reader's mode switch (Vellibris): Reading · Manuscript · Annotations ·
- *  Changes. Changes appears only once the manuscript has edits to review. */
-const READER_MODES: { key: ReaderMode; label: string; title: string }[] = [
-  { key: 'reading',     label: 'Reading',     title: 'Reading mode — clean prose' },
-  { key: 'manuscript',  label: 'Manuscript',  title: 'Manuscript view — edit prose' },
-  { key: 'annotations', label: 'Annotations', title: 'Annotation mode — notes in the margin' },
-  { key: 'changes',     label: 'Changes',     title: 'Changes — your edits, with the previous text in the margin' },
-];
-function ReaderModeSwitch({ mode, hasAnnotations, showChanges, onSet }: {
-  mode: ReaderMode; hasAnnotations: boolean; showChanges: boolean; onSet: (m: ReaderMode) => void;
+/** The reader's display (Aa) menu — a small popover for adjusting the reading
+ *  type size. The full display panel is a later slice; this is the quiet,
+ *  functional minimum the mockup's "Aa" control implies. */
+function ReaderDisplayMenu({ fontSize, onSmaller, onLarger }: {
+  fontSize: number; onSmaller: () => void; onLarger: () => void;
 }) {
-  const modes = showChanges ? READER_MODES : READER_MODES.filter(m => m.key !== 'changes');
+  const [open, setOpen] = useState(false);
   return (
-    <div className="reader-mode-switch" role="tablist" aria-label="Reader mode">
-      {modes.map(m => (
-        <button
-          key={m.key}
-          role="tab"
-          aria-selected={mode === m.key}
-          className={`tab tab--reader${mode === m.key ? ' active' : ''}`}
-          onClick={() => onSet(m.key)}
-          title={m.title}
-        >
-          {m.label}
-          {m.key === 'annotations' && hasAnnotations && <span className="reader-mode-dot" aria-hidden="true" />}
-        </button>
-      ))}
+    <div className="reader-aa">
+      <button
+        className={`btn-icon reader-aa-btn${open ? ' active' : ''}`}
+        onClick={() => setOpen(o => !o)}
+        title="Display settings"
+        aria-label="Display settings"
+        aria-expanded={open}
+      >
+        Aa
+      </button>
+      {open && (
+        <>
+          <div className="reader-aa-scrim" onMouseDown={() => setOpen(false)} />
+          <div className="reader-aa-menu" role="menu">
+            <span className="reader-aa-label">Text size</span>
+            <div className="reader-aa-row">
+              <button className="reader-aa-step" onClick={onSmaller} title="Smaller" aria-label="Smaller text"><FontDownIcon size={15} /></button>
+              <span className="reader-aa-val tnum">{fontSize}</span>
+              <button className="reader-aa-step" onClick={onLarger} title="Larger" aria-label="Larger text"><PlusIcon size={12} /></button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
+  );
+}
+
+/** The reader's quiet right-side controls (redesign-reader.html rd-bar): display
+ *  settings (Aa) and My notes. The author-side reader adds a Manuscript-edit
+ *  toggle; there are no mode tabs — the manuscript owns the screen. */
+function ReaderControls({
+  fontSize, onSmaller, onLarger,
+  annotationsActive, hasAnnotations, onToggleNotes,
+  editActive, onToggleEdit,
+  undoDisabled, redoDisabled, onUndo, onRedo,
+}: {
+  fontSize: number; onSmaller: () => void; onLarger: () => void;
+  annotationsActive: boolean; hasAnnotations: boolean; onToggleNotes: () => void;
+  editActive: boolean; onToggleEdit: () => void;
+  undoDisabled: boolean; redoDisabled: boolean; onUndo: () => void; onRedo: () => void;
+}) {
+  return (
+    <>
+      {editActive && (
+        <>
+          <IconBtn onClick={onUndo} disabled={undoDisabled} title="Undo edit (⌘Z)"><UndoIcon /></IconBtn>
+          <IconBtn onClick={onRedo} disabled={redoDisabled} title="Redo edit (⇧⌘Z)"><RedoIcon /></IconBtn>
+          <span className="reader-ctrl-sep" aria-hidden="true" />
+        </>
+      )}
+      <ReaderDisplayMenu fontSize={fontSize} onSmaller={onSmaller} onLarger={onLarger} />
+      <button
+        className={`btn-icon reader-notes-btn${annotationsActive ? ' active' : ''}`}
+        onClick={onToggleNotes}
+        title="My notes"
+        aria-label="My notes"
+        aria-pressed={annotationsActive}
+      >
+        <AnnotateIcon />
+        {hasAnnotations && <span className="reader-mode-dot" aria-hidden="true" />}
+      </button>
+      <IconBtn onClick={onToggleEdit} active={editActive} title={editActive ? 'Done editing' : 'Edit the manuscript'}>
+        <PencilIcon />
+      </IconBtn>
+    </>
   );
 }
 
 export function App() {
   const {
-    screen, theme, fontSize, annSidebarOpen, editMode, changesOpen,
-    setScreen, toggleNav, setReaderMode, setHubPane,
+    screen, theme, fontSize, annSidebarOpen, editMode,
+    setScreen, toggleNav, toggleAnnSidebar, toggleEditMode, increaseFontSize, decreaseFontSize,
   } = useUIStore();
-  const readerMode = readerModeOf({ editMode, annSidebarOpen, changesOpen });
-  const { library, importManuscript, updateManuscript, cycleStatus, toggleFavorite, deleteManuscript, replaceMarkdown, getReadingPosition } = useLibraryStore();
-  const { manuscript, annotations, edits, openManuscript, closeManuscript, undoEdit, redoEdit, setEditReturnScroll, undoStack, redoStack } = useReaderStore();
+  const { library, importManuscript, updateManuscript, cycleStatus, toggleFavorite, deleteManuscript, replaceMarkdown, getReadingPosition, seedDemoLibrary } = useLibraryStore();
+  const { manuscript, annotations, openManuscript, closeManuscript, undoEdit, redoEdit, setEditReturnScroll, undoStack, redoStack } = useReaderStore();
   const { toastState, showToast } = useToast();
 
   // Undo/redo a committed prose edit: restore the snapshot markdown the store
@@ -102,7 +142,7 @@ export function App() {
   // The reader rail is collapsed (icon-only) by default; the user can expand it.
   const [readerRailCollapsed, setReaderRailCollapsed] = useState(true);
 
-  const shellActive = screen === 'library' || screen === 'manuscript' || screen === 'publishing';
+  const shellActive = screen === 'library' || screen === 'manuscript';
   const favCount = library.filter(m => m.metadata.favorite).length;
 
   const workspaceManuscripts = useMemo(
@@ -117,8 +157,8 @@ export function App() {
   function handleSwitchManuscript(id: string) {
     const ms = library.find(m => m.id === id);
     if (!ms) return;
-    // Same id is already the open manuscript on the hub — no-op. From Publishing
-    // Studio (or elsewhere) the author still expects Recent to open the hub page.
+    // Same id is already the open manuscript on the hub — no-op. From elsewhere
+    // the author still expects Recent to open the hub page.
     if (manuscript?.id === id && screen === 'manuscript') return;
     handleOpenHub(ms);
   }
@@ -143,34 +183,16 @@ export function App() {
   useEffect(() => {
     document.documentElement.classList.toggle('light', theme === 'light');
     document.documentElement.style.setProperty('--body-size', `${fontSize}px`);
+    // DEV-only redesign evaluation: `?demo` seeds sample manuscripts (never in prod).
+    if (import.meta.env.DEV && new URLSearchParams(window.location.search).has('demo')) {
+      seedDemoLibrary();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- apply persisted theme/font once on mount; later changes go through uiStore
   }, []);
 
   useEffect(() => {
-    document.documentElement.dataset.mode = screen === 'reader' ? 'reader' : 'studio';
+    document.documentElement.dataset.mode = screen === 'reader' ? 'reader' : 'shell';
   }, [screen]);
-
-  // Enforce closed rail on narrow viewports when landing on the manuscript page
-  // (setScreen already sets the default; this catches devtools resize and any drift).
-  useLayoutEffect(() => {
-    if (screen !== 'manuscript') return;
-    const want = workspaceRailOpenByDefault('manuscript', window.innerWidth <= WORKSPACE_RAIL_MOBILE_MAX_PX);
-    if (useUIStore.getState().workspaceRailOpen !== want) {
-      useUIStore.setState({ workspaceRailOpen: want });
-    }
-  }, [screen]);
-
-  useEffect(() => {
-    const mq = window.matchMedia(`(max-width: ${WORKSPACE_RAIL_MOBILE_MAX_PX}px)`);
-    function onBreakpointChange() {
-      const s = useUIStore.getState().screen;
-      if (mq.matches && (s === 'manuscript' || s === 'reader')) {
-        useUIStore.getState().closeWorkspaceRail();
-      }
-    }
-    mq.addEventListener('change', onBreakpointChange);
-    return () => mq.removeEventListener('change', onBreakpointChange);
-  }, []);
 
   // Undo/redo committed edits: ⌘/Ctrl+Z, and ⇧⌘Z / Ctrl+Y to redo. While the
   // caret is inside a chapter being edited, defer to the browser's native
@@ -214,7 +236,7 @@ export function App() {
     showToast(`Loaded ${chapters.length} chapter${chapters.length !== 1 ? 's' : ''}.`);
   }
 
-  // Open a manuscript's page (its home) — the title page + publishing workbench.
+  // Open a manuscript's page (its home) — the beta-reader loop console.
   // The card lands here; the reader ("Play") is entered from the page.
   function handleOpenHub(ms: Manuscript) {
     if (!ms.metadata.combinedMarkdown) {
@@ -224,7 +246,6 @@ export function App() {
     }
     const { chapters } = getParsedManuscript(ms.metadata.combinedMarkdown);
     openManuscript(ms, chapters);
-    setHubPane('contents');
     setScreen('manuscript');
     resetShellScroll();
   }
@@ -254,29 +275,10 @@ export function App() {
 
   const title = manuscript?.metadata.title ?? '';
   const hasAnnotations = annotations.length > 0;
-  // Changes mode appears only when there are substantive (non-formatting) changes,
-  // and only on non-touch desktop (it relies on the margin gutter). Gated on the
-  // reader screen + a cheap early-exit predicate so navigating to a hub never pays
-  // for the full change-list coalescing (that runs lazily, only inside the reader).
-  const showChanges = useMemo(
-    () => screen === 'reader' && !usesTouchFriendlyEditing() && hasMeaningfulEdits(edits),
-    [screen, edits],
-  );
 
   // Reader rail → this manuscript's hub (the page the old tools rail linked to).
   function goManuscriptPage() {
     setScreen('manuscript');
-    resetShellScroll();
-  }
-
-  // The production destination — a library landing that privileges one book in the
-  // hub-hero presentation and offers the publishable formats. Reachable from the
-  // app-shell rail (library + hub), never the reader. The screen owns selection: it
-  // defaults to the open manuscript (deep-link) or the most recent, and opens whatever
-  // the author picks so the export hook emits the right bytes. A truly empty library
-  // disables the CTA upstream.
-  function goPublishingStudio() {
-    setScreen('publishing');
     resetShellScroll();
   }
 
@@ -302,13 +304,10 @@ export function App() {
 
   // The library + manuscript hub are "bare": no global topbar — the rail carries
   // the wordmark and a single quiet settings control floats top-right (v3 mockups).
-  const bareTop = screen === 'library' || screen === 'manuscript' || screen === 'publishing';
+  const bareTop = screen === 'library' || screen === 'manuscript';
 
   return (
     <>
-      {bareTop && (
-        <div className="app-topctrl"><SettingsMenu /></div>
-      )}
       {!bareTop && (
       <header id="topbar">
         <div id="topbar-left">
@@ -337,20 +336,24 @@ export function App() {
           )}
         </div>
 
-        <div id="topbar-center">
-          {screen === 'reader' && (
-            <ReaderModeSwitch mode={readerMode} hasAnnotations={hasAnnotations} showChanges={showChanges} onSet={setReaderMode} />
-          )}
-        </div>
+        <div id="topbar-center" />
 
         <div id="topbar-right">
           {screen === 'reader' ? (
-            editMode && (
-              <>
-                <IconBtn onClick={handleUndo} disabled={undoStack.length === 0} title="Undo edit (⌘Z)"><UndoIcon /></IconBtn>
-                <IconBtn onClick={handleRedo} disabled={redoStack.length === 0} title="Redo edit (⇧⌘Z)"><RedoIcon /></IconBtn>
-              </>
-            )
+            <ReaderControls
+              fontSize={fontSize}
+              onSmaller={decreaseFontSize}
+              onLarger={increaseFontSize}
+              annotationsActive={annSidebarOpen}
+              hasAnnotations={hasAnnotations}
+              onToggleNotes={toggleAnnSidebar}
+              editActive={editMode}
+              onToggleEdit={toggleEditMode}
+              undoDisabled={undoStack.length === 0}
+              redoDisabled={redoStack.length === 0}
+              onUndo={handleUndo}
+              onRedo={handleRedo}
+            />
           ) : (
             <>
               {screen === 'load' && (
@@ -367,7 +370,7 @@ export function App() {
 
       {shellActive ? (
         <AppShell
-          variant={screen === 'manuscript' ? 'manuscript' : screen === 'publishing' ? 'publishing' : 'library'}
+          variant={screen === 'manuscript' ? 'manuscript' : 'library'}
           libraryFilter={libraryFilter}
           onLibraryFilter={f => goLibrary(f)}
           manuscriptCount={library.length}
@@ -377,9 +380,6 @@ export function App() {
           onSwitchManuscript={handleSwitchManuscript}
           onNewManuscript={() => setLoadModalOpen(true)}
           onHome={handleHomeNav}
-          onPublishingStudio={goPublishingStudio}
-          publishingStudioActive={screen === 'publishing'}
-          studioDisabled={library.length === 0}
           bareTop={bareTop}
         >
           {screen === 'library' && (
@@ -406,12 +406,6 @@ export function App() {
               key={manuscript.id}
               onRead={() => { setScreen('reader'); window.scrollTo(0, 0); }}
               onExit={handleLibraryNav}
-            />
-          )}
-          {screen === 'publishing' && (
-            <PublishingStudioScreen
-              onExit={handleLibraryNav}
-              onOpenManuscript={goManuscriptPage}
             />
           )}
         </AppShell>

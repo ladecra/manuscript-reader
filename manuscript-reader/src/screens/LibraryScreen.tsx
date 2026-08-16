@@ -1,27 +1,15 @@
 import { useMemo, useState, useRef, useEffect } from 'react';
 import type { Manuscript, PublishingMetadata } from '../engine/types';
 import { LibraryCardEditModal } from '../components/library/LibraryCardEditModal';
-import { getAnnotationStats, loadAnnotations, listSnapshots } from '../engine/storage';
-import { manuscriptListSynopsis, sortLibraryManuscripts, type LibrarySortKey } from '../engine/library';
+import { loadAnnotations, loadSessions, listSnapshots } from '../engine/storage';
+import { sortLibraryManuscripts, deriveWorkflowStatus, type LibrarySortKey } from '../engine/library';
 import { PlusIcon, StarIcon, DotsIcon, ListLayoutIcon, GridLayoutIcon } from '../components/ui/Icons';
 import { CoverImage } from '../components/ui/CoverImage';
 import type { LibraryNavFilter } from '../components/layout/AppShell';
 
-function libraryTimeAgo(ts: number | undefined): string {
-  if (!ts) return '—';
-  const m = Math.floor((Date.now() - ts) / 60000);
-  if (m < 2) return 'Just now';
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return h === 1 ? '1 hour ago' : `${h} hours ago`;
-  const d = Math.floor(h / 24);
-  if (d === 1) return 'Yesterday';
-  if (d < 7) return `${d} days ago`;
-  return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-}
-
-function statusClass(status: string): string {
-  return 'status--' + status.toLowerCase().replace(/[^a-z]+/g, '-');
+function formatImported(ts: number | undefined): string | null {
+  if (!ts) return null;
+  return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 type LibraryViewMode = 'list' | 'grid';
@@ -41,19 +29,14 @@ interface LibraryScreenProps {
 }
 
 export function LibraryScreen({
-  library, libraryFilter, onLibraryFilter, onOpen, onRead, onNew, onDelete, onUpdateManuscript, onCycleStatus, onToggleFavorite, getReadingPosition,
+  library, libraryFilter, onLibraryFilter, onOpen, onNew, onDelete, onUpdateManuscript, onToggleFavorite,
 }: LibraryScreenProps) {
   const [sortKey, setSortKey] = useState<LibrarySortKey>('lastOpened');
-  const [viewMode, setViewMode] = useState<LibraryViewMode>('grid');
+  const [viewMode, setViewMode] = useState<LibraryViewMode>('list');
   const [query, setQuery] = useState('');
 
-  const stored = library.map(ms => ({
-    id: ms.id, title: ms.metadata.title, wordCount: ms.metadata.wordCount,
-    chapterCount: ms.metadata.chapterCount, lastOpened: ms.metadata.lastOpened,
-    status: ms.metadata.status, uncached: ms.metadata.uncached,
-  }));
-  const annStats = getAnnotationStats(stored);
-  const inProgress = library.filter(m => m.metadata.status === 'In Progress').length;
+  const sharedCount = library.filter(m => m.metadata.shared).length;
+  const newResponsesTotal = library.reduce((sum, m) => sum + (m.metadata.newResponses ?? 0), 0);
   const favCount = library.filter(m => m.metadata.favorite).length;
 
   const filtered = useMemo(() => library.filter(m => {
@@ -70,70 +53,78 @@ export function LibraryScreen({
     [filtered, sortKey],
   );
 
-  const aggregateLine = library.length === 0
-    ? 'Your reading room.'
-    : `${library.length} manuscript${library.length !== 1 ? 's' : ''} · ${inProgress} in progress · ${annStats.total.toLocaleString()} annotation${annStats.total !== 1 ? 's' : ''}`;
-
   return (
     <>
       <div className="library-header">
-        <h1 className="library-title">Manuscripts</h1>
-        <div className="library-controls">
+        <div className="library-heading">
+          <h1 className="library-title">Manuscripts</h1>
           {library.length > 0 && (
-            <>
-              <label className="library-sort">
-                <span className="visually-hidden">Sort manuscripts</span>
-                <select
-                  className="library-sort-select"
-                  value={sortKey}
-                  onChange={e => setSortKey(e.target.value as LibrarySortKey)}
-                >
-                  <option value="lastOpened">Last opened</option>
-                  <option value="title">Title</option>
-                  <option value="wordCount">Word count</option>
-                </select>
-              </label>
-              <div className="library-view-toggle" role="group" aria-label="Library view">
-                <button
-                  type="button"
-                  className={`library-view-btn${viewMode === 'grid' ? ' active' : ''}`}
-                  onClick={() => setViewMode('grid')}
-                  title="Grid view"
-                  aria-pressed={viewMode === 'grid'}
-                >
-                  <GridLayoutIcon size={14} />
-                </button>
-                <button
-                  type="button"
-                  className={`library-view-btn${viewMode === 'list' ? ' active' : ''}`}
-                  onClick={() => setViewMode('list')}
-                  title="List view"
-                  aria-pressed={viewMode === 'list'}
-                >
-                  <ListLayoutIcon size={14} />
-                </button>
-              </div>
-            </>
+            <p className="library-stats-line">
+              <span className="tnum">{library.length}</span> manuscript{library.length !== 1 ? 's' : ''}
+              {' · '}<span className="tnum">{sharedCount}</span> shared
+              {' · '}<span className={`tnum${newResponsesTotal > 0 ? ' lib-stat-new' : ''}`}>{newResponsesTotal.toLocaleString()}</span> new response{newResponsesTotal !== 1 ? 's' : ''}
+            </p>
+          )}
+        </div>
+        <div className="library-actions">
+          {library.length > 0 && (
+            <label className="library-search">
+              <span className="visually-hidden">Search manuscripts</span>
+              <svg className="library-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+                <circle cx="11" cy="11" r="7" /><path d="M21 21l-4-4" />
+              </svg>
+              <input
+                type="search"
+                className="library-search-input"
+                placeholder="Search manuscripts…"
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+              />
+            </label>
           )}
           <button type="button" className="library-new-btn" onClick={onNew}>
-            <PlusIcon size={12} /> New Manuscript
+            <PlusIcon size={14} /> New manuscript
           </button>
         </div>
       </div>
 
       {library.length > 0 && (
-        <div className="library-subbar">
-          <p className="library-stats-line">{aggregateLine}</p>
-          <label className="library-search">
-            <span className="visually-hidden">Search manuscripts</span>
-            <input
-              type="search"
-              className="library-search-input"
-              placeholder="Search manuscripts…"
-              value={query}
-              onChange={e => setQuery(e.target.value)}
-            />
-          </label>
+        <div className="library-controls-row">
+          <span className="library-col-head">Manuscript</span>
+          <div className="library-sortbox">
+            <label className="library-sort">
+              <span className="visually-hidden">Sort manuscripts</span>
+              <select
+                className="library-sort-select"
+                value={sortKey}
+                onChange={e => setSortKey(e.target.value as LibrarySortKey)}
+              >
+                <option value="lastOpened">Sort: Recent</option>
+                <option value="title">Sort: Title</option>
+                <option value="wordCount">Sort: Longest</option>
+              </select>
+            </label>
+            <div className="library-view-toggle" role="group" aria-label="Library view">
+              <button
+                type="button"
+                className={`library-view-btn${viewMode === 'list' ? ' active' : ''}`}
+                onClick={() => setViewMode('list')}
+                title="List view"
+                aria-pressed={viewMode === 'list'}
+              >
+                <ListLayoutIcon size={14} />
+              </button>
+              <button
+                type="button"
+                className={`library-view-btn${viewMode === 'grid' ? ' active' : ''}`}
+                onClick={() => setViewMode('grid')}
+                title="Grid view"
+                aria-pressed={viewMode === 'grid'}
+              >
+                <GridLayoutIcon size={14} />
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -164,17 +155,14 @@ export function LibraryScreen({
               </p>
             </div>
           ) : viewMode === 'list' ? (
-            <div id="ms-list" className="lib-list">
+            <div id="ms-list" className="lib-list" role="list">
               {sorted.map(ms => (
                 <LibraryListRow
                   key={ms.id}
                   ms={ms}
                   onOpen={() => onOpen(ms)}
-                  onRead={() => onRead(ms)}
                   onDelete={() => onDelete(ms.id)}
-                  onCycleStatus={() => onCycleStatus(ms.id)}
                   onToggleFavorite={() => onToggleFavorite(ms.id)}
-                  progress={getReadingPosition(ms.id)}
                 />
               ))}
             </div>
@@ -198,13 +186,22 @@ export function LibraryScreen({
   );
 }
 
-function LibraryListRow({ ms, onOpen, onRead, onDelete, onCycleStatus, onToggleFavorite, progress }: {
-  ms: Manuscript; onOpen: () => void; onRead: () => void; onDelete: () => void;
-  onCycleStatus: () => void; onToggleFavorite: () => void; progress: number;
+function LibraryListRow({ ms, onOpen, onDelete, onToggleFavorite }: {
+  ms: Manuscript; onOpen: () => void; onDelete: () => void; onToggleFavorite: () => void;
 }) {
-  const { title, author, wordCount, status, lastOpened, uncached, favorite, publishing } = ms.metadata;
-  const canRead = !!ms.metadata.combinedMarkdown;
-  const synopsis = manuscriptListSynopsis(publishing);
+  const { title, author, wordCount, chapterCount, importedAt, shared, readerCount, newResponses, uncached, favorite, publishing } = ms.metadata;
+  const genre = publishing?.genre;
+  // Reader count reflects real sessions (pulled/imported), not the stale metadata
+  // field — same pattern as the annotation-count fallback in the grid card.
+  const liveReaderCount = readerCount || loadSessions(ms.id).length;
+  // Loop lifecycle position — leads the row instead of the bare `shared` boolean,
+  // so an imported-feedback manuscript reads "Responses available," not "Not shared".
+  const workflow = deriveWorkflowStatus({
+    shareState: ms.metadata.share?.state,
+    legacyShared: shared,
+    readerCount: liveReaderCount,
+    newResponses,
+  });
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -217,6 +214,14 @@ function LibraryListRow({ ms, onOpen, onRead, onDelete, onCycleStatus, onToggleF
     return () => document.removeEventListener('mousedown', onDoc);
   }, [menuOpen]);
 
+  const metaParts = [author, genre, formatImported(importedAt) && `Imported ${formatImported(importedAt)}`].filter(Boolean);
+
+  // Status presentation — the pip colour IS the state: gray = not shared,
+  // green = shared (no readers yet), blue = N readers responded. No "Responses
+  // available" prefix; the reader count carries the meaning.
+  const hasReaders = workflow.readerCount > 0;
+  const statusTone = hasReaders ? 'readers' : workflow.stage === 'draft' ? 'unshared' : 'shared';
+
   return (
     <article
       className="lib-row"
@@ -225,94 +230,82 @@ function LibraryListRow({ ms, onOpen, onRead, onDelete, onCycleStatus, onToggleF
       role="button"
       tabIndex={0}
     >
-      <div className="lib-row-cover-wrap" aria-hidden="true">
+      <div className="lib-row-cover" aria-hidden="true">
         <CoverImage manuscriptId={ms.id} title={title} />
       </div>
 
-      <div className="lib-row-body">
-        <div className="lib-row-eyebrow">
+      <div className="lib-row-main">
+        <h2 className="lib-row-title">{title}</h2>
+        <p className="lib-row-meta">
+          {metaParts.map((part, i) => (
+            <span key={i}>{i > 0 && <span className="lib-dot" aria-hidden="true">·</span>}{part}</span>
+          ))}
+        </p>
+        {uncached && (
+          <span className="lib-row-warn" role="alert" onClick={e => e.stopPropagation()}>
+            Source text offloaded — re-import to restore reading &amp; export.
+          </span>
+        )}
+      </div>
+
+      <div className="lib-row-num">
+        <span className="lib-num-v tnum">{wordCount ? wordCount.toLocaleString() : '—'}</span>
+        <span className="lib-num-k">words</span>
+      </div>
+      <div className="lib-row-num">
+        <span className="lib-num-v tnum">{chapterCount || '—'}</span>
+        <span className="lib-num-k">chapters</span>
+      </div>
+
+      <div className="lib-row-status">
+        <span className={`lib-status lib-status--${statusTone}`}>
+          <span className={`lib-pip lib-pip--${statusTone}`} />
+          <span className="lib-status-text">
+            {hasReaders
+              ? <><span className="tnum">{workflow.readerCount}</span> reader{workflow.readerCount === 1 ? '' : 's'}</>
+              : statusTone === 'unshared' ? 'Not shared' : 'Shared'}
+          </span>
+        </span>
+        {workflow.newResponses > 0 && (
+          <span className="lib-new"><span className="lib-new-count tnum">{workflow.newResponses} new</span> response{workflow.newResponses === 1 ? '' : 's'}</span>
+        )}
+      </div>
+
+      <div className="lib-row-end" onClick={e => e.stopPropagation()}>
+        <span className="lib-chevron" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 6l6 6-6 6" /></svg>
+        </span>
+        <div className="lib-row-menu-wrap" ref={menuRef}>
           <button
             type="button"
-            className={`lib-row-status ms-status ${statusClass(status ?? 'Draft')}`}
-            onClick={e => { e.stopPropagation(); onCycleStatus(); }}
+            className="lib-row-menu-btn"
+            aria-label="Manuscript actions"
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen(o => !o)}
           >
-            {status ?? 'Draft'}
+            <DotsIcon size={14} />
           </button>
-          <span className="lib-row-edited">Last edited {libraryTimeAgo(lastOpened)}</span>
-        </div>
-
-        <h2 className="lib-row-title">{title}</h2>
-        {author && <p className="lib-row-author">by {author}</p>}
-        {synopsis ? <p className="lib-row-synopsis">{synopsis}</p> : null}
-        {uncached && (
-          <div className="lib-row-warn" role="alert" onClick={e => e.stopPropagation()}>
-            Source text offloaded — re-import from <strong>Load</strong> to restore reading and export.
-          </div>
-        )}
-
-        <div className="lib-row-measures" aria-label="Manuscript stats">
-          <div className="lib-measure">
-            <span className="lib-measure-label">Word count</span>
-            <span className="lib-measure-val">{wordCount ? wordCount.toLocaleString() : '—'}</span>
-          </div>
-          {canRead && (
-            <div className="lib-measure lib-measure--progress">
-              <span className="lib-measure-label">Progress</span>
-              <div className="lib-measure-track">
-                <div className="lib-measure-fill" style={{ width: `${Math.max(2, Math.round(progress * 100))}%` }} />
-              </div>
+          {menuOpen && (
+            <div className="lib-row-menu" role="menu">
+              <button
+                type="button"
+                role="menuitem"
+                className="lib-row-menu-item"
+                onClick={() => { setMenuOpen(false); onToggleFavorite(); }}
+              >
+                <StarIcon filled={!!favorite} /> {favorite ? 'Remove from favorites' : 'Add to favorites'}
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="lib-row-menu-item lib-row-menu-item--danger"
+                onClick={() => { setMenuOpen(false); if (window.confirm(`Remove "${title}"?`)) onDelete(); }}
+              >
+                Remove
+              </button>
             </div>
           )}
         </div>
-
-        <div className="lib-row-actions" onClick={e => e.stopPropagation()}>
-          <button
-            type="button"
-            className="lib-row-continue"
-            disabled={!canRead}
-            onClick={() => onRead()}
-            title={canRead ? (progress > 0.01 ? 'Continue in reader' : 'Start reading') : 'Re-import to read'}
-          >
-            {progress > 0.01 ? 'Continue reading' : 'Start reading'} <span aria-hidden="true">→</span>
-          </button>
-        </div>
-      </div>
-
-      <button
-        type="button"
-        className={`lib-row-star${favorite ? ' active' : ''}`}
-        aria-pressed={!!favorite}
-        title={favorite ? 'Remove from favorites' : 'Add to favorites'}
-        onClick={e => { e.stopPropagation(); onToggleFavorite(); }}
-      >
-        <StarIcon filled={!!favorite} />
-      </button>
-
-      <div className="lib-row-menu-wrap" ref={menuRef} onClick={e => e.stopPropagation()}>
-        <button
-          type="button"
-          className="lib-row-menu-btn"
-          aria-label="Manuscript actions"
-          aria-expanded={menuOpen}
-          onClick={() => setMenuOpen(o => !o)}
-        >
-          <DotsIcon size={14} />
-        </button>
-        {menuOpen && (
-          <div className="lib-row-menu" role="menu">
-            <button
-              type="button"
-              role="menuitem"
-              className="lib-row-menu-item lib-row-menu-item--danger"
-              onClick={() => {
-                setMenuOpen(false);
-                if (window.confirm(`Remove "${title}"?`)) onDelete();
-              }}
-            >
-              Remove
-            </button>
-          </div>
-        )}
       </div>
     </article>
   );

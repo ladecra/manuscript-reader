@@ -570,8 +570,8 @@ function buildHtml(opts: {
   // Authorship-aware by tier (matches the in-app panel): reader marks are reader
   // reaction; the author's own marks ride the distinct 'author-queue' tier —
   // "Your revision flags" — and are never labeled reader reaction.
-  const tierLabel: Record<InsightTier, string> = { consensus: 'Reader agreement', reaction: 'Reader reactions', 'author-queue': 'Your revision flags', prose: 'Prose' };
-  const tierAccent: Record<InsightTier, string> = { consensus: 'var(--ink)', reaction: COLOR.question, 'author-queue': COLOR.note, prose: 'var(--desc)' };
+  const tierLabel: Record<InsightTier, string> = { convergence: 'The room converged', abandonment: 'Where the room thinned', consensus: 'Reader agreement', reaction: 'Reader reactions', 'author-queue': 'Your revision flags', prose: 'Prose' };
+  const tierAccent: Record<InsightTier, string> = { convergence: COLOR.question, abandonment: 'var(--desc)', consensus: 'var(--ink)', reaction: COLOR.question, 'author-queue': COLOR.note, prose: 'var(--desc)' };
   const insightsHtml = insights.length ? `
   <div class="sec-head mb4">Worth a Look First</div>
   <div class="insight-list">

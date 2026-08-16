@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
 import type { AnnotationType } from '../../engine/types';
-import { ANNOTATION_LABELS, ANNOTATION_COLORS } from '../../engine/types';
+import { ANNOTATION_LABELS } from '../../engine/types';
 import {
   ANNOTATION_MENU_GLYPHS,
-  ANNOTATION_MENU_ITEMS,
   ANNOTATION_NOTE_TYPES,
+  ANNOTATION_PRIMARY as PRIMARY,
+  ANNOTATION_EDITORIAL as EDITORIAL,
 } from '../../engine/annotations/annotationMenu';
 
 interface SelectionPopupProps {
@@ -14,10 +15,10 @@ interface SelectionPopupProps {
   onClose: () => void;
 }
 
-function Glyph({ d }: { d: string }) {
+function Glyph({ d, size = 14 }: { d: string; size?: number }) {
   return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-      strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       {d.split('|').map((p, i) => <path key={i} d={p} />)}
     </svg>
   );
@@ -25,15 +26,17 @@ function Glyph({ d }: { d: string }) {
 
 export function SelectionPopup({ visible, position, onSave, onClose }: SelectionPopupProps) {
   const [pendingType, setPendingType] = useState<AnnotationType | null>(null);
+  const [editorialOpen, setEditorialOpen] = useState(false);
   const [noteText, setNoteText] = useState('');
   const [wasVisible, setWasVisible] = useState(visible);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Clear the pending selection when the popup hides (reset during render).
+  // Reset the transient composer/expander state when the popup hides.
   if (visible !== wasVisible) {
     setWasVisible(visible);
     if (!visible) {
       setPendingType(null);
+      setEditorialOpen(false);
       setNoteText('');
     }
   }
@@ -45,11 +48,8 @@ export function SelectionPopup({ visible, position, onSave, onClose }: Selection
   }, [pendingType]);
 
   const handleType = (type: AnnotationType) => {
-    if (ANNOTATION_NOTE_TYPES.has(type)) {
-      setPendingType(type);
-    } else {
-      onSave(type, '');
-    }
+    if (ANNOTATION_NOTE_TYPES.has(type)) setPendingType(type);
+    else onSave(type, ''); // highlight saves on the tap
   };
 
   const handleSave = () => {
@@ -68,26 +68,45 @@ export function SelectionPopup({ visible, position, onSave, onClose }: Selection
       style={{ left: position.left, top: position.top }}
       onMouseDown={e => e.stopPropagation()}
     >
-      <div className="popup-grid">
-        {ANNOTATION_MENU_ITEMS.map(({ type, label }) => (
-          <button
-            key={type}
-            className={`ann-type-btn${pendingType === type ? ' active-type' : ''}`}
-            data-type={type}
-            onClick={() => handleType(type)}
-          >
-            <span className="ann-type-icon"><Glyph d={ANNOTATION_MENU_GLYPHS[type]} /></span>
-            <span className="ann-type-dot" style={{ background: ANNOTATION_COLORS[type] }} />
-            <span className="ann-type-name">{label}</span>
-          </button>
-        ))}
-      </div>
+      {!pendingType && (
+        <>
+          <div className="anntool">
+            {PRIMARY.map(({ type, label }) => (
+              <button key={type} className="anntool-btn" onClick={() => handleType(type)}>
+                <Glyph d={ANNOTATION_MENU_GLYPHS[type]} />{label}
+              </button>
+            ))}
+            <span className="anntool-div" aria-hidden="true" />
+            <button
+              className={`anntool-btn anntool-more${editorialOpen ? ' open' : ''}`}
+              onClick={() => setEditorialOpen(o => !o)}
+              aria-expanded={editorialOpen}
+            >
+              Editorial
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
+            </button>
+          </div>
+          {editorialOpen && (
+            <div className="edrow">
+              {EDITORIAL.map(({ type, label }) => (
+                <button key={type} className="edchip" onClick={() => handleType(type)}>
+                  <span className="edchip-dot" aria-hidden="true" />{label}
+                </button>
+              ))}
+            </div>
+          )}
+        </>
+      )}
 
       {pendingType && (
-        <div id="popup-note-row" className="visible">
+        <div className="composer visible">
+          <div className="composer-head">
+            <Glyph d={ANNOTATION_MENU_GLYPHS[pendingType]} size={13} />
+            {ANNOTATION_LABELS[pendingType]}
+          </div>
           <textarea
             ref={textareaRef}
-            id="popup-textarea"
+            className="composer-body"
             placeholder={`Add a ${ANNOTATION_LABELS[pendingType].toLowerCase()}…`}
             value={noteText}
             onChange={e => setNoteText(e.target.value)}
@@ -96,11 +115,12 @@ export function SelectionPopup({ visible, position, onSave, onClose }: Selection
               if (e.key === 'Escape') onClose();
             }}
           />
-          <div className="popup-save-row">
-            <button id="popup-cancel" className="btn-ghost" onClick={onClose}>Cancel</button>
-            <button id="popup-save" className="btn-outline" style={{ padding: '5px 12px', fontSize: '11px' }} onClick={handleSave}>
-              Save ⌘↵
-            </button>
+          <div className="composer-foot">
+            <span className="composer-anchor">Anchored to your selection</span>
+            <div className="composer-actions">
+              <button className="composer-cancel" onClick={onClose}>Cancel</button>
+              <button className="composer-save" onClick={handleSave}>Save ⌘↵</button>
+            </div>
           </div>
         </div>
       )}

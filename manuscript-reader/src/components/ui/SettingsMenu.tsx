@@ -2,37 +2,23 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 're
 import { createPortal } from 'react-dom';
 import { useUIStore } from '../../state/uiStore';
 import { GearIcon } from './Icons';
-import { AuthPanel } from '../auth/AuthPanel';
-import { supabaseConfigured, getSupabaseClient } from '../../engine/storage/supabaseClient';
 
 interface SettingsMenuProps {
   /** 'icon' — compact gear button (mobile top-right / topbar). 'rail-item' — a
    *  full nav row (gear + "Settings" label) matching the rail's other items, for
-   *  the desktop app-shell / reader rails. */
-  variant?: 'icon' | 'rail-item';
+   *  the desktop app-shell / reader rails. 'mobilenav-item' — a bottom-nav column
+   *  (icon over label) whose popover opens upward, for the mobile bottom nav. */
+  variant?: 'icon' | 'rail-item' | 'mobilenav-item';
 }
 
-/** Settings popover — theme + text-size controls. On mobile (≤860px) also shows
- *  auth. Overlay is portaled to document.body with position:fixed so it never
- *  clips inside a rail (overflow, backdrop-filter containing blocks, etc.). */
+/** Settings popover — theme + text-size controls. Overlay is portaled to
+ *  document.body with position:fixed so it never clips inside a rail (overflow,
+ *  backdrop-filter containing blocks, etc.). */
 export function SettingsMenu({ variant = 'icon' }: SettingsMenuProps) {
   const { theme, fontSize, toggleTheme, increaseFontSize, decreaseFontSize } = useUIStore();
   const [open, setOpen] = useState(false);
-  const [userEmail, setUserEmail] = useState<string | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [pos, setPos] = useState<{ left: number; top?: number; bottom?: number }>({ left: 0 });
-
-  useEffect(() => {
-    if (!supabaseConfigured()) return;
-    const sb = getSupabaseClient();
-    sb.auth.getSession().then(({ data: { session } }) => {
-      setUserEmail(session?.user.email ?? null);
-    });
-    const { data: { subscription } } = sb.auth.onAuthStateChange((_e, session) => {
-      setUserEmail(session?.user.email ?? null);
-    });
-    return () => subscription.unsubscribe();
-  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -42,8 +28,8 @@ export function SettingsMenu({ variant = 'icon' }: SettingsMenuProps) {
   }, [open]);
 
   // Anchor the fixed popover to the trigger. Rail item opens upward; when the
-  // trigger is icon-only (collapsed rail), open to the right of the rail like the
-  // auth flyout. Compact icon opens downward, right-aligned under the trigger.
+  // trigger is icon-only (collapsed rail), open to the right of the rail. Compact
+  // icon opens downward, right-aligned under the trigger.
   useLayoutEffect(() => {
     if (!open || !triggerRef.current) return;
     const place = () => {
@@ -52,7 +38,13 @@ export function SettingsMenu({ variant = 'icon' }: SettingsMenuProps) {
       const r = el.getBoundingClientRect();
       const W = 244;
       const margin = 12;
-      if (variant === 'rail-item') {
+      if (variant === 'mobilenav-item') {
+        // Bottom-nav item: centre the popover over the trigger, open upward.
+        setPos({
+          left: Math.min(Math.max(margin, r.left + r.width / 2 - W / 2), window.innerWidth - W - margin),
+          bottom: window.innerHeight - r.top + 8,
+        });
+      } else if (variant === 'rail-item') {
         const iconOnly = r.width < 100;
         const left = iconOnly ? r.right + 8 : r.left;
         setPos({
@@ -76,7 +68,20 @@ export function SettingsMenu({ variant = 'icon' }: SettingsMenuProps) {
 
   return (
     <>
-      {variant === 'rail-item' ? (
+      {variant === 'mobilenav-item' ? (
+        <button
+          ref={triggerRef}
+          type="button"
+          className={`app-mobilenav-item${open ? ' active' : ''}`}
+          onClick={() => setOpen(o => !o)}
+          title="Settings"
+          aria-haspopup="menu"
+          aria-expanded={open}
+        >
+          <GearIcon size={21} />
+          <span className="app-mobilenav-label">Settings</span>
+        </button>
+      ) : variant === 'rail-item' ? (
         <button
           ref={triggerRef}
           type="button"
@@ -127,17 +132,6 @@ export function SettingsMenu({ variant = 'icon' }: SettingsMenuProps) {
                   <button className="settings-step" onClick={increaseFontSize} aria-label="Increase text size">A+</button>
                 </div>
               </Section>
-
-              {supabaseConfigured() && (
-                <div className="settings-sync-section">
-                  <Section label="Sync">
-                    <AuthPanel
-                      userEmail={userEmail}
-                      onSignedOut={() => setUserEmail(null)}
-                    />
-                  </Section>
-                </div>
-              )}
             </div>
           </>,
           document.body,

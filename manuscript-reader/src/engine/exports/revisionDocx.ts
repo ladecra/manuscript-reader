@@ -215,7 +215,7 @@ function buildDoc(data: {
   // signals) — so the download and the screen never tell different stories. The
   // engagement summary stays as a closing line of context, not a ranked pointer.
   children.push(label('Key Takeaways', { before: 200, after: 140 }));
-  const tierColor: Record<InsightTier, string> = { consensus: INK, reaction: HEX.question, 'author-queue': HEX.note, prose: META };
+  const tierColor: Record<InsightTier, string> = { convergence: HEX.question, abandonment: META, consensus: INK, reaction: HEX.question, 'author-queue': HEX.note, prose: META };
   const takeaways: { color: string; title: string; desc: string }[] = rankInsights(signals).map(i => ({
     color: tierColor[i.tier],
     title: i.headline,

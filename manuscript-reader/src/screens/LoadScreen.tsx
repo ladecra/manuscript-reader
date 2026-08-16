@@ -1,6 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { readFilesToMarkdown, sortFiles, UnsupportedFileError } from '../engine/ingestion/fileReader';
-import { preprocessMarkdown, hasHeading } from '../engine/ingestion/preprocessMarkdown';
+import { readFilesToMarkdown, sortFiles, ingestPlainText, UnsupportedFileError } from '../engine/ingestion/fileReader';
 import { showToast } from '../components/ui/Toast';
 import { XIcon } from '../components/ui/Icons';
 
@@ -47,17 +46,10 @@ export function LoadModal({ onLoad, onClose }: LoadModalProps) {
   }, [files, onLoad]);
 
   const handlePaste = useCallback(() => {
-    const raw = pasteText.trim();
-    if (!raw) { showToast('Paste some text first.'); return; }
-    let combined = preprocessMarkdown(raw);
-    const title = pasteTitle.trim();
-    if (!hasHeading(combined)) {
-      combined = `# ${title || 'Untitled'}\n\n${combined}`;
-    }
-    if (title) {
-      combined = `<!-- title: ${title} -->\n${combined}`;
-    }
-    onLoad(combined);
+    if (!pasteText.trim()) { showToast('Paste some text first.'); return; }
+    // A deliberately-typed paste title is authoritative — it wins over any title
+    // recovered from a pasted title page.
+    onLoad(ingestPlainText(pasteText, { title: pasteTitle.trim() || undefined, titleAuthoritative: true }));
   }, [pasteText, pasteTitle, onLoad]);
 
   return (

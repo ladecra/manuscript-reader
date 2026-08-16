@@ -1,1049 +1,683 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useReaderStore } from '../state/readerStore';
 import { useLibraryStore } from '../state/libraryStore';
-import { useSnapshotStore } from '../state/snapshotStore';
 import { useUIStore } from '../state/uiStore';
 import { computeEditorialSignals } from '../engine/editorialSignals';
+import { deriveWorkflowStatus } from '../engine/library';
 import { resolveAnnotationChapters } from '../engine/annotations/chapterResolve';
-import { getParsedManuscript } from '../engine/ingestion/parseCache';
-import { estimateReadingPagePosition, chapterWordCounts, resumeChapterByProgress } from '../engine/reading/manuscriptPages';
-import {
-  meanChapterWordCount,
-  splitTwoColumns,
-  formatChapterLengthRatio,
-  chapterLengthInsightFlag,
-  chapterLengthRatio,
-} from '../engine/prose/chapterLengthOutlier';
-import type { ManuscriptStatus, PublishingMetadata, Chapter, SnapshotMeta } from '../engine/types';
-import { applyChapterEdits, type ChapterEdit } from '../engine/manuscript/chapterEdit';
-import { ChapterTree } from '../components/library/ChapterTree';
-import { AddChaptersModal } from '../components/reader/AddChaptersModal';
-import { ReportView } from '../components/reports/ReportView';
-import { ExportChoiceModal } from '../components/reports/ExportChoiceModal';
-import { ExportCard } from '../components/hub/ExportCard';
-import { useManuscriptArtifactExports } from '../hooks/useManuscriptArtifactExports';
-import { exportShareableReader, ShareReaderBuildError, type ShareSnapshotStamp } from '../engine/exports/shareableReader';
-import { loadSnapshot, loadWorkPosition, loadNote, saveNote } from '../engine/storage';
-import { hasMeaningfulEdits } from '../engine/manuscript/changeList';
-import type { WorkMode } from '../engine/reader/positionIntent';
-import { ShareReaderModal } from '../components/share/ShareReaderModal';
-import { showToast } from '../components/ui/Toast';
-import { PencilIcon, ChevronLeftIcon, DotsIcon, DownloadIcon, LayersIcon, PlusIcon, XIcon, UndoIcon } from '../components/ui/Icons';
-import { heroTitleClass } from '../components/ui/heroTitle';
+import { buildImportSummary } from '../engine/ingestion/importSummary';
+import { isReaderAnnotation } from '../engine/types';
+import type { Annotation, ReaderProgress, ResponseBreakdown } from '../engine/types';
+import { ReportView, type JumpFn } from '../components/reports/ReportView';
 import { CoverImage } from '../components/ui/CoverImage';
-import { ManuscriptWorkspaceRail, type HubPane } from '../components/layout/ManuscriptWorkspaceRail';
-import { FeedbackTab } from '../components/hub/FeedbackTab';
-import { RevisionTab } from '../components/hub/RevisionTab';
-import { useConcernStore } from '../state/concernStore';
-import { suggestConcernGroups } from '../engine/concerns/suggestGroups';
-import { exportRevisionContext } from '../engine/exports/revisionContext';
-import { PublishingDetailsForm } from '../components/hub/PublishingDetailsForm';
+import { ChevronLeftIcon, DotsIcon, BookIcon } from '../components/ui/Icons';
+import { showToast } from '../components/ui/Toast';
+import { useManuscriptArtifactExports } from '../hooks/useManuscriptArtifactExports';
+import type { ExtentRequest } from '../engine/exports/manuscriptExtent';
+import { buildShareableHTML, stripMatterRegions } from '../engine/exports/shareableReader';
+import { manuscriptVersionId } from '../engine/manuscript/manuscriptVersion';
+import { getSyncClient, syncEndpoint, isSyncConfigured } from '../sync/config';
+import { SyncError } from '../sync/client';
+import type { ShareHandle } from '../engine/types';
 
-// The manuscript page: a book's antechamber. Shared `.instrument-*` list styling
-// (hub rail, contents, publishing fields) is the evolving shell language; a
-// collapsible reader-side rail can reuse it later (library → hub, tools → reader).
+// The manuscript console (reframe): one manuscript, its whole beta-reader loop, on
+// one page. Import verified → shared by link → feedback merges → editorial report.
+// Every tab answers one step of the loop; the old workspace rail, Revision/Versions
+// tabs, working notes, and export cards are cut (see redesign-build-progress memory).
 
 interface ManuscriptHubScreenProps {
   onRead: () => void;   // enter the immersive reader at the resume position
   onExit: () => void;   // back to the library
 }
 
+type ConsoleTab = 'overview' | 'sharing' | 'feedback' | 'structure' | 'export' | 'report';
+
+const TABS: { id: ConsoleTab; label: string }[] = [
+  { id: 'overview', label: 'Overview' },
+  { id: 'sharing', label: 'Sharing' },
+  { id: 'feedback', label: 'Feedback' },
+  { id: 'structure', label: 'Structure' },
+  { id: 'export', label: 'Export' },
+];
+
+// The trailing breadcrumb crumb — Report is a Feedback sub-view, not its own tab.
+const CRUMB_LABEL: Record<ConsoleTab, string> = {
+  overview: 'Overview', sharing: 'Sharing', feedback: 'Feedback',
+  structure: 'Structure', export: 'Export', report: 'Report',
+};
+
+// The publishable-artifact catalog, disciplined to four formats. Print + Ebook
+// are one-click; Agent submission carries an extent selector (SMF convention:
+// 250 words/page); Markdown is the advanced/interoperability escape hatch.
+type ExtentChoice = 'full' | 'chapters' | 'pages' | 'words';
+const EXTENT_REQUEST: Record<ExtentChoice, ExtentRequest> = {
+  full: { kind: 'full' },
+  chapters: { kind: 'chapters', count: 3 },
+  pages: { kind: 'pages', count: 50 },
+  words: { kind: 'words', count: 10000 },
+};
+const EXTENT_LABELS: { id: ExtentChoice; label: string }[] = [
+  { id: 'full', label: 'Complete' },
+  { id: 'chapters', label: 'First 3 chapters' },
+  { id: 'pages', label: 'First 50 pages' },
+  { id: 'words', label: 'First 10,000 words' },
+];
+
+/** Reader responses split by the reframe's default taxonomy. Editorial notes
+ *  (pacing / continuity / voice / structure) fold into Notes; bookmarks are a
+ *  private reading aid and never counted. */
+function deriveBreakdown(annotations: Annotation[]): ResponseBreakdown {
+  let highlights = 0, notes = 0, questions = 0;
+  for (const a of annotations) {
+    if (!isReaderAnnotation(a)) continue;
+    if (a.type === 'highlight') highlights++;
+    else if (a.type === 'question') questions++;
+    else if (a.type === 'bookmark') continue;
+    else notes++;
+  }
+  return { highlights, notes, questions };
+}
+
+function deriveReaders(annotations: Annotation[]): ReaderProgress[] {
+  const names = new Map<string, string>();
+  for (const a of annotations) {
+    if (!isReaderAnnotation(a)) continue;
+    const key = a.readerId ?? a.readerName ?? '';
+    const name = a.readerName ?? a.readerId ?? '';
+    if (key && !names.has(key)) names.set(key, name);
+  }
+  return [...names.values()].map(name => ({ name, progress: 0 }));
+}
+
+function initials(name: string): string {
+  return name.split(/\s+/).filter(Boolean).slice(0, 2).map(p => p[0]?.toUpperCase() ?? '').join('') || '·';
+}
+
 export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps) {
-  const { manuscript, chapters, annotations: rawAnnotations, edits, sessions, openManuscript } = useReaderStore();
-  const { updateManuscript, replaceMarkdown, appendChapters, getReadingPosition, updateProgress, cycleStatus } = useLibraryStore();
-  const { setPendingChapterIndex, setPendingReaderIntent, setPendingAnnotationId, setPendingResumeFrac, hubPane: pane, setHubPane } = useUIStore();
-  const { versions: versionsByMs, refresh: refreshVersions, saveVersion, relabel, remove: removeVersion } = useSnapshotStore();
-  const [editStructure, setEditStructure] = useState(false);
-  const [chapterEdits, setChapterEdits] = useState<ChapterEdit[]>([]);
-  const [addChaptersOpen, setAddChaptersOpen] = useState(false);
-  const [tocQuery, setTocQuery] = useState('');
-  const [tocCompact, setTocCompact] = useState(false);
-  const [openChapterMenu, setOpenChapterMenu] = useState<number | null>(null);
-  const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
-  const [shareReaderOpen, setShareReaderOpen] = useState(false);
-  const [shareReaderInitialMode, setShareReaderInitialMode] = useState<'reading' | 'annotating'>('annotating');
-  const [reportExportOpen, setReportExportOpen] = useState(false);
+  const { manuscript, chapters, annotations: rawAnnotations, sessions, importSession } = useReaderStore();
+  const { deleteManuscript, saveShare } = useLibraryStore();
+  const { setPendingChapterIndex, setPendingReaderIntent } = useUIStore();
+  const [tab, setTab] = useState<ConsoleTab>('overview');
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [smfExtent, setSmfExtent] = useState<ExtentChoice>('full');
+  const [share, setShare] = useState<ShareHandle | null>(manuscript?.metadata.share ?? null);
+  const [shareBusy, setShareBusy] = useState(false);
+  const [pullBusy, setPullBusy] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const { exportManuscript, exportSmf } = useManuscriptArtifactExports();
 
-  // Working Notes scratchpad — loaded on demand per manuscript, debounce-saved.
-  // Local-first (the storage layer doesn't push it to the cloud yet).
-  const [note, setNote] = useState('');
-  const noteSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingNoteRef = useRef<{ id: string; value: string } | null>(null);
-  const manuscriptId = manuscript?.id;
-  const flushNote = useCallback(() => {
-    if (noteSaveTimer.current) { clearTimeout(noteSaveTimer.current); noteSaveTimer.current = null; }
-    if (pendingNoteRef.current) { saveNote(pendingNoteRef.current.id, pendingNoteRef.current.value); pendingNoteRef.current = null; }
-  }, []);
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset/hydrate the note when the manuscript changes
-    if (!manuscriptId) { setNote(''); return; }
-    let cancelled = false;
-    loadNote(manuscriptId).then(t => { if (!cancelled) setNote(t); });
-    // Flush a pending edit before switching manuscripts (or unmount) so the last
-    // few keystrokes before navigating away are never dropped.
-    return () => { cancelled = true; flushNote(); };
-  }, [manuscriptId, flushNote]);
-  const onNoteChange = useCallback((value: string) => {
-    setNote(value);
-    if (!manuscriptId) return;
-    pendingNoteRef.current = { id: manuscriptId, value };
-    if (noteSaveTimer.current) clearTimeout(noteSaveTimer.current);
-    noteSaveTimer.current = setTimeout(() => {
-      saveNote(manuscriptId, value);
-      pendingNoteRef.current = null;
-    }, 600);
-  }, [manuscriptId]);
-
-  const title = manuscript?.metadata.title ?? '';
   const combinedMarkdown = manuscript?.metadata.combinedMarkdown;
-  const manuscriptAvailable = !!combinedMarkdown;
-
-  // Re-home every annotation to its CURRENT chapter before it reaches Feedback,
-  // EditorialSignals, the report, or any export. Positional chapter ids drift on
-  // structural edits; the stored chapterIndex/chapterTitle are a stale cache, so
-  // we refresh them in-memory (non-destructive) from each anchor. One boundary,
-  // every downstream consumer corrected. See engine/annotations/chapterResolve.
   const annotations = useMemo(
     () => resolveAnnotationChapters(rawAnnotations, combinedMarkdown),
     [rawAnnotations, combinedMarkdown],
   );
-  // Revision-concern graph: hydrate alongside the manuscript so the Revision
-  // pane, rail badge, and context export all read the same store.
-  const { graph: concernGraph, hydrated: concernsHydrated, hydrate: hydrateConcerns } = useConcernStore();
-  useEffect(() => {
-    if (manuscriptId) void hydrateConcerns(manuscriptId);
-  }, [manuscriptId, hydrateConcerns]);
-  const revisionCount = useMemo(() => {
-    if (!concernsHydrated) return 0;
-    const active = concernGraph.concerns.filter(c => c.status === 'active').length;
-    return active + suggestConcernGroups(annotations, concernGraph).length;
-  }, [concernsHydrated, concernGraph, annotations]);
-
-  const pct = manuscript ? Math.round(getReadingPosition(manuscript.id) * 100) : 0;
-  const progressFrac = manuscript ? getReadingPosition(manuscript.id) : 0;
-
-  // Version snapshots (Phase 8) for this manuscript. The store mirrors the
-  // synchronous snapshot index; refresh once on mount so a freshly hydrated /
-  // cross-device-synced history shows up.
-  const versions = manuscript ? versionsByMs[manuscript.id] ?? [] : [];
-  useEffect(() => {
-    if (manuscript) refreshVersions(manuscript.id);
-  }, [manuscript, refreshVersions]);
-
-  const handleSaveVersion = useCallback(() => {
-    if (!manuscript) return;
-    const meta = saveVersion(manuscript);
-    if (meta) showToast(`Saved “${meta.label}”.`);
-    else showToast('Source text unavailable — re-import to save a version.');
-  }, [manuscript, saveVersion]);
-
-  // Make a saved version the live draft again. Restore is itself reversible: we
-  // freeze the current draft first, so nothing is ever silently replaced. Only
-  // the text is restored — live annotations stay put and re-anchor against it.
-  const handleRestoreVersion = useCallback(async (snapshotId: string) => {
-    if (!manuscript) return;
-    const snap = await loadSnapshot(manuscript.id, snapshotId);
-    if (!snap?.markdown) { showToast('Could not load that version.'); return; }
-    saveVersion(manuscript, `Before restore · ${new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`);
-    const updated = replaceMarkdown(manuscript.id, snap.markdown);
-    if (!updated?.metadata.combinedMarkdown) { showToast('Could not restore that version.'); return; }
-    openManuscript(updated, getParsedManuscript(updated.metadata.combinedMarkdown).chapters);
-    showToast(`Restored “${snap.label ?? 'version'}”.`);
-  }, [manuscript, saveVersion, replaceMarkdown, openManuscript]);
-  const pageEstimate = useMemo(() => {
-    const wc = manuscript?.metadata.wordCount ?? 0;
-    return estimateReadingPagePosition(wc, progressFrac);
-  }, [manuscript?.metadata.wordCount, progressFrac]);
-
-  const filteredChapters = useMemo(() => {
-    const q = tocQuery.trim().toLowerCase();
-    if (!q) return chapters;
-    return chapters.filter(ch =>
-      String(ch.index).includes(q) || (ch.title ?? '').toLowerCase().includes(q),
-    );
-  }, [chapters, tocQuery]);
-
-  const signals = useMemo(
-    () => manuscript
-      ? computeEditorialSignals({ manuscriptId: manuscript.id, annotations, chapters, sessions, combinedMarkdown })
-      : null,
-    [manuscript, annotations, chapters, sessions, combinedMarkdown],
-  );
-
-  const wordsByChapter = useMemo(
-    () => combinedMarkdown ? chapterWordCounts(combinedMarkdown) : new Map<number, number>(),
+  const importSummary = useMemo(
+    () => (combinedMarkdown ? buildImportSummary(combinedMarkdown) : null),
     [combinedMarkdown],
   );
-
-  const meanChapterWords = useMemo(
-    () => meanChapterWordCount(chapters.map(ch => wordsByChapter.get(ch.index) ?? 0)),
-    [chapters, wordsByChapter],
+  const signals = useMemo(
+    () => (manuscript
+      ? computeEditorialSignals({ manuscriptId: manuscript.id, annotations, chapters, sessions, combinedMarkdown })
+      : null),
+    [manuscript, annotations, chapters, sessions, combinedMarkdown],
   );
-
-  const resumeChapter = useMemo(
-    () => resumeChapterByProgress(chapters, wordsByChapter, progressFrac) ?? null,
-    [chapters, wordsByChapter, progressFrac],
-  );
-
-  // Enter the reader at a chapter, optionally in a posture (annotate / edit) — the
-  // contents-row hover actions. Plain Read passes no intent (just lands there).
-  const enterReader = useCallback((chapterIndex: number, intent?: 'annotate' | 'edit') => {
-    setPendingChapterIndex(chapterIndex);
-    setPendingReaderIntent(intent ?? null);
-    onRead();
-  }, [setPendingChapterIndex, setPendingReaderIntent, onRead]);
-
-  // Report jumps land the author in the prose. Annotation-derived items (findings,
-  // consensus, reaction insights) open Annotations mode — and, when we know the
-  // specific annotation, scroll to that mark; prose/length items just land in
-  // reading at the chapter's start.
-  const jumpToChapter = useCallback(
-    (index: number, opts?: { annotationId?: string; annotate?: boolean }) => {
-      setPendingAnnotationId(opts?.annotationId ?? null);
-      enterReader(index, opts?.annotate ? 'annotate' : undefined);
-    },
-    [enterReader, setPendingAnnotationId],
-  );
-
-  const startOver = useCallback(() => {
-    if (manuscript) updateProgress(manuscript.id, 0);
-    onRead();
-  }, [manuscript, updateProgress, onRead]);
-
-  const tocTwoColumns = !tocCompact && filteredChapters.length > 15;
-  const [tocLeft, tocRight] = useMemo(
-    () => (tocTwoColumns ? splitTwoColumns(filteredChapters) : [filteredChapters, [] as Chapter[]]),
-    [filteredChapters, tocTwoColumns],
-  );
-
-  const renderTocRow = useCallback((ch: Chapter) => (
-    <HubTocRow
-      key={ch.id}
-      ch={ch}
-      wordCount={wordsByChapter.get(ch.index)}
-      meanChapterWords={meanChapterWords}
-      isActive={resumeChapter?.index === ch.index}
-      compact={tocCompact}
-      menuOpen={openChapterMenu === ch.index}
-      onToggleMenu={() => setOpenChapterMenu(id => (id === ch.index ? null : ch.index))}
-      onCloseMenu={() => setOpenChapterMenu(null)}
-      onRead={() => enterReader(ch.index)}
-      onAnnotate={() => enterReader(ch.index, 'annotate')}
-      onEdit={() => enterReader(ch.index, 'edit')}
-      onStartOver={startOver}
-    />
-  ), [
-    wordsByChapter, meanChapterWords, resumeChapter?.index, tocCompact, openChapterMenu,
-    enterReader, startOver,
-  ]);
-
-  // Publication-ready files live in Publishing Studio; hub exports use `exportMeta`
-  // for collaboration artifacts (report, share-reader, revision log).
-  const { exportMeta } = useManuscriptArtifactExports();
-
-  // ── Collaboration exports (report, share-reader, revision log) stay in the hub. ──
-  const handleExportReportDocx = useCallback(async () => {
-    if (!manuscript || !annotations.length) { showToast('No annotations yet.'); return; }
-    const sig = computeEditorialSignals({ manuscriptId: manuscript.id, annotations, chapters, sessions, combinedMarkdown: manuscript.metadata.combinedMarkdown });
-    showToast('Building report…');
-    try {
-      const { exportRevisionDocx } = await import('../engine/exports/revisionDocx');
-      await exportRevisionDocx(manuscript.metadata.title, manuscript.id, annotations, chapters, sig);
-      showToast('Intelligence report exported.');
-    } catch (e) { console.error('DOCX export error:', e); showToast('DOCX export failed — see console.'); }
-  }, [manuscript, annotations, chapters, sessions]);
-
-  const handleExportReportHtml = useCallback(() => {
-    if (!manuscript || !annotations.length) { showToast('No annotations yet.'); return; }
-    const sig = computeEditorialSignals({ manuscriptId: manuscript.id, annotations, chapters, sessions, combinedMarkdown: manuscript.metadata.combinedMarkdown });
-    import('../engine/exports/reportHtml').then(({ exportReportHtml }) => {
-      exportReportHtml(exportMeta().title, manuscript.id, annotations, chapters, sig, useUIStore.getState().theme);
-      showToast('Intelligence report exported.');
-    }).catch(e => { console.error('HTML export error:', e); showToast('Export failed — see console.'); });
-  }, [manuscript, annotations, chapters, sessions, exportMeta]);
-
-  const handleExportReportJson = useCallback(() => {
-    if (!manuscript || !annotations.length) { showToast('No annotations yet.'); return; }
-    const sig = computeEditorialSignals({ manuscriptId: manuscript.id, annotations, chapters, sessions, combinedMarkdown: manuscript.metadata.combinedMarkdown });
-    import('../engine/exports/reportJson').then(({ exportReportJson }) => {
-      exportReportJson(exportMeta().title, manuscript.id, sig);
-      showToast('Report data exported.');
-    }).catch(e => { console.error('JSON export error:', e); showToast('Export failed — see console.'); });
-  }, [manuscript, annotations, chapters, sessions, exportMeta]);
-
-  // The single-file revision briefing: goals, threads, marks, changes — first-
-  // class even with zero threads (grouping enriches it, never gates it).
-  const handleExportRevisionContext = useCallback(() => {
-    if (!manuscript) return;
-    exportRevisionContext(
-      {
-        title: exportMeta().title,
-        author: manuscript.metadata.author,
-        annotations,
-        edits,
-        graph: useConcernStore.getState().graph,
-        combinedMarkdown,
-      },
-      manuscript.id,
-    );
-    showToast('REVISION_CONTEXT.md exported.');
-  }, [manuscript, annotations, edits, combinedMarkdown, exportMeta]);
-
-  const handleExportRevisionLog = useCallback(() => {
-    if (!manuscript || !edits.length) { showToast('No edits yet.'); return; }
-    import('../engine/exports/revisionLog').then(({ exportRevisionLog }) => {
-      exportRevisionLog(exportMeta().title, manuscript.id, edits);
-      showToast('Revision log exported.');
-    }).catch(e => { console.error('Revision log export error:', e); showToast('Export failed — see console.'); });
-  }, [manuscript, edits, exportMeta]);
-
-  // Share a frozen version with a beta reader (optional annotation tools).
-  const handleShareReaderDownload = useCallback(async (snapshotId: string | null, withAnnotations: boolean) => {
-    if (!manuscript) return;
-    let markdown: string | undefined;
-    let stamp: ShareSnapshotStamp | undefined;
-    if (snapshotId) {
-      const snap = await loadSnapshot(manuscript.id, snapshotId);
-      if (!snap?.markdown) {
-        showToast('Could not load that version — re-import the manuscript.');
-        return;
-      }
-      markdown = snap.markdown;
-      stamp = {
-        snapshotId: snap.id,
-        versionId: snap.versionId,
-        label: snap.label,
-        createdAt: snap.createdAt,
-      };
-    } else {
-      markdown = manuscript.metadata.combinedMarkdown;
-      if (!markdown) {
-        showToast('Re-import this file to share it.');
-        return;
-      }
-    }
-    try {
-      exportShareableReader(exportMeta().title, markdown, withAnnotations, stamp);
-      showToast('Reader file downloaded.');
-    } catch (e) {
-      console.error('Share reader build failed:', e);
-      showToast(e instanceof ShareReaderBuildError ? e.message : 'Could not generate file.');
-    }
-  }, [manuscript, exportMeta]);
-
-  const openShareReader = useCallback((mode: 'reading' | 'annotating') => {
-    setShareReaderInitialMode(mode);
-    setShareReaderOpen(true);
-  }, []);
-
-  // Persist the Details form (publishing metadata + title-page fields), then re-open
-  // so the page and any export see the fresh manuscript.
-  const saveDetails = useCallback((patch: { title: string; author: string; status: ManuscriptStatus; publishing: PublishingMetadata }) => {
-    if (!manuscript) return;
-    updateManuscript(manuscript.id, patch);
-    const refreshed = useLibraryStore.getState().library.find(m => m.id === manuscript.id);
-    if (refreshed) openManuscript(refreshed, chapters);
-    showToast('Saved.');
-  }, [manuscript, chapters, updateManuscript, openManuscript]);
-
-  // Persist chapter-structure edits (reorder / rename / remove) made on Overview.
-  const saveChapters = useCallback(() => {
-    if (!manuscript || !combinedMarkdown || chapterEdits.length === 0) { showToast('No chapter changes.'); return; }
-    const newMd = applyChapterEdits(combinedMarkdown, chapterEdits);
-    if (newMd && newMd !== combinedMarkdown) {
-      const updated = replaceMarkdown(manuscript.id, newMd);
-      if (updated) {
-        openManuscript(updated, getParsedManuscript(updated.metadata.combinedMarkdown!).chapters);
-        setChapterEdits([]);
-        showToast('Chapters updated.');
-        return;
-      }
-    }
-    showToast('No chapter changes.');
-  }, [manuscript, combinedMarkdown, chapterEdits, replaceMarkdown, openManuscript]);
-
-  const handleAppendChapters = useCallback((chunk: string) => {
-    if (!manuscript) return;
-    const updated = appendChapters(manuscript.id, chunk);
-    if (!updated) { showToast('Manuscript not cached — reload files first.'); setAddChaptersOpen(false); return; }
-    const { chapters: newChapters } = getParsedManuscript(updated.metadata.combinedMarkdown!);
-    const added = newChapters.length - chapters.length;
-    openManuscript(updated, newChapters);
-    setAddChaptersOpen(false);
-    showToast(added > 0 ? `${added} chapter${added !== 1 ? 's' : ''} added — now ${newChapters.length} total` : 'Chapters appended.');
-  }, [manuscript, chapters, appendChapters, openManuscript]);
-
-  const toggleToolPane = useCallback((id: HubPane) => {
-    setHubPane(pane === id ? 'contents' : id);
-  }, [pane, setHubPane]);
-
-  // Resume a mode's work where the author left off: prefer the saved work-position
-  // bookmark; otherwise land at the chapter of the most recent annotation/edit.
-  // (No bookmark on a fresh device — the chapter fallback still does the right thing.)
-  const resumeWork = useCallback((mode: WorkMode, chapterIndex: number | null) => {
-    if (!manuscript) return;
-    const frac = loadWorkPosition(manuscript.id, mode);
-    setPendingReaderIntent(mode === 'annotations' ? 'annotate' : 'changes');
-    if (frac > 0.001) setPendingResumeFrac(frac);
-    else if (chapterIndex != null) setPendingChapterIndex(chapterIndex);
-    onRead();
-  }, [manuscript, setPendingReaderIntent, setPendingResumeFrac, setPendingChapterIndex, onRead]);
-
-  // The rail's two "pick up where you left off" rows — wayfinding, not a feed. The
-  // chapter label is derived from the most recent annotation (chapters already
-  // re-homed from anchors above) and the most recent meaningful edit.
-  const wayfinding = useMemo(() => {
-    const latestAnn = annotations.length
-      ? annotations.reduce((a, b) => (b.createdAt ?? 0) > (a.createdAt ?? 0) ? b : a)
-      : null;
-    const latestEdit = hasMeaningfulEdits(edits) && edits.length
-      ? edits.reduce((a, b) => (b.createdAt ?? 0) > (a.createdAt ?? 0) ? b : a)
-      : null;
-    // "Ch. 01 · Title" — number first (zero-padded), title when we have one.
-    // Front matter (index 0) has no chapter number, so fall back to the title alone.
-    const label = (chapterIndex: number, chapterTitle?: string): string | null => {
-      const title = chapterTitle?.trim();
-      const num = chapterIndex > 0 ? `Ch. ${String(chapterIndex).padStart(2, '0')}` : '';
-      return num && title ? `${num} · ${title}` : (title || num || null);
-    };
-    return {
-      annotations: {
-        chapterLabel: latestAnn ? label(latestAnn.chapterIndex, latestAnn.chapterTitle) : null,
-        onResume: () => resumeWork('annotations', latestAnn?.chapterIndex ?? null),
-      },
-      changes: {
-        chapterLabel: latestEdit ? label(latestEdit.chapterIndex, latestEdit.chapterTitle) : null,
-        onResume: () => resumeWork('changes', latestEdit?.chapterIndex ?? null),
-      },
-    };
-  }, [annotations, edits, resumeWork]);
-
-  if (!manuscript) return null;
-
-  const { author, wordCount, chapterCount, status, uncached, publishing } = manuscript.metadata;
-  const readerCount = new Set(annotations.map(a => a.readerId ?? a.readerName).filter(Boolean)).size;
-  const savedLabel = manuscript.metadata.lastOpened
-    ? `Auto-saved · ${new Date(manuscript.metadata.lastOpened).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`
-    : 'Auto-saved';
-
-  return (
-    <div className="hub hub--3col">
-      <main className="hub-main">
-        {uncached && (
-          <div className="hub-warn" role="alert">
-            ⚠ Source text offloaded to free storage space. Reading, editing, and export are paused —
-            re-import the file from <strong>Load</strong> to restore it.
-          </div>
-        )}
-
-        {pane === 'contents' ? (
-          <div className="hub-panel">
-            <div className="hub-page-top">
-              <button type="button" className="hub-back" onClick={onExit}>
-                <ChevronLeftIcon size={10} />
-                Back to Library
-              </button>
-              <button type="button" className="hub-open-reader" onClick={onRead} disabled={!manuscriptAvailable}>
-                Open in reader <span aria-hidden="true">→</span>
-              </button>
-            </div>
-            <header className="hub-hero">
-            <div className="hub-hero-cover-wrap">
-              <div className="hub-hero-cover">
-                <CoverImage manuscriptId={manuscript.id} title={title} editable />
-              </div>
-            </div>
-            <div className="hub-hero-text">
-              {publishing?.series && <div className="hub-hero-series">{publishing.series}</div>}
-              <h1 className={heroTitleClass(title)}>{title}</h1>
-              {author && <div className="hub-hero-byline">{author}</div>}
-              {publishing?.genre?.trim() ? (
-                <div className="hub-hero-genre">
-                  <span>{publishing.genre.trim()}</span>
-                  <button type="button" className="hub-hero-genre-edit" onClick={() => setHubPane('details')} aria-label="Edit genre and synopsis">
-                    <PencilIcon size={14} />
-                  </button>
-                </div>
-              ) : (
-                <button type="button" className="hub-hero-genre-add" onClick={() => setHubPane('details')}>
-                  Add genre &amp; synopsis
-                </button>
-              )}
-              {publishing?.subtitle && <div className="hub-hero-subtitle">{publishing.subtitle}</div>}
-              {publishing?.synopsis?.trim() && (
-                <p className="hub-hero-synopsis">{publishing.synopsis.trim()}</p>
-              )}
-              <button
-                type="button"
-                className={`hub-hero-status ms-status ${hubStatusClass(status ?? 'Draft')}`}
-                onClick={() => {
-                  if (!manuscript) return;
-                  cycleStatus(manuscript.id);
-                  const refreshed = useLibraryStore.getState().library.find(m => m.id === manuscript.id);
-                  if (refreshed) openManuscript(refreshed, chapters);
-                }}
-              >
-                {status ?? 'Draft'}
-              </button>
-            </div>
-            {/* Stats are a direct child of .hub-hero (not nested in the text
-                column) so they can span the full hero width on mobile instead of
-                bunching into the narrow column beside the cover. */}
-            <div className="hub-hero-stats" aria-label="Manuscript summary">
-              {wordCount != null && wordCount > 0 && (
-                <div className="hub-stat">
-                  <span className="hub-stat-value">{wordCount.toLocaleString()}</span>
-                  <span className="hub-stat-label">Words</span>
-                </div>
-              )}
-              <div className="hub-stat">
-                <span className="hub-stat-value">{chapterCount ?? 0}</span>
-                <span className="hub-stat-label">Chapters</span>
-              </div>
-              <div className="hub-stat">
-                <span className="hub-stat-value">{annotations.length > 0 ? annotations.length : '—'}</span>
-                <span className="hub-stat-label">Annotations</span>
-              </div>
-              <div className="hub-stat">
-                <span className="hub-stat-value hub-stat-value--meta">{hubLastOpenedLabel(manuscript.metadata.lastOpened)}</span>
-                <span className="hub-stat-label">Last opened</span>
-              </div>
-            </div>
-          </header>
-
-          <section className="hub-continue">
-            <div className="hub-continue-main">
-              <div className="hub-continue-eyebrow">
-                {pct > 1 ? 'Continue reading' : 'Start reading'}
-              </div>
-              {resumeChapter && (
-                <p className="hub-continue-place">
-                  Chapter {resumeChapter.index}
-                  {resumeChapter.title ? ` · ${resumeChapter.title}` : ''}
-                </p>
-              )}
-              <div className="hub-continue-bar" aria-hidden="true">
-                <div className="hub-continue-fill" style={{ width: `${pct}%` }} />
-              </div>
-              <p className="hub-continue-pct">
-                {pct > 0 ? (
-                  <>
-                    {pct}% complete
-                    {wordCount != null && wordCount > 0 && (
-                      <> · Page {pageEstimate.current} of {pageEstimate.total}</>
-                    )}
-                  </>
-                ) : (
-                  'Not yet opened in the reader'
-                )}
-              </p>
-            </div>
-            <div className="hub-continue-aside">
-              <button type="button" className="hub-continue-btn btn-fill" onClick={onRead} disabled={!manuscriptAvailable}>
-                {pct > 1 ? 'Continue reading' : 'Start reading'}
-              </button>
-              {pct > 1 && (
-                <button type="button" className="hub-continue-restart" onClick={startOver} disabled={!manuscriptAvailable}>
-                  Start from the beginning
-                </button>
-              )}
-            </div>
-          </section>
-
-          <section className="hub-toc-section hub-surface-card">
-            <div className="hub-toc-head">
-              <div className="instrument-group-label hub-section-label--bare">Contents</div>
-              <div className="hub-toc-actions">
-                <label className="hub-toc-search">
-                  <span className="visually-hidden">Search chapters</span>
-                  <input
-                    type="search"
-                    className="hub-toc-search-input"
-                    placeholder="Search chapters"
-                    value={tocQuery}
-                    onChange={e => setTocQuery(e.target.value)}
-                  />
-                </label>
-                <button
-                  type="button"
-                  className={`btn-ghost${tocCompact ? ' active' : ''}`}
-                  onClick={() => setTocCompact(v => !v)}
-                >
-                  View
-                </button>
-                <button
-                  type="button"
-                  className={`btn-ghost${editStructure ? ' active' : ''}`}
-                  onClick={() => setEditStructure(v => !v)}
-                >
-                  {editStructure ? 'Done' : 'Edit'}
-                </button>
-              </div>
-            </div>
-
-            {editStructure ? (
-              <div className="hub-form">
-                <ChapterTree key={combinedMarkdown} combinedMarkdown={combinedMarkdown} onChange={setChapterEdits} />
-                <div style={{ display: 'flex', gap: '8px', marginTop: '20px', flexWrap: 'wrap' }}>
-                  <button className="edit-save-btn" style={{ alignSelf: 'flex-start' }}
-                    onClick={() => { saveChapters(); setEditStructure(false); }}>Save chapter changes</button>
-                  <button className="btn-ghost" style={{ alignSelf: 'flex-start' }}
-                    onClick={() => setAddChaptersOpen(true)}>+ Add chapters</button>
-                </div>
-              </div>
-            ) : filteredChapters.length === 0 ? (
-              <p className="hub-toc-empty">No chapters match your search.</p>
-            ) : tocTwoColumns ? (
-              <div className="hub-toc-columns">
-                <nav className="instrument-nav" aria-label="Table of contents, column 1">
-                  {tocLeft.map(renderTocRow)}
-                </nav>
-                <nav className="instrument-nav" aria-label="Table of contents, column 2">
-                  {tocRight.map(renderTocRow)}
-                </nav>
-              </div>
-            ) : (
-              <nav className={`instrument-nav${tocCompact ? ' instrument-nav--compact' : ''}`} aria-label="Table of contents">
-                {filteredChapters.map(renderTocRow)}
-              </nav>
-            )}
-          </section>
-          </div>
-        ) : (
-          <div className="hub-panel hub-tool-pane">
-            <button type="button" className="btn-ghost" style={{ marginBottom: '30px' }} onClick={() => setHubPane('contents')}>‹ Contents</button>
-
-            {pane === 'details' && (
-              <PublishingDetailsForm
-                key={manuscript.id}
-                title={title} author={author ?? ''} status={(status as ManuscriptStatus) ?? 'Draft'}
-                publishing={publishing ?? {}}
-                onSave={saveDetails}
-              />
-            )}
-
-            {pane === 'feedback' && (
-              <FeedbackTab
-                annotations={annotations}
-                readerCount={readerCount}
-                manuscriptTitle={title}
-                manuscriptAvailable={manuscriptAvailable}
-                versions={versions}
-                liveMarkdown={combinedMarkdown}
-                onRead={onRead}
-                onAnnotate={() => enterReader(resumeChapter?.index ?? chapters[0]?.index ?? 1, 'annotate')}
-                onShareDownload={handleShareReaderDownload}
-                onSaveVersion={handleSaveVersion}
-              />
-            )}
-
-            {pane === 'revision' && (
-              <RevisionTab
-                manuscriptTitle={title}
-                authorName={manuscript.metadata.author}
-                annotations={annotations}
-                edits={edits}
-                combinedMarkdown={combinedMarkdown}
-                onJump={jumpToChapter}
-              />
-            )}
-
-            {pane === 'versions' && (
-              <VersionsTab
-                versions={versions}
-                manuscriptAvailable={manuscriptAvailable}
-                onSaveVersion={handleSaveVersion}
-                onRestore={handleRestoreVersion}
-                onRelabel={(snapId, label) => manuscript && relabel(manuscript.id, snapId, label)}
-                onDelete={snapId => manuscript && removeVersion(manuscript.id, snapId)}
-              />
-            )}
-
-            {pane === 'report' && (
-              <div className="hub-panel">
-                <div className="hub-overview-head">
-                  <h2 className="hub-panel-title">Manuscript Intelligence</h2>
-                  <button
-                    type="button"
-                    className="btn-cta-gold"
-                    disabled={annotations.length === 0}
-                    title={annotations.length === 0 ? 'Prose analysis shows here now; add a note or import reader feedback to download the full report' : undefined}
-                    onClick={() => setReportExportOpen(true)}
-                  >
-                    <DownloadIcon size={13} />
-                    Download report
-                  </button>
-                </div>
-                <p className="hub-panel-lead">Prose measured against its own average, and reader signals traced to specific actions — pointers worth a second look, never verdicts.</p>
-                <div className="hub-report"><ReportView signals={signals} onJump={jumpToChapter} /></div>
-                <ExportChoiceModal
-                  open={reportExportOpen}
-                  heading="Download editorial report"
-                  subject={title}
-                  primaryLabel="Download report"
-                  formats={[
-                    { key: 'docx', label: 'Word', desc: 'Best for sharing, comments, and print.' },
-                    { key: 'html', label: 'Web page', desc: 'Self-contained HTML — opens in any browser.' },
-                  ]}
-                  onClose={() => setReportExportOpen(false)}
-                  onExport={async (key) => {
-                    if (key === 'docx') await handleExportReportDocx();
-                    else handleExportReportHtml();
-                  }}
-                />
-              </div>
-            )}
-
-            {pane === 'exports' && (
-              <ExportsTab
-                manuscriptAvailable={manuscriptAvailable}
-                annCount={annotations.length}
-                editCount={edits.length}
-                onExportReportDocx={handleExportReportDocx}
-                onExportReportHtml={handleExportReportHtml}
-                onExportReportJson={handleExportReportJson}
-                onExportRevisionLog={handleExportRevisionLog}
-                onExportRevisionContext={handleExportRevisionContext}
-                onOpenShareReader={openShareReader}
-              />
-            )}
-          </div>
-        )}
-      </main>
-
-      <ManuscriptWorkspaceRail
-        context="hub"
-        pane={pane}
-        annotationCount={annotations.length}
-        versionCount={versions.length}
-        revisionCount={revisionCount}
-        savedLabel={savedLabel}
-        wayfinding={wayfinding}
-        note={{ value: note, onChange: onNoteChange }}
-        className={mobileToolsOpen ? undefined : 'hub-tools--mobile-hidden'}
-        onTogglePane={toggleToolPane}
-        onRead={onRead}
-        onOpenAnnotations={() => setHubPane('feedback')}
-      />
-
-      <div className="hub-mobile-bar">
-        <button
-          type="button"
-          className={`hub-mobile-bar-btn${mobileToolsOpen ? ' hub-mobile-bar-btn--open' : ''}`}
-          onClick={() => setMobileToolsOpen(o => !o)}
-          aria-expanded={mobileToolsOpen}
-        >
-          <span className="hub-mobile-bar-label">Tools</span>
-          <span className="hub-mobile-bar-chevron" aria-hidden="true">{mobileToolsOpen ? '↓' : '↑'}</span>
-        </button>
-      </div>
-      <ShareReaderModal
-        key={shareReaderOpen ? shareReaderInitialMode : 'closed'}
-        open={shareReaderOpen}
-        title={title}
-        versions={versions}
-        liveMarkdown={combinedMarkdown}
-        manuscriptAvailable={manuscriptAvailable}
-        initialMode={shareReaderInitialMode}
-        onClose={() => setShareReaderOpen(false)}
-        onSaveVersion={handleSaveVersion}
-        onDownload={handleShareReaderDownload}
-      />
-
-      <AddChaptersModal
-        open={addChaptersOpen}
-        manuscriptTitle={title}
-        onClose={() => setAddChaptersOpen(false)}
-        onAppend={handleAppendChapters}
-      />
-    </div>
-  );
-}
-
-function hubStatusClass(status: string): string {
-  return 'status--' + status.toLowerCase().replace(/[^a-z]+/g, '-');
-}
-
-function hubLastOpenedLabel(ts: number | undefined): string {
-  if (!ts) return '—';
-  const opened = new Date(ts);
-  const now = new Date();
-  const sameDay = opened.toDateString() === now.toDateString();
-  if (sameDay) {
-    return `Today, ${opened.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
-  }
-  const yesterday = new Date(now);
-  yesterday.setDate(yesterday.getDate() - 1);
-  if (opened.toDateString() === yesterday.toDateString()) {
-    return `Yesterday, ${opened.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
-  }
-  return opened.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-}
-
-function HubTocRow({
-  ch, wordCount, meanChapterWords, isActive, compact, menuOpen, onToggleMenu, onCloseMenu, onRead, onAnnotate, onEdit, onStartOver,
-}: {
-  ch: Chapter;
-  wordCount: number | undefined;
-  meanChapterWords: number;
-  isActive: boolean;
-  compact: boolean;
-  menuOpen: boolean;
-  onToggleMenu: () => void;
-  onCloseMenu: () => void;
-  onRead: () => void;
-  onAnnotate: () => void;
-  onEdit: () => void;
-  onStartOver: () => void;
-}) {
-  const menuRef = useRef<HTMLDivElement>(null);
-  const ratio = wordCount != null && wordCount > 0 && meanChapterWords > 0
-    ? chapterLengthRatio(wordCount, meanChapterWords)
-    : null;
-  const flag = ratio != null ? chapterLengthInsightFlag(ratio) : null;
 
   useEffect(() => {
     if (!menuOpen) return;
     function onDoc(e: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) onCloseMenu();
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onCloseMenu();
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
     }
     document.addEventListener('mousedown', onDoc);
-    window.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDoc);
-      window.removeEventListener('keydown', onKey);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [menuOpen]);
+
+  // Live feedback: while the console is open on a live share, pull responses on open
+  // and then every 15s, folding each session in through the same merge as import. All
+  // silent — the manual "Check for responses" is what surfaces errors/confirmation.
+  useEffect(() => {
+    if (!share || share.state === 'revoked') return;
+    let cancelled = false;
+    const pull = async () => {
+      try {
+        const { sessions: pulled } = await getSyncClient().listSessions(share.shareId, share.authorToken);
+        if (cancelled) return;
+        for (const payload of pulled) {
+          if (Array.isArray(payload.annotations)) importSession(payload);
+        }
+      } catch { /* silent — the manual pull reports failures */ }
     };
-  }, [menuOpen, onCloseMenu]);
+    void pull();
+    const timer = setInterval(pull, 15000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [share, importSession]);
+
+  if (!manuscript) return null;
+
+  const m = manuscript.metadata;
+  const title = m.title;
+  const genre = m.publishing?.genre?.trim();
+  const available = !!combinedMarkdown;
+
+  const breakdown = m.responses ?? deriveBreakdown(annotations);
+  const responsesTotal = breakdown.highlights + breakdown.notes + breakdown.questions;
+  // Prefer real reader sessions (they carry progress + completion) once any have been
+  // pulled or imported; fall back to the flat annotation-derived list otherwise.
+  const readers: ReaderProgress[] = sessions.length
+    ? sessions.map((s): ReaderProgress => ({
+        name: s.readerName,
+        progress: Math.max(0, Math.min(1, s.progress || 0)),
+        state: s.completedAt ? 'finished' : 'reading',
+      }))
+    : (m.readers ?? deriveReaders(annotations));
+  const readerCount = readers.length;
+  const shareLive = !!share && share.state !== 'revoked';
+  const shared = share ? shareLive : (m.shared ?? readers.length > 0);
+  const newResponses = m.newResponses ?? 0;
+  // The manuscript's position in the beta-reader loop — the hero the Hub hangs
+  // off (loop-completion brief). Sharing is the control beneath it.
+  const workflow = deriveWorkflowStatus({
+    shareState: share?.state,
+    legacyShared: m.shared,
+    readerCount,
+    newResponses,
+  });
+
+  const setAside = importSummary ? importSummary.front.length + importSummary.back.length : 0;
+  const chapterCount = m.chapterCount || chapters.length;
+  const totalWords = m.wordCount || importSummary?.totalWords || 0;
+  const importedLabel = m.importedAt
+    ? new Date(m.importedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+    : null;
+
+  const jumpToChapter: JumpFn = (index, opts) => {
+    setPendingChapterIndex(index);
+    if (opts?.annotate) setPendingReaderIntent('annotate');
+    onRead();
+  };
+
+  // The reader link, minus scheme, for display. Falls back to a placeholder only
+  // before a share exists (the create panel is shown then, not this).
+  const readerUrl = share?.readerUrl ?? '';
+  const linkDisplay = readerUrl.replace(/^https?:\/\//, '');
+  const copyLink = () => {
+    if (!readerUrl) return;
+    navigator.clipboard?.writeText(readerUrl).then(
+      () => showToast('Link copied.'),
+      () => showToast('Could not copy the link.'),
+    );
+  };
+
+  // ── Share lifecycle (sync worker, brief §3.2) ────────────────────────────────
+  // Create publishes an immutable snapshot: mint the share, build the self-contained
+  // reader bound to it, host it, then persist the author's handle locally.
+  const createShareLink = async () => {
+    if (!combinedMarkdown || shareBusy) return;
+    if (!isSyncConfigured()) { showToast('Sharing isn’t set up yet — no sync worker connected.'); return; }
+    setShareBusy(true);
+    try {
+      const client = getSyncClient();
+      const versionId = manuscriptVersionId(stripMatterRegions(combinedMarkdown));
+      const settings = { askName: true, privateNotes: false };
+      const created = await client.createShare({ title, versionId, markdown: combinedMarkdown, settings });
+      const html = buildShareableHTML(title, combinedMarkdown, true, undefined, { endpoint: syncEndpoint(), shareId: created.shareId });
+      await client.putReaderHtml(created.shareId, created.authorToken, html);
+      const handle: ShareHandle = {
+        shareId: created.shareId, authorToken: created.authorToken, readerUrl: created.readerUrl,
+        state: 'live', versionId, createdAt: Date.now(), askName: settings.askName, privateNotes: settings.privateNotes,
+      };
+      saveShare(manuscript.id, handle);
+      setShare(handle);
+      showToast('Share link created.');
+    } catch (e) {
+      showToast(e instanceof SyncError ? e.message : 'Could not create the share link.');
+    } finally {
+      setShareBusy(false);
+    }
+  };
+
+  const setShareState = async (next: 'live' | 'frozen' | 'revoked') => {
+    if (!share || shareBusy) return;
+    setShareBusy(true);
+    try {
+      const client = getSyncClient();
+      if (next === 'revoked') await client.deleteShare(share.shareId, share.authorToken);
+      else await client.patchShare(share.shareId, share.authorToken, { state: next });
+      const handle: ShareHandle = { ...share, state: next };
+      saveShare(manuscript.id, next === 'revoked' ? null : handle);
+      setShare(next === 'revoked' ? null : handle);
+      showToast(next === 'revoked' ? 'Link revoked.' : next === 'frozen' ? 'Feedback paused.' : 'Link reopened.');
+    } catch (e) {
+      showToast(e instanceof SyncError ? e.message : 'Could not update the share.');
+    } finally {
+      setShareBusy(false);
+    }
+  };
+
+  const toggleShareSetting = async (key: 'askName' | 'privateNotes') => {
+    if (!share || shareBusy) return;
+    const nextSettings = { askName: share.askName, privateNotes: share.privateNotes, [key]: !share[key] };
+    setShareBusy(true);
+    try {
+      await getSyncClient().patchShare(share.shareId, share.authorToken, { settings: nextSettings });
+      const handle: ShareHandle = { ...share, askName: nextSettings.askName, privateNotes: nextSettings.privateNotes };
+      saveShare(manuscript.id, handle);
+      setShare(handle);
+    } catch (e) {
+      showToast(e instanceof SyncError ? e.message : 'Could not change the setting.');
+    } finally {
+      setShareBusy(false);
+    }
+  };
+
+  // HP3: pull every reader's session from the worker and fold it into the manuscript
+  // through the SAME merge path as JSON import (`importSession` dedupes by id and
+  // replaces a reader's session by deterministic id) — a pure transport swap. Every
+  // reader read the one hosted frozen version, so no per-file version reconciliation.
+  const pullFeedback = async () => {
+    if (!share || pullBusy) return;
+    setPullBusy(true);
+    try {
+      const { sessions: pulled } = await getSyncClient().listSessions(share.shareId, share.authorToken);
+      let imported = 0;
+      for (const payload of pulled) {
+        if (!Array.isArray(payload.annotations)) continue;
+        imported += importSession(payload).imported;
+      }
+      showToast(
+        pulled.length === 0
+          ? 'No responses yet.'
+          : imported === 0
+            ? `Up to date — ${pulled.length} reader${pulled.length !== 1 ? 's' : ''}, nothing new.`
+            : `${imported} new annotation${imported !== 1 ? 's' : ''} from ${pulled.length} reader${pulled.length !== 1 ? 's' : ''}.`,
+      );
+    } catch (e) {
+      showToast(e instanceof SyncError ? e.message : 'Could not fetch responses.');
+    } finally {
+      setPullBusy(false);
+    }
+  };
 
   return (
-    <div
-      className={`instrument-item instrument-item--toc${isActive ? ' active' : ''}`}
-      role="button"
-      tabIndex={0}
-      onClick={onRead}
-      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onRead(); } }}
-    >
-      <span className="instrument-item-label instrument-item-label--serif">
-        <span className="instrument-item-num">{ch.index}</span>
-        {ch.title}
-      </span>
-      {!compact && ((wordCount != null && wordCount > 0) || flag) && (
-        <span className="instrument-item-meta">
-          {wordCount != null && wordCount > 0 && wordCount.toLocaleString()}
-          {flag && ratio != null && (
-            <span
-              className={`chapter-length-flag chapter-length-flag--${flag}`}
-              title={flag === 'short' ? 'Much shorter than your average chapter' : 'Much longer than your average chapter'}
+    <div className="console">
+      <div className="console-wrap">
+        <nav className="console-crumbs" aria-label="Breadcrumb">
+          <button type="button" className="console-crumb console-crumb--home" onClick={onExit}>
+            <span className="console-crumb-mark"><BookIcon size={11} /></span>
+            Library
+          </button>
+          <span className="console-crumb-sep" aria-hidden="true">›</span>
+          <button type="button" className="console-crumb console-crumb--ms" onClick={() => setTab('overview')} title={title}>
+            {title}
+          </button>
+          <span className="console-crumb-sep" aria-hidden="true">›</span>
+          <span className="console-crumb console-crumb--here" aria-current="page">{CRUMB_LABEL[tab]}</span>
+        </nav>
+
+        <header className="console-head">
+          <div className="console-cover">
+            <CoverImage manuscriptId={manuscript.id} title={title} />
+          </div>
+          <div className="console-id">
+            <h1 className="console-title">{title}</h1>
+            <div className="console-byline">
+              {m.author}{m.author && genre ? ' · ' : ''}{genre}
+            </div>
+            <div className={`console-status console-status--${workflow.tone}`}>
+              <span className="console-status-pip" />
+              <span className="console-status-label">{workflow.label}</span>
+              {workflow.readerCount > 0 && (
+                <span className="console-status-sub">· <span className="tnum">{workflow.readerCount}</span> reader{workflow.readerCount === 1 ? '' : 's'}</span>
+              )}
+              {workflow.newResponses > 0 && (
+                <span className="console-status-new"><span className="tnum">{workflow.newResponses}</span> new</span>
+              )}
+            </div>
+          </div>
+          <div className="console-cta">
+            <button type="button" className="console-open" onClick={onRead} disabled={!available}>
+              Open in reader
+            </button>
+            <div className="console-kebab-wrap" ref={menuRef}>
+              <button
+                type="button"
+                className="console-kebab"
+                aria-label="Manuscript actions"
+                aria-expanded={menuOpen}
+                onClick={() => setMenuOpen(o => !o)}
+              >
+                <DotsIcon size={16} />
+              </button>
+              {menuOpen && (
+                <div className="console-menu" role="menu">
+                  <button type="button" role="menuitem" className="console-menu-item" onClick={() => { setMenuOpen(false); onRead(); }} disabled={!available}>Open in reader</button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="console-menu-item console-menu-item--danger"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      if (window.confirm(`Remove "${title}"? This can't be undone.`)) { deleteManuscript(manuscript.id); onExit(); }
+                    }}
+                  >
+                    Delete manuscript
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </header>
+
+        <nav className="console-tabs" role="tablist" aria-label="Manuscript sections">
+          {TABS.map(t => (
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              aria-selected={tab === t.id || (t.id === 'feedback' && tab === 'report')}
+              className={`console-tab${tab === t.id || (t.id === 'feedback' && tab === 'report') ? ' active' : ''}`}
+              onClick={() => setTab(t.id)}
             >
-              {' · '}{formatChapterLengthRatio(ratio)}
-            </span>
-          )}
-        </span>
-      )}
-      <div className="hub-toc-menu-wrap" ref={menuRef}>
-        <button
-          type="button"
-          className="btn-icon"
-          aria-label={`Chapter ${ch.index} actions`}
-          aria-expanded={menuOpen}
-          onClick={e => { e.stopPropagation(); onToggleMenu(); }}
-        >
-          <DotsIcon size={13} />
-        </button>
-        {menuOpen && (
-          <div className="hub-toc-menu" role="menu">
-            <button type="button" role="menuitem" onClick={e => { e.stopPropagation(); onCloseMenu(); onRead(); }}>Read</button>
-            <button type="button" role="menuitem" onClick={e => { e.stopPropagation(); onCloseMenu(); onAnnotate(); }}>Annotate</button>
-            <button type="button" role="menuitem" onClick={e => { e.stopPropagation(); onCloseMenu(); onEdit(); }}>Edit prose</button>
-            <button type="button" role="menuitem" className="hub-toc-menu-muted" onClick={e => { e.stopPropagation(); onCloseMenu(); onStartOver(); }}>Start from beginning</button>
+              {t.label}
+            </button>
+          ))}
+        </nav>
+
+        {/* ── OVERVIEW ── */}
+        {tab === 'overview' && (
+          <div className="console-body">
+            {importSummary && (
+              <div className="console-integrity">
+                <span className="console-ck" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M5 12l4 4L19 7" /></svg>
+                </span>
+                <span className="console-integrity-text">
+                  <b>Import verified.</b>{' '}
+                  <span className="tnum">{chapterCount}</span> chapters
+                  <span className="console-sep"> · </span>
+                  <span className="tnum">{setAside}</span> set aside
+                  <span className="console-sep"> · </span>nothing discarded
+                </span>
+                {importedLabel && (
+                  <span className="console-integrity-meta tnum">{importedLabel} · {totalWords.toLocaleString()} words</span>
+                )}
+              </div>
+            )}
+
+            <div className="console-panels">
+              {/* Sharing */}
+              <section className="console-panel">
+                <div className="panel-head">
+                  <span className="panel-name">Sharing</span>
+                  {shared && <button type="button" className="panel-link" onClick={() => setTab('sharing')}>Manage <ChevronLeftIcon size={11} /></button>}
+                </div>
+                {shared ? (
+                  <>
+                    <div className="share-state"><span className="console-pip" /> Shared with {readerCount} reader{readerCount === 1 ? '' : 's'}</div>
+                    <div className="roster">
+                      {readers.slice(0, 3).map((r, i) => (
+                        <div className="reader" key={i}>
+                          <span className="reader-av">{initials(r.name)}</span>
+                          <div className="reader-main">
+                            <span className="reader-name">{r.name}</span>
+                            <span className="prog"><i style={{ width: `${Math.round(r.progress * 100)}%` }} /></span>
+                          </div>
+                          <span className="reader-pct tnum">{Math.round(r.progress * 100)}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <div className="panel-empty">
+                    <p>Not shared yet.</p>
+                    <button type="button" className="panel-link" onClick={() => setTab('sharing')}>Create a share link <ChevronLeftIcon size={11} /></button>
+                  </div>
+                )}
+              </section>
+
+              {/* Feedback */}
+              <section className="console-panel">
+                <div className="panel-head"><span className="panel-name">Feedback</span></div>
+                <div className="fb-big tnum">{responsesTotal} <small>response{responsesTotal === 1 ? '' : 's'} · {readerCount} reader{readerCount === 1 ? '' : 's'}</small></div>
+                {newResponses > 0 && (
+                  <div className="fb-new"><span className="console-np" /> <span className="tnum">{newResponses} new</span> since your last visit</div>
+                )}
+                <button type="button" className="panel-block" onClick={() => setTab('report')} disabled={responsesTotal === 0}>
+                  View editorial report
+                </button>
+                <div className="fb-break">
+                  <div className="fb-line"><span>Highlights</span><b className="tnum">{breakdown.highlights}</b></div>
+                  <div className="fb-line"><span>Notes</span><b className="tnum">{breakdown.notes}</b></div>
+                  <div className="fb-line"><span>Questions</span><b className="tnum">{breakdown.questions}</b></div>
+                </div>
+              </section>
+
+              {/* Structure */}
+              <section className="console-panel">
+                <div className="panel-head">
+                  <span className="panel-name">Structure</span>
+                  <button type="button" className="panel-link" onClick={() => setTab('structure')}>Review <ChevronLeftIcon size={11} /></button>
+                </div>
+                <div className="st-line"><span>Chapters</span><b className="tnum">{chapterCount}</b></div>
+                <div className="st-line"><span>Set aside at import</span><b className="tnum">{setAside} section{setAside === 1 ? '' : 's'}</b></div>
+                <div className="st-line"><span>Total words</span><b className="tnum">{totalWords.toLocaleString()}</b></div>
+                <p className="panel-foot">Set-aside sections (title page, dedication, TOC…) are kept, never discarded — promote any to a chapter in Review.</p>
+              </section>
+            </div>
+          </div>
+        )}
+
+        {/* ── SHARING ── */}
+        {tab === 'sharing' && (
+          <div className="console-body">
+            {share ? (
+              <div className="console-panel console-panel--wide">
+                <div className="panel-head">
+                  <span className="panel-name">Share link</span>
+                  {share.state === 'frozen'
+                    ? <span className="console-live console-live--paused"><span className="console-pip" /> Feedback paused</span>
+                    : <span className="console-live"><span className="console-pip" /> Live</span>}
+                </div>
+                <div className="console-linkrow">
+                  <div className="console-linkbox">
+                    <span className="tnum">{linkDisplay}</span>
+                  </div>
+                  <button type="button" className="console-open" onClick={copyLink}>Copy</button>
+                </div>
+                <p className="console-link-note">This is your <b>one link</b> — send it to every beta reader. Each person who opens it gets their own private identity, and their notes come back to you here, separately. You never make a link per reader.</p>
+                <div className="console-share-opts">
+                  <button type="button" className="console-oval" onClick={() => { window.location.href = `mailto:?subject=${encodeURIComponent('Read my manuscript: ' + title)}&body=${encodeURIComponent(readerUrl)}`; }}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M4 7l8 5 8-5M4 6h16v12H4z" /></svg> Email
+                  </button>
+                  <button type="button" className="console-oval" onClick={() => { if (navigator.share) navigator.share({ title, url: readerUrl }).catch(() => {}); else copyLink(); }}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><circle cx="18" cy="5" r="2.5" /><circle cx="6" cy="12" r="2.5" /><circle cx="18" cy="19" r="2.5" /><path d="M8.2 10.8l7.6-4.4M8.2 13.2l7.6 4.4" /></svg> Share
+                  </button>
+                </div>
+
+                <div className="console-settings">
+                  <div className="console-setting">
+                    <div><div className="console-setting-t">Readers are asked their name</div><div className="console-setting-d">So their feedback is attributed in your report</div></div>
+                    <button type="button" className={`console-sw${share.askName ? '' : ' console-sw--off'}`} aria-label={`Ask readers their name: ${share.askName ? 'on' : 'off'}`} onClick={() => toggleShareSetting('askName')} disabled={shareBusy} />
+                  </div>
+                  <div className="console-setting">
+                    <div><div className="console-setting-t">Readers see only their own notes</div><div className="console-setting-d">Each reader's marks stay private to them</div></div>
+                    <button type="button" className={`console-sw${share.privateNotes ? '' : ' console-sw--off'}`} aria-label={`Readers see only their own notes: ${share.privateNotes ? 'on' : 'off'}`} onClick={() => toggleShareSetting('privateNotes')} disabled={shareBusy} />
+                  </div>
+                </div>
+
+                <div className="panel-head panel-head--sub">
+                  <span className="panel-name">Readers · <span className="tnum">{readers.length}</span> joined</span>
+                  <button type="button" className="panel-link" onClick={pullFeedback} disabled={pullBusy}>
+                    {pullBusy ? 'Checking…' : 'Check for responses'}
+                  </button>
+                </div>
+                <div className="roster roster--full">
+                  {readers.map((r, i) => (
+                    <div className="reader" key={i}>
+                      <span className="reader-av">{initials(r.name)}</span>
+                      <div className="reader-main">
+                        <span className="reader-name">{r.name}{r.state && <span className="reader-jn"> · {r.state}</span>}</span>
+                        <span className="prog"><i style={{ width: `${Math.round(r.progress * 100)}%` }} /></span>
+                      </div>
+                      <span className="reader-pct tnum">{Math.round(r.progress * 100)}%</span>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="console-revoke">
+                  <span className="panel-foot">
+                    {share.state === 'frozen'
+                      ? 'Feedback is paused — readers can still open the link and read, but new notes aren’t accepted. Reopen to collect more. Feedback already received is kept.'
+                      : 'Pause to stop collecting new feedback while the link stays readable. Revoke to turn the link off entirely. Feedback already received is always kept.'}
+                  </span>
+                  <div className="console-revoke-actions">
+                    {share.state === 'frozen'
+                      ? <button type="button" className="console-oval" onClick={() => setShareState('live')} disabled={shareBusy}>Reopen for feedback</button>
+                      : <button type="button" className="console-oval" onClick={() => setShareState('frozen')} disabled={shareBusy}>Pause feedback</button>}
+                    <button type="button" className="console-danger" onClick={() => { if (window.confirm('Revoke this link? Readers will lose access. Feedback already received is kept.')) setShareState('revoked'); }} disabled={shareBusy}>Revoke link</button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="console-create">
+                <h3>Share it with a link</h3>
+                <p>You’ll get <b>one link</b> to send to all your beta readers — it works on any device, no account for you or them. Each reader gets their own private identity, and every note and question flows straight back into your report here.</p>
+                <button type="button" className="console-open console-open--lg" onClick={createShareLink} disabled={shareBusy || !available || !isSyncConfigured()}>
+                  {shareBusy ? 'Creating…' : 'Create share link'}
+                </button>
+                {!isSyncConfigured() && (
+                  <p className="panel-foot">Sharing needs the sync worker configured (set <span className="tnum">VITE_SYNC_ENDPOINT</span>). Until then, use the Export tab to download a reader file.</p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── FEEDBACK ── */}
+        {tab === 'feedback' && (
+          <div className="console-body">
+            <div className="console-panel console-panel--wide">
+              <div className="panel-head"><span className="panel-name">Feedback</span></div>
+              <div className="fb-big tnum">{responsesTotal} <small>response{responsesTotal === 1 ? '' : 's'} · {readerCount} reader{readerCount === 1 ? '' : 's'}</small></div>
+              <div className="fb-break fb-break--row">
+                <div className="fb-line"><span>Highlights</span><b className="tnum">{breakdown.highlights}</b></div>
+                <div className="fb-line"><span>Notes</span><b className="tnum">{breakdown.notes}</b></div>
+                <div className="fb-line"><span>Questions</span><b className="tnum">{breakdown.questions}</b></div>
+              </div>
+              <button type="button" className="panel-block" onClick={() => setTab('report')} disabled={responsesTotal === 0}>
+                View editorial report
+              </button>
+              <p className="panel-foot">Responses merge from every reader into one ranked report. The full report body fills in as reader annotations arrive (JSON import today, sync worker next).</p>
+            </div>
+          </div>
+        )}
+
+        {/* ── STRUCTURE ── */}
+        {tab === 'structure' && (
+          <div className="console-body">
+            <div className="console-panel console-panel--wide">
+              <div className="panel-head"><span className="panel-name">Chapters · {chapterCount}</span></div>
+              <div className="console-chapters">
+                {chapters.map(ch => (
+                  <div className="console-ch" key={ch.index}>
+                    <span className="console-ch-num tnum">{ch.index}</span>
+                    <span className="console-ch-title">{ch.title || 'Untitled chapter'}</span>
+                  </div>
+                ))}
+                {chapters.length === 0 && <p className="panel-foot">No chapters parsed. Re-import to restore the source text.</p>}
+              </div>
+              {importSummary && (importSummary.front.length > 0 || importSummary.back.length > 0) && (
+                <>
+                  <div className="panel-head panel-head--sub"><span className="panel-name">Set aside · {setAside}</span></div>
+                  <div className="console-aside">
+                    {[...importSummary.front, ...importSummary.back].map((s, i) => (
+                      <div className="console-aside-row" key={i}>{s.title || s.role}</div>
+                    ))}
+                  </div>
+                </>
+              )}
+              <p className="panel-foot">Full boundary review — promoting set-aside sections to chapters, renaming, merging — lands with the import-review screen.</p>
+            </div>
+          </div>
+        )}
+
+        {/* ── EXPORT ── */}
+        {tab === 'export' && (
+          <div className="console-body">
+            <div className="console-panel console-panel--wide">
+              <div className="panel-head"><span className="panel-name">Publishable formats</span></div>
+              {!available && (
+                <p className="panel-foot" style={{ marginTop: 0 }}>
+                  The source text isn’t cached on this device — re-import the file to export it.
+                </p>
+              )}
+
+              <div className="export-list">
+                <div className="export-row">
+                  <div className="export-row-main">
+                    <span className="export-row-name">Print edition</span>
+                    <span className="export-row-desc">Publication-quality Word file · 5.5 × 8.5 KDP interior</span>
+                  </div>
+                  <button type="button" className="export-dl" disabled={!available} onClick={() => exportManuscript('docx')}>Download DOCX</button>
+                </div>
+
+                <div className="export-row">
+                  <div className="export-row-main">
+                    <span className="export-row-name">Ebook edition</span>
+                    <span className="export-row-desc">EPUB 3 · Kindle, Apple Books, Kobo</span>
+                  </div>
+                  <button type="button" className="export-dl" disabled={!available} onClick={() => exportManuscript('epub')}>Download EPUB</button>
+                </div>
+
+                <div className="export-row export-row--config">
+                  <div className="export-row-main">
+                    <span className="export-row-name">Agent submission</span>
+                    <span className="export-row-desc">Standard manuscript format · double-spaced, 250 words/page</span>
+                    <div className="export-extent" role="group" aria-label="Submission extent">
+                      {EXTENT_LABELS.map(e => (
+                        <button
+                          key={e.id}
+                          type="button"
+                          className={`export-extent-opt${smfExtent === e.id ? ' selected' : ''}`}
+                          aria-pressed={smfExtent === e.id}
+                          onClick={() => setSmfExtent(e.id)}
+                        >
+                          {e.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <button type="button" className="export-dl" disabled={!available} onClick={() => exportSmf(EXTENT_REQUEST[smfExtent])}>Download SMF</button>
+                </div>
+              </div>
+
+              <div className="panel-head panel-head--sub"><span className="panel-name">Advanced</span></div>
+              <div className="export-list">
+                <div className="export-row">
+                  <div className="export-row-main">
+                    <span className="export-row-name">Markdown</span>
+                    <span className="export-row-desc">Plain source · Pandoc &amp; other toolchains</span>
+                  </div>
+                  <button type="button" className="export-dl export-dl--ghost" disabled={!available} onClick={() => exportManuscript('md')}>Download .md</button>
+                </div>
+              </div>
+
+              <p className="panel-foot">Every export is built from the current saved text on this device. Formats respect your set-aside sections — front &amp; back matter are placed, never dropped.</p>
+            </div>
+          </div>
+        )}
+
+        {/* ── REPORT ── */}
+        {tab === 'report' && (
+          <div className="console-body">
+            <button type="button" className="console-back console-back--sub" onClick={() => setTab('feedback')}>
+              <ChevronLeftIcon size={13} /> Feedback
+            </button>
+            <div className="console-report">
+              <ReportView signals={signals} onJump={jumpToChapter} />
+            </div>
           </div>
         )}
       </div>
-    </div>
-  );
-}
-
-// ── Versions: the author's deliberate draft history (Phase 8). ──
-/** Lists saved versions newest-first, with an inline-editable label, the capture
- *  reason, and a delete. "Save current as version" freezes the live draft. The
- *  before/after compare surface is the separate workspace app (Track B). */
-function VersionsTab({ versions, manuscriptAvailable, onSaveVersion, onRestore, onRelabel, onDelete }: {
-  versions: SnapshotMeta[];
-  manuscriptAvailable: boolean;
-  onSaveVersion: () => void;
-  onRestore: (snapId: string) => void;
-  onRelabel: (snapId: string, label: string) => void;
-  onDelete: (snapId: string) => void;
-}) {
-  const ordered = [...versions].sort((a, b) => b.createdAt - a.createdAt); // newest first
-  const ordinalById = new Map(
-    [...versions].sort((a, b) => a.createdAt - b.createdAt).map((v, i) => [v.id, i + 1] as const),
-  );
-  return (
-    <div className="hub-panel">
-      <div className="hub-overview-head">
-        <h2 className="hub-panel-title">Versions</h2>
-        <button type="button" className="btn-cta-gold" onClick={onSaveVersion} disabled={!manuscriptAvailable}>
-          <PlusIcon size={13} /> Save current as version
-        </button>
-      </div>
-      <p className="hub-panel-lead">
-        A saved version freezes the whole draft — its text, annotations, and reader sessions — so you
-        can revise freely and still see what changed. Editing never overwrites a saved version.
-      </p>
-
-      {ordered.length === 0 ? (
-        <div className="hub-empty">
-          <p>No versions saved yet.</p>
-          <p className="hub-empty-sub">Importing a manuscript captures a baseline automatically; save a new version at any milestone — before a beta round, after a revision pass.</p>
-        </div>
-      ) : (
-        <ul className="hub-versions">
-          {ordered.map(v => (
-            <VersionRow
-              key={v.id}
-              version={v}
-              ordinal={ordinalById.get(v.id) ?? 0}
-              manuscriptAvailable={manuscriptAvailable}
-              onRestore={() => onRestore(v.id)}
-              onRelabel={label => onRelabel(v.id, label)}
-              onDelete={() => onDelete(v.id)}
-            />
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-function VersionRow({ version, ordinal, manuscriptAvailable, onRestore, onRelabel, onDelete }: {
-  version: SnapshotMeta;
-  ordinal: number;
-  manuscriptAvailable: boolean;
-  onRestore: () => void;
-  onRelabel: (label: string) => void;
-  onDelete: () => void;
-}) {
-  const [label, setLabel] = useState(version.label ?? '');
-  const commit = () => {
-    const next = label.trim();
-    if (next && next !== version.label) onRelabel(next);
-    else setLabel(version.label ?? '');
-  };
-  const when = new Date(version.createdAt).toLocaleString(undefined, {
-    month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit',
-  });
-  return (
-    <li className="hub-version">
-      <span className="hub-version-chip"><LayersIcon size={12} /> v{ordinal}</span>
-      <div className="hub-version-body">
-        <input
-          className="hub-version-label"
-          value={label}
-          onChange={e => setLabel(e.target.value)}
-          onBlur={commit}
-          onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') setLabel(version.label ?? ''); }}
-          aria-label={`Label for version ${ordinal}`}
-        />
-        <div className="hub-version-meta">
-          {version.trigger === 'import' ? 'Imported baseline' : 'Saved version'} · {when} · {version.wordCount.toLocaleString()} words · {version.chapterCount} ch.
-        </div>
-      </div>
-      <button
-        type="button"
-        className="hub-version-restore"
-        disabled={!manuscriptAvailable}
-        onClick={() => { if (confirm(`Restore “${version.label ?? `v${ordinal}`}” as the current draft? Your current draft is saved as a version first, so you can switch back.`)) onRestore(); }}
-        title="Make this version the current draft"
-      >
-        <UndoIcon size={13} /> Restore
-      </button>
-      <button
-        type="button"
-        className="hub-version-del"
-        onClick={() => { if (confirm(`Delete version “${version.label ?? `v${ordinal}`}”? This can't be undone.`)) onDelete(); }}
-        aria-label={`Delete version ${ordinal}`}
-      >
-        <XIcon size={13} />
-      </button>
-    </li>
-  );
-}
-
-// ── Hub exports: collaboration artifacts (publication files → Publishing Studio). ──
-/** A single export option, presented inline: a format chip, plain-language
- *  description, and a download affordance — no intermediate modal. */
-function ExportsTab({
-  manuscriptAvailable, annCount, editCount,
-  onExportReportDocx, onExportReportHtml, onExportReportJson, onExportRevisionLog,
-  onExportRevisionContext, onOpenShareReader,
-}: {
-  manuscriptAvailable: boolean; annCount: number; editCount: number;
-  onExportReportDocx: () => void | Promise<void>;
-  onExportReportHtml: () => void;
-  onExportReportJson: () => void;
-  onExportRevisionLog: () => void;
-  onExportRevisionContext: () => void;
-  onOpenShareReader: (mode: 'reading' | 'annotating') => void;
-}) {
-  const noManuscript = !manuscriptAvailable;
-  const noManuscriptHint = 'Re-import this manuscript to export it';
-
-  return (
-    <div className="hub-panel">
-      <h2 className="hub-panel-title">Exports &amp; Sharing</h2>
-      <p className="hub-panel-lead">Revision history, editorial reports, and shareable reader copies from your workspace. For EPUB, Word, and other publication files, use Publishing Studio.</p>
-
-      <section className="hub-export-section">
-        <div className="hub-export-section-label">Revisions</div>
-        <div className="hub-export-cards">
-          <ExportCard chip="MD" title="Revision context"
-            disabled={noManuscript}
-            disabledHint={noManuscriptHint}
-            desc="One briefing file — goals, revision threads, your marks, and recent changes — ready for any drafting environment or AI review."
-            onClick={onExportRevisionContext} />
-          <ExportCard chip="LOG" title="Revision log"
-            disabled={editCount === 0}
-            disabledHint="Edit a chapter in the reader to start a revision log"
-            desc={editCount > 0
-              ? `Every edit you’ve made to this draft (${editCount} so far), as a reviewable change record.`
-              : 'Every edit you make to this draft, as a reviewable change record.'}
-            onClick={onExportRevisionLog} />
-        </div>
-      </section>
-
-      <section className="hub-export-section">
-        <div className="hub-export-section-label">Editorial report</div>
-        <div className="hub-export-cards">
-          <ExportCard chip="DOCX" title="Word document" disabled={annCount === 0}
-            disabledHint="Annotate first to generate a report"
-            desc="Best for sharing, adding comments, and print."
-            onClick={onExportReportDocx} />
-          <ExportCard chip="HTML" title="Web page" disabled={annCount === 0}
-            disabledHint="Annotate first to generate a report"
-            desc="Self-contained page — opens in any browser, easy to skim or print."
-            onClick={onExportReportHtml} />
-          <ExportCard chip="JSON" title="Raw data" disabled={annCount === 0}
-            disabledHint="Annotate first to generate a report"
-            desc="The same structured signals the app uses — for your own tools or downstream analysis."
-            onClick={onExportReportJson} />
-        </div>
-      </section>
-
-      <section className="hub-export-section">
-        <div className="hub-export-section-label">Share with a reader</div>
-        <div className="hub-export-cards">
-          <ExportCard chip="READER" title="Reading-only copy" disabled={noManuscript} disabledHint={noManuscriptHint}
-            desc="A clean reader file from a saved version — no annotation tools."
-            onClick={() => onOpenShareReader('reading')} />
-          <ExportCard chip="READER" title="Copy with annotation tools" disabled={noManuscript} disabledHint={noManuscriptHint}
-            desc="A reader file with annotation tools from a saved version — your beta reader exports feedback you import back in."
-            onClick={() => onOpenShareReader('annotating')} />
-        </div>
-      </section>
     </div>
   );
 }
