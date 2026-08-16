@@ -1784,6 +1784,55 @@ html.light .reader-rail {
 .library-stats-line .lib-stat-new { color: var(--accent); }
 .tnum { font-variant-numeric: tabular-nums; }
 
+.library-continue {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin-bottom: 32px;
+  padding: 24px 28px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--surface-raised, var(--surface));
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.library-continue:hover { border-color: var(--hairline-strong, var(--ink-muted)); }
+.library-continue-kicker {
+  display: block;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-soft, var(--muted));
+  margin-bottom: 8px;
+}
+.library-continue-title {
+  display: block;
+  font-family: var(--font-book, Georgia, serif);
+  font-size: 22px;
+  line-height: 1.25;
+  color: var(--ink);
+  margin-bottom: 8px;
+}
+.library-continue-meta {
+  display: block;
+  font-size: 13px;
+  color: var(--ink-soft, var(--muted));
+  margin-bottom: 14px;
+}
+.library-continue-bar {
+  display: block;
+  height: 3px;
+  background: var(--hairline);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.library-continue-bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+}
+
 /* Search — an inline pill in the header, icon + input (not a second row). */
 .library-search {
   display: flex; align-items: center; gap: 8px;
