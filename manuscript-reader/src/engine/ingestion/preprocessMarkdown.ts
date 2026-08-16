@@ -284,8 +284,45 @@ export function stripTableOfContents(text: string): string {
       let j = i + 1;
       while (j < lines.length && !lines[j].trim()) j++;       // skip blanks under the heading
       const entryStart = j;
-      while (j < lines.length && lines[j].trim() && isTocEntry(lines[j])) j++;
-      if (j > entryStart) { i = j - 1; continue; }            // drop heading + entries
+      // Scan entry rows, TOLERATING the blank line mammoth emits after every
+      // paragraph (each TOC row + its page number arrives blank-separated). Stop
+      // at the first non-blank line that isn't a TOC entry — that's the body.
+      const nextNonBlankFrom = (from: number): number => {
+        for (let k = from; k < lines.length; k++) if (lines[k].trim()) return k;
+        return -1;
+      };
+      let lastEntry = entryStart - 1;
+      while (j < lines.length) {
+        if (!lines[j].trim()) { j++; continue; }               // blank between rows — keep scanning
+        if (!isTocEntry(lines[j])) break;                      // real content — TOC ended
+        // A candidate row that BEGINS the body is the first chapter, not a TOC
+        // row: the TOC ended at the previous entry. (TOC rows are followed by more
+        // short rows / page numbers, never chapter prose.) Two body-start shapes:
+        //   • the row is immediately followed by chapter body prose, or
+        //   • the row is a "Chapter N" / numbered LABEL whose title line is in
+        //     turn followed by body prose (the first chapter's label sits right
+        //     after the TOC and is otherwise indistinguishable from a TOC row).
+        const nb1 = nextNonBlankFrom(j + 1);
+        let labelStartsBody = false;
+        if (isChapterLabel(unwrapEmphasis(lines[j])) && nb1 !== -1) {
+          const titleText = unwrapEmphasis(lines[nb1].replace(/^#+\s*/, ''));
+          // The label's title must be a PLAIN title — not itself a matter/drop
+          // heading or another chapter label. That's what separates a real first
+          // chapter ("CHAPTER 1" → "Arsène Lupin in Prison" → prose) from a TOC
+          // row followed by a matter heading ("Chapter Two" → "Foreword" → prose).
+          const titleIsPlain =
+            looksLikeTitle(titleText) && !classifyMatter(`# ${titleText}`) &&
+            !isDropHeading(`# ${titleText}`) && !isChapterLabel(titleText);
+          if (titleIsPlain) {
+            const nb2 = nextNonBlankFrom(nb1 + 1);
+            labelStartsBody = nb2 !== -1 && isChapterBody(lines[nb2]);
+          }
+        }
+        if ((nb1 !== -1 && isChapterBody(lines[nb1])) || labelStartsBody) break;
+        lastEntry = j;
+        j++;
+      }
+      if (lastEntry >= entryStart) { i = lastEntry; continue; } // drop heading + entries
       // No entry rows followed — leave the line (it's a real "Contents" section).
     }
     out.push(lines[i]);
@@ -354,6 +391,49 @@ export function promoteHeadinglessChapters(text: string): string {
     out.push(line);
   }
   return out.join('\n');
+}
+
+/**
+ * Promote a run of BARE numeric chapter markers — lines that are just "1", "2",
+ * "3"… (optionally wrapped in emphasis), each followed by body prose — to `# `
+ * headings. A single bare number is too weak a signal on its own (a list item, a
+ * stray digit), which is why `promoteHeadinglessChapters` deliberately rejects the
+ * title-less form; but a CONSECUTIVE ASCENDING RUN starting at 1 is an
+ * unambiguous chapter sequence. This is the common paste / plain-text form (a
+ * manuscript typed with bare chapter numbers and no Word heading styles), which
+ * the DOCX path recovers from layout signals but the text path otherwise misses.
+ *
+ * Deliberately strict — exactly 1..N, each followed by prose — so it never splits
+ * on a stray number. Anything it under-detects is correctable in the import review.
+ */
+export function promoteNumberedChapterSequence(text: string): string {
+  const lines = text.split('\n');
+  const nextNonBlank = (from: number): number => {
+    for (let k = from; k < lines.length; k++) if (lines[k].trim()) return k;
+    return -1;
+  };
+
+  const markers: Array<{ line: number; value: number }> = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (/^#/.test(lines[i])) continue;                    // already a heading
+    const t = unwrapEmphasis(lines[i]).trim();
+    if (!/^\d{1,3}$/.test(t)) continue;                   // not a bare number
+    const b = nextNonBlank(i + 1);
+    if (b === -1 || !isChapterBody(lines[b])) continue;   // must be followed by prose
+    markers.push({ line: i, value: parseInt(t, 10) });
+  }
+
+  // Require a clean consecutive run 1, 2, 3, … of length ≥ 2. A single marker, a
+  // gap, or a non-1 start all abort promotion (safer to leave it to the review).
+  if (markers.length < 2) return text;
+  for (let k = 0; k < markers.length; k++) {
+    if (markers[k].value !== k + 1) return text;
+  }
+
+  const promote = new Set(markers.map(m => m.line));
+  return lines
+    .map((l, i) => (promote.has(i) ? `# ${unwrapEmphasis(l).trim()}` : l))
+    .join('\n');
 }
 
 // ─── Heading normalization ────────────────────────────────────────────────────
@@ -656,6 +736,12 @@ export function preprocessMarkdown(text: string): string {
   //    couldn't map. Runs first so multi-line label/title pairs are combined
   //    before the single-line prose pattern below can split them apart.
   text = promoteHeadinglessChapters(text);
+
+  // 2a2. Promote bare-number chapter sequences ("1", "2", "3"… each followed by
+  //      prose) that the per-line pass rejects as too weak individually. The DOCX
+  //      path recovers these from layout signals; this is the plain-text/paste
+  //      equivalent.
+  text = promoteNumberedChapterSequence(text);
 
   // 2b. Promote remaining single-line prose chapter lines to # headings
   text = text.replace(CHAPTER_PATTERN, (match) => {

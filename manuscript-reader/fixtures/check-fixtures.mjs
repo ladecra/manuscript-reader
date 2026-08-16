@@ -7,12 +7,9 @@ import { readFile, readdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, extname, basename } from 'node:path';
 import * as mammoth from 'mammoth';
-import {
-  preprocessMarkdown,
-  hasHeading,
-  MAMMOTH_STYLE_MAP,
-} from '../src/engine/ingestion/preprocessMarkdown.ts';
+import { MAMMOTH_STYLE_MAP } from '../src/engine/ingestion/preprocessMarkdown.ts';
 import { parseMarkdown, countWords } from '../src/engine/ingestion/parseMarkdown.ts';
+import { ingestPlainText, ingestDocxFromMarkdown } from '../src/engine/ingestion/fileReader.ts';
 import { buildManuscriptStructure } from '../src/engine/ingestion/manuscriptStructure.ts';
 import { extractFrontMatterCandidates } from '../src/engine/ingestion/frontMatterExtract.ts';
 
@@ -26,28 +23,22 @@ function roleTally(blocks) {
   return ROLE_ORDER.filter(r => counts[r]).map(r => `${r}:${counts[r]}`).join('  ') || '(none)';
 }
 
-// Mirror fileReader.readDocx exactly.
+// Calls the real engine entry (fileReader.ingestDocxFromMarkdown) so the harness
+// runs the SAME signal-rescue + title-fallback path the app does — only the
+// mammoth conversion is done here (Node buffer) rather than in the browser. The
+// original bytes are handed on so the DOCX layout signals are mined for real.
 async function docxToMarkdown(path) {
   const buffer = await readFile(path);
   const result = await mammoth.convertToMarkdown({ buffer }, { styleMap: MAMMOTH_STYLE_MAP });
-  let text = preprocessMarkdown(result.value.trim());
-  const title = basename(path).replace(/\.docx$/i, '').replace(/[-_]/g, ' ').trim();
-  if (!hasHeading(text)) {
-    text = `# ${title}\n\n${text}`;
-  } else if (!/<!--\s*title:/i.test(text)) {
-    text = `<!-- title: ${title} -->\n\n${text}`;
-  }
-  return text;
+  return ingestDocxFromMarkdown(result.value, buffer, { filename: basename(path) });
 }
 
+// Calls the real engine entry (fileReader.ingestPlainText) rather than a hand
+// copy, so the harness can't drift from the app's actual .md/.txt/paste path.
 async function plainToMarkdown(path) {
   const raw = await readFile(path, 'utf8');
-  let text = preprocessMarkdown(raw.trim());
-  if (!hasHeading(text)) {
-    const title = basename(path).replace(/\.(md|txt)$/i, '').replace(/[-_]/g, ' ');
-    text = `# ${title}\n\n${text}`;
-  }
-  return text;
+  const title = basename(path).replace(/\.(md|txt)$/i, '').replace(/[-_]/g, ' ').trim();
+  return ingestPlainText(raw, { title });
 }
 
 const files = (await readdir(here))

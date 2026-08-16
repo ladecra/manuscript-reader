@@ -11,18 +11,22 @@
 // arrive. revisionImpact stays null until version snapshots exist (Phase 8).
 
 import type {
-  Annotation, Chapter, ChapterStat, EditorialSignals, ChapterAgreementSignal, ReaderSession,
+  Annotation, Chapter, ChapterStat, EditorialSignals, ChapterAgreementSignal, ReaderSession, ReaderDropoff,
 } from './types';
 import { isReaderAnnotation } from './types';
 import { computeReport } from './report';
 import { mergeReaderSessions } from './sessions';
 import { buildManuscriptStructure } from './ingestion/manuscriptStructure';
 import { computeProseAnalysis } from './prose/proseAnalysis';
+import { buildPassageConvergences } from './passageConvergence';
 
 /** Annotation types that represent an editorial *concern* (vs. engagement). */
 const CONCERN_TYPES = new Set(['question', 'continuity', 'structural']);
 /** A chapter-to-chapter fall in normalized engagement this large counts as a drop. */
 const ENGAGEMENT_DROP = 0.34;
+/** Readers lost between consecutive chapters this many or more = an abandonment
+ *  cliff (matches the ≥2 "room" threshold — a lone drop-off isn't the room). */
+const MIN_DROPOFF = 2;
 
 export interface EditorialSignalsInput {
   manuscriptId: string;
@@ -38,11 +42,21 @@ export function computeEditorialSignals(input: EditorialSignalsInput): Editorial
   const report = computeReport(annotations, chapters, combinedMarkdown);
   const merge = mergeReaderSessions(sessions, annotations, chapters);
 
+  // The structural model (paragraph blocks) — built once from the source markdown,
+  // shared by prose analysis and the passage-convergence pass. Null when the
+  // markdown isn't available; both consumers degrade cleanly then.
+  const structure = combinedMarkdown ? buildManuscriptStructure(combinedMarkdown) : null;
+
   // Prose-derived signal — analyses the text itself, so it's present even with
   // zero annotations. Null only when the source markdown isn't available.
-  const prose = combinedMarkdown
-    ? computeProseAnalysis(buildManuscriptStructure(combinedMarkdown))
-    : null;
+  const prose = structure ? computeProseAnalysis(structure) : null;
+
+  // Passage convergence — where DISTINCT readers land on the same paragraph, the
+  // resolution `readerAgreement` (chapter-level) can't give. Empty without source
+  // markdown (nothing to resolve anchors against) or <2 overlapping readers.
+  // Sessions make the "N of M" denominators reach-aware (pass 4 at passage level).
+  const { passageConvergences, soloPassages } = buildPassageConvergences(annotations, structure, sessions);
+
   const hasReaders = merge.readerCount > 0;
 
   // Reach lookup (readers who got to each chapter), for abandonment-aware silence.
@@ -74,6 +88,26 @@ export function computeEditorialSignals(input: EditorialSignalsInput): Editorial
         }))
         .sort((a, b) => b.readersWhoAnnotated - a.readersWhoAnnotated || b.agreement - a.agreement)
     : [];
+
+  // Abandonment (pass 5): where the room thinned — chapters after which ≥2 readers'
+  // reach ends and doesn't resume. Read straight off the session reach curve
+  // (non-increasing with depth), so it exists only with reader progress data.
+  const reachOrdered = hasReaders
+    ? [...merge.chapters].filter(c => c.readersWhoReached >= 0).sort((a, b) => a.chapterIndex - b.chapterIndex)
+    : [];
+  const readerDropoff: ReaderDropoff[] = [];
+  for (let i = 0; i < reachOrdered.length - 1; i++) {
+    const stopped = reachOrdered[i].readersWhoReached - reachOrdered[i + 1].readersWhoReached;
+    if (stopped >= MIN_DROPOFF) {
+      readerDropoff.push({
+        chapterIndex: reachOrdered[i].chapterIndex,
+        chapterTitle: titleByIndex.get(reachOrdered[i].chapterIndex) ?? '',
+        readersStopped: stopped,
+        readersReached: reachOrdered[i].readersWhoReached,
+      });
+    }
+  }
+  readerDropoff.sort((a, b) => b.readersStopped - a.readersStopped || a.chapterIndex - b.chapterIndex);
 
   // Open concern marks, split by authorship. The total is retained (cross-version
   // deltas depend on it), but the honest "reader concern" number excludes the
@@ -110,6 +144,9 @@ export function computeEditorialSignals(input: EditorialSignalsInput): Editorial
     questionClusters,
     continuityBreaks,
     readerAgreement,
+    passageConvergences,
+    soloPassages,
+    readerDropoff,
     unresolvedConcerns,
     unresolvedReaderConcerns,
     openAuthorFlags,

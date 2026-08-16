@@ -8,15 +8,14 @@ import type { ExtentRequest } from '../engine/exports/manuscriptExtent';
 export type ManuscriptArtifactFormat = 'epub' | 'docx' | 'md';
 
 /** The single home for *publishable artifact* exports (EPUB · publication DOCX ·
- *  SMF · working Markdown). Both the manuscript hub and the Publishing Studio call
- *  this so the bytes are produced by exactly one code path; collaboration exports
- *  (report, share-reader, revision log) stay in the hub — they're a different intent.
+ *  SMF · working Markdown). The manuscript hub's Export tab calls this so the bytes
+ *  are produced by exactly one code path; collaboration exports (report, share-reader,
+ *  revision log) stay elsewhere in the hub — they're a different intent.
  *
  *  Self-contained: reads the open manuscript + library from the stores and assembles
  *  `exportMeta` fresh on every call so an export always reflects the latest saved
  *  title-page details. The export *source* is always the current working markdown
- *  (`combinedMarkdown`) — the Studio's "save a version" step is a safety capture, not
- *  the bytes we ship. */
+ *  (`combinedMarkdown`). */
 export function useManuscriptArtifactExports() {
   const manuscript = useReaderStore(s => s.manuscript);
   const library = useLibraryStore(s => s.library);

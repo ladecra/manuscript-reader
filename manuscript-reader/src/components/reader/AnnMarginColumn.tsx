@@ -190,7 +190,7 @@ export function AnnMarginColumn({ annotations, open, browse, selectedId, onJumpT
         ref={el => { if (el) cardRefs.current.set(ann.id, el); else cardRefs.current.delete(ann.id); }}
         className={`ann-margin-card${isSel ? ' emph' : ''}${faded ? ' faded' : ''}`}
         onClick={() => onJumpTo(ann.id)}
-        style={{ borderLeftColor: isSel ? 'var(--gold)' : ANNOTATION_COLORS[ann.type] + '88' }}
+        style={{ borderLeftColor: isSel ? 'var(--accent)' : ANNOTATION_COLORS[ann.type] + '88' }}
       >
         <div className="ann-margin-tag">
           {ANNOTATION_LABELS[ann.type]}

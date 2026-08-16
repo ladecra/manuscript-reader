@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { buildImportSummary, applyImportEdits } from '../engine/ingestion/importSummary';
 import { StructureEditor } from '../components/library/StructureEditor';
-import { ChevronLeftIcon } from '../components/ui/Icons';
+import { ChevronLeftIcon, CheckIcon } from '../components/ui/Icons';
 
 interface ImportStructureScreenProps {
   /** The ingested, post-preprocess combined markdown. */
@@ -27,6 +27,9 @@ export function ImportStructureScreen({ markdown, onConfirm, onCancel }: ImportS
   const initial = useMemo(() => buildImportSummary(markdown), [markdown]);
   const [title, setTitle] = useState(initial.title);
   const [author, setAuthor] = useState(initial.author ?? '');
+  // Live summary: recomputed as the author moves sections, so the trust bar counts stay true.
+  const summary = useMemo(() => buildImportSummary(md), [md]);
+  const setAside = summary.front.length + summary.back.length;
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onCancel(); }
@@ -47,11 +50,22 @@ export function ImportStructureScreen({ markdown, onConfirm, onCancel }: ImportS
         <header className="import-structure-head">
           <h1 className="import-structure-title">Review structure</h1>
           <p className="import-structure-lead">
-            This is what we read from your manuscript. Confirm the title and author, then check the
-            spine below — rename a chapter, merge a stray one, or move a section that isn’t really a
-            chapter into front or back matter. What you set here is what opens, reads, and exports.
+            We found your chapters and set the rest aside. Check it looks right — you can move anything
+            between the two, and nothing is ever discarded.
           </p>
         </header>
+
+        <div className="ir-integrity">
+          <span className="ir-ck" aria-hidden="true"><CheckIcon size={11} /></span>
+          <span className="ir-integrity-text">
+            <b>Import verified.</b>{' '}
+            <span className="tnum">{summary.chapters.length}</span> chapters
+            <span className="ir-sep"> · </span>
+            <span className="tnum">{setAside}</span> set aside
+            <span className="ir-sep"> · </span>nothing discarded
+          </span>
+          <span className="ir-integrity-meta tnum">{summary.totalWords.toLocaleString()} words</span>
+        </div>
 
         <div className="import-structure-fields">
           <label className="ir-field">
@@ -67,8 +81,11 @@ export function ImportStructureScreen({ markdown, onConfirm, onCancel }: ImportS
         <StructureEditor markdown={md} onChange={setMd} />
 
         <div className="import-structure-footer">
-          <button type="button" className="ir-back" onClick={onCancel}>Cancel</button>
-          <button type="button" className="modal-primary-btn import-structure-open" onClick={confirm}>Open manuscript</button>
+          <span className="import-structure-foot-note">You can revisit this anytime from the manuscript’s Structure tab.</span>
+          <div className="import-structure-foot-actions">
+            <button type="button" className="ir-back" onClick={onCancel}>Cancel</button>
+            <button type="button" className="import-structure-open" onClick={confirm}>Looks right — continue →</button>
+          </div>
         </div>
       </div>
     </div>

@@ -21,7 +21,7 @@
 // they never share a tier or its copy. We never emit a standalone "hotspot"
 // insight: a lone dense chapter is too easy to overstate; only clusters surface.
 
-import type { EditorialSignals, ManuscriptInsight, AnnotationCluster, ChapterStat } from '../types';
+import type { EditorialSignals, ManuscriptInsight, AnnotationCluster, ChapterStat, PassageConvergence } from '../types';
 import { DEVELOPMENTAL_TYPES, ANNOTATION_LABELS } from '../types';
 import { chapterLengthInsightFlag } from '../prose/chapterLengthOutlier';
 
@@ -32,22 +32,91 @@ import { chapterLengthInsightFlag } from '../prose/chapterLengthOutlier';
 // length, the classic two-chapters-merged tell. Short chapters surface at ≤0.25×
 // — much stricter than the table's 0.6× — for likely false breaks (orphaned headings).
 
-const MAX_CONSENSUS = 2, MAX_CLUSTERS = 2, MAX_REACTION = 3, MAX_AUTHORQUEUE = 2, MAX_PROSE = 2, MAX_TOTAL = 5;
+const MAX_CONVERGENCE = 3, MAX_ABANDON = 1, MAX_CONSENSUS = 2, MAX_CLUSTERS = 2, MAX_REACTION = 3, MAX_AUTHORQUEUE = 2, MAX_PROSE = 2, MAX_TOTAL = 5;
 
 export function rankInsights(signals: EditorialSignals): ManuscriptInsight[] {
   return [
-    ...consensusInsights(signals),   // several readers agreed (reader marks)
+    ...convergenceInsights(signals), // distinct readers on the SAME passage (reader marks) — outranks chapter consensus
+    ...abandonmentInsights(signals), // where the room thinned — reach ends and doesn't resume (pass 5)
+    ...consensusInsights(signals),   // several readers agreed at CHAPTER level (coarse fallback)
     ...reactionInsights(signals),    // a concentrated reader cluster (reader marks)
     ...authorQueueInsights(signals), // the author's own revision flags (author marks)
     ...proseInsights(signals),       // a self-relative length outlier (text)
   ].slice(0, MAX_TOTAL);
 }
 
+// ── Abandonment: where reach ends and doesn't resume (the truest pacing signal) ─
+function abandonmentInsights(signals: EditorialSignals): ManuscriptInsight[] {
+  return signals.readerDropoff.slice(0, MAX_ABANDON).map(d => {
+    const where = chapterName(d.chapterTitle, d.chapterIndex);
+    return {
+      id: `insight-abandon-${d.chapterIndex}`,
+      tier: 'abandonment' as const,
+      headline: `${d.readersStopped} of ${d.readersReached} readers stopped after ${where}`,
+      detail: 'Where reach ends and does not resume — the strongest pacing signal there is: not what readers said, but where they stopped saying anything.',
+      chapter: d.chapterIndex,
+      chapterRange: [d.chapterIndex, d.chapterIndex] as [number, number],
+      evidence: {
+        kind: 'agreement' as const,
+        label: `${d.readersStopped} stopped`,
+        readers: [d.readersStopped, d.readersReached] as [number, number],
+      },
+    };
+  });
+}
+
+// ── Convergence: distinct readers on the same PASSAGE (the resolution layer) ───
+// Outranks chapter consensus — same agreement, resolved to the exact lines. Only
+// the room (≥2 distinct readers) is here by construction; soloPassages are held
+// out of the signal object's ranked array, so a lone voice can never appear here.
+const VALENCE_COPY: Record<PassageConvergence['valence'], {
+  headline: (n: number, total: number, where: string) => string;
+  detail: string;
+}> = {
+  cool: {
+    headline: (n, total, where) => `${n} of ${total} readers flagged the same passage ${where}`,
+    detail: 'The room converged on one passage with questions or editorial flags — independent agreement on the exact lines is the strongest signal something needs attention.',
+  },
+  warm: {
+    headline: (n, total, where) => `${n} of ${total} readers marked the same passage ${where}`,
+    detail: 'The room leaned in on one passage. Attention of probably-positive but unasserted polarity — worth knowing what’s load-bearing before you revise around it.',
+  },
+  divided: {
+    headline: (n, total, where) => `${n} of ${total} readers split on the same passage ${where}`,
+    detail: 'Distinct readers reacted in opposite directions on one passage — a split is a decision the room is handing back to you, not noise to average away.',
+  },
+};
+
+function convergenceInsights(signals: EditorialSignals): ManuscriptInsight[] {
+  return signals.passageConvergences.slice(0, MAX_CONVERGENCE).map(c => {
+    const copy = VALENCE_COPY[c.valence];
+    const where = passageWhere(c.chapterTitle, c.chapterIndex, c.blockOrdinal, c.blockOrdinalEnd);
+    return {
+      id: `insight-convergence-${c.id}`,
+      tier: 'convergence' as const,
+      // Reach-aware denominator: N of the readers who actually reached this passage.
+      headline: copy.headline(c.readerCount, c.readersReached, where),
+      detail: copy.detail,
+      chapter: c.chapterIndex,
+      chapterRange: [c.chapterIndex, c.chapterIndex] as [number, number],
+      evidence: {
+        kind: 'convergence' as const,
+        label: `${c.readerCount} readers`,
+        valence: c.valence,
+        annotationIds: c.annotationIds.slice(0, 1),
+      },
+    };
+  });
+}
+
 // ── Consensus: chapters several readers reacted to independently ──────────────
 function consensusInsights(signals: EditorialSignals): ManuscriptInsight[] {
   if (signals.readerCount < 2) return [];
+  // A chapter already surfaced as a passage convergence is covered at finer
+  // resolution — don't repeat it as coarse chapter agreement.
+  const converged = new Set(signals.passageConvergences.map(c => c.chapterIndex));
   return signals.readerAgreement
-    .filter(a => a.readersWhoAnnotated >= 2)
+    .filter(a => a.readersWhoAnnotated >= 2 && !converged.has(a.chapterIndex))
     .slice(0, MAX_CONSENSUS)
     .map(a => {
       const reached = a.readersWhoReached > 0 ? a.readersWhoReached : signals.readerCount;
@@ -274,6 +343,14 @@ function proseLengthExtremity(ratio: number): number {
 function chapterName(title: string | undefined, index: number): string {
   const t = title?.trim();
   return t ? t.slice(0, 40) : `Chapter ${index}`;
+}
+
+// "in Chapter 7 · ¶3" (or "· ¶3–5" for a merged beat) — the passage locator.
+function passageWhere(title: string | undefined, index: number, ordinal: number, ordinalEnd?: number): string {
+  const base = `in ${chapterName(title, index)}`;
+  if (ordinal <= 0) return base;
+  const span = ordinalEnd && ordinalEnd > ordinal ? `${ordinal}–${ordinalEnd}` : `${ordinal}`;
+  return `${base} · ¶${span}`;
 }
 
 function rangeLabel(from: number, to: number): string {

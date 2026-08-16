@@ -1,4 +1,4 @@
-import type { EditorialSignals, ChapterStat, ProseAnalysis, ChapterProse, ManuscriptInsight } from '../../engine/types';
+import type { EditorialSignals, ChapterStat, ProseAnalysis, ChapterProse, ManuscriptInsight, PassageConvergence, ConvergenceValence, ReaderDropoff } from '../../engine/types';
 import { ANNOTATION_TYPES, ANNOTATION_LABELS, ANNOTATION_COLORS, DEVELOPMENTAL_TYPES } from '../../engine/types';
 import { rankInsights } from '../../engine/insights/rankInsights';
 
@@ -34,13 +34,24 @@ export function ReportView({ signals, onJump }: { signals: EditorialSignals | nu
   // sections below render in full, so the panel and the downloaded report lead
   // with the identical pointers. Legitimately empty on an even, unannotated draft.
   const insights = signals ? rankInsights(signals) : [];
+  // Passage convergences are rendered as rich cards (ConvergenceLead) — so drop
+  // the convergence tier from the compact insights strip to avoid saying it twice.
+  const restInsights = insights.filter(i => i.tier !== 'convergence');
+
+  const convergences = signals?.passageConvergences ?? [];
+  const solo = signals?.soloPassages ?? [];
+  const hasRoom = convergences.length > 0 || solo.length > 0;
 
   // Prose analysis is text-derived, so it's present the moment a manuscript loads —
   // it leads, before any annotation-derived findings. The annotation sections only
-  // render once there's at least one annotation.
+  // render once there's at least one annotation. The passage-convergence lead (the
+  // "room") sits at the very top when it exists — the redesign's "see the whole
+  // room at once", resolved to the exact lines.
   return (
     <>
-      {insights.length > 0 && <InsightsSection insights={insights} onJump={onJump} />}
+      {hasRoom && <ThermalInstrument signals={signals!} />}
+      {hasRoom && <ConvergenceLead convergences={convergences} solo={solo} dropoff={signals!.readerDropoff} onJump={onJump} />}
+      {restInsights.length > 0 && <InsightsSection insights={restInsights} onJump={onJump} />}
       {hasProse && <ProseSection prose={prose!} onJump={onJump} />}
       {hasAnnotations && <ReportBody signals={signals!} onJump={onJump} />}
       {!hasAnnotations && hasProse && (
@@ -52,6 +63,190 @@ export function ReportView({ signals, onJump }: { signals: EditorialSignals | nu
       )}
     </>
   );
+}
+
+// ── The instrument: a thermal ribbon of the manuscript, read by the room ──────
+// One cell per chapter, coloured by the room's valence there (the dominant
+// convergence), with a marker sized to how many distinct readers converged, an
+// engagement sparkline above, and abandonment cliffs where reach falls away.
+// Purely a projection of EditorialSignals — no new computation.
+const VALENCE_CLASS: Record<ConvergenceValence, string> = { warm: 'warm', cool: 'cool', divided: 'split' };
+
+function ThermalInstrument({ signals }: { signals: EditorialSignals }) {
+  const chapters = [...signals.report.chapters].sort((a, b) => a.index - b.index);
+  const curve = signals.engagementCurve;
+  // The cliff marks where reach ENDS (readers stop and don't return) — the truest
+  // abandonment signal — not merely where engagement density dipped.
+  const cliffs = new Set(signals.readerDropoff.map(d => d.chapterIndex));
+  const silent = new Set(signals.silentChapters.map(c => c.index));
+
+  // Strongest convergence per chapter → the cell's valence + marker size.
+  const topByChapter = new Map<number, PassageConvergence>();
+  for (const c of signals.passageConvergences) {
+    const cur = topByChapter.get(c.chapterIndex);
+    if (!cur || c.readerCount > cur.readerCount) topByChapter.set(c.chapterIndex, c);
+  }
+
+  // Sparkline path over the engagement curve (normalized 0–1), aligned to columns.
+  const n = chapters.length;
+  const W = Math.max(n * 20, 120), H = 44;
+  const pts = chapters.map((_, i) => {
+    const x = n > 1 ? (i / (n - 1)) * (W - 8) + 4 : W / 2;
+    const y = H - 4 - (curve[i] ?? 0) * (H - 10);
+    return [x, y] as const;
+  });
+  const line = pts.map((p, i) => `${i ? 'L' : 'M'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ');
+  const area = `${line} L${pts[pts.length - 1]?.[0].toFixed(1) ?? W},${H} L${pts[0]?.[0].toFixed(1) ?? 0},${H} Z`;
+
+  return (
+    <div className="rp-thermal">
+      <div className="rp-thermal-head">
+        <span className="rp-thermal-title">The manuscript, read by the room</span>
+        <span className="rp-thermal-meta">
+          <b>{n}</b> chapter{n === 1 ? '' : 's'} · <b>{signals.readerCount || signals.report.readers.length}</b> reader{(signals.readerCount || signals.report.readers.length) === 1 ? '' : 's'} · <b>{signals.report.totalAnns}</b> marks
+        </span>
+      </div>
+      <div className="rp-thermal-body">
+        <div className="rp-ribbon-scroll" style={{ minWidth: `${Math.max(n * 22, 320)}px` }}>
+          <svg className="rp-spark" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-label="Engagement across the manuscript">
+            <path className="rp-spark-area" d={area} />
+            <path className="rp-spark-line" d={line} fill="none" />
+          </svg>
+          <div className="rp-ribbon" role="list" aria-label="Chapters by reaction">
+            {chapters.map(ch => {
+              const conv = topByChapter.get(ch.index);
+              const cls = conv ? VALENCE_CLASS[conv.valence] : silent.has(ch.index) ? 'silent' : '';
+              return (
+                <div key={ch.index} className={`rp-cell ${cls}`} role="listitem"
+                  title={`Ch. ${ch.index}${ch.title ? ' — ' + ch.title : ''}${conv ? ` · ${conv.readerCount} readers converged (${conv.valence})` : silent.has(ch.index) ? ' · reached, quiet' : ''}`}>
+                  {conv && <span className={`rp-mk ${VALENCE_CLASS[conv.valence]}`}>{conv.readerCount}</span>}
+                  {cliffs.has(ch.index) && <span className="rp-cliff" aria-hidden="true" />}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+      <div className="rp-legend">
+        <span className="rp-lg warm"><i />Leaned in</span>
+        <span className="rp-lg cool"><i />Tripped — questions &amp; snags</span>
+        <span className="rp-lg split"><i />Divided</span>
+        <span className="rp-lg silent"><i />Silent — reached, quiet</span>
+        <span className="rp-lg-note">● size = readers who converged</span>
+      </div>
+    </div>
+  );
+}
+
+// ── Worth a look first — ranked convergence cards + the one-voice isolate ──────
+const VALENCE_TAG: Record<ConvergenceValence, { cls: string; glyph: string; label: string }> = {
+  cool:    { cls: 'cool',  glyph: '△', label: 'The room tripped' },
+  warm:    { cls: 'warm',  glyph: '▲', label: 'The room leaned in' },
+  divided: { cls: 'split', glyph: '◑', label: 'The room divided' },
+};
+
+function ConvergenceLead({ convergences, solo, dropoff, onJump }: {
+  convergences: PassageConvergence[]; solo: PassageConvergence[]; dropoff: ReaderDropoff[]; onJump: JumpFn;
+}) {
+  // Interleave rank numbers across convergence cards + the abandonment card so the
+  // ranking reads as one list (abandonment sits just below the passage cards, as
+  // the concept artifact ranks it).
+  const cards = convergences.slice(0, 5);
+  return (
+    <div className="rp-section">
+      <div className="rp-section-label">Worth a look first</div>
+      <div className="rp-finding-desc">
+        Ranked by how much of the room corroborates it — independent agreement first, then severity. Every item is tethered to the exact passage that drew it.
+      </div>
+      <div className="rp-looks">
+        {cards.map((c, i) => (
+          <ConvergenceCard key={c.id} c={c} rank={i + 1} onJump={onJump} />
+        ))}
+        {dropoff.length > 0 && <AbandonmentCard d={dropoff[0]} rank={cards.length + 1} onJump={onJump} />}
+      </div>
+      {solo.length > 0 && <OneVoice c={solo[0]} onJump={onJump} />}
+    </div>
+  );
+}
+
+function ConvergenceCard({ c, rank, onJump }: {
+  c: PassageConvergence; rank: number; onJump: JumpFn;
+}) {
+  const tag = VALENCE_TAG[c.valence];
+  // Reach-aware denominator: of the readers who actually reached this passage.
+  const total = Math.max(c.readersReached, c.readerCount);
+  const where = `${c.chapterTitle || `Chapter ${c.chapterIndex}`}${c.blockOrdinal > 0 ? ` · ¶${c.blockOrdinalEnd && c.blockOrdinalEnd > c.blockOrdinal ? `${c.blockOrdinal}–${c.blockOrdinalEnd}` : c.blockOrdinal}` : ''}`;
+  const mix = c.valence === 'divided'
+    ? `${c.reactionMarks} highlight${c.reactionMarks === 1 ? '' : 's'} vs. ${c.concernMarks} flag${c.concernMarks === 1 ? '' : 's'}`
+    : c.concernMarks > 0
+      ? `${c.concernMarks} question${c.concernMarks === 1 ? '' : 's'}/flag${c.concernMarks === 1 ? '' : 's'}`
+      : `${c.reactionMarks} highlight${c.reactionMarks === 1 ? '' : 's'}/note${c.reactionMarks === 1 ? '' : 's'}`;
+  return (
+    <button
+      className={`rp-look ${tag.cls}`}
+      onClick={() => onJump(c.chapterIndex, { annotate: true, annotationId: c.annotationIds[0] })}
+      title={`Jump to ${c.chapterTitle || `Chapter ${c.chapterIndex}`}`}
+    >
+      <span className="rp-look-rank">{rank}</span>
+      <span className="rp-look-body">
+        <span className="rp-look-top">
+          <span className={`rp-vtag ${tag.cls}`}>{tag.glyph} {tag.label}</span>
+          <span className="rp-look-where">{where}</span>
+        </span>
+        <span className="rp-look-quote">{c.quote}</span>
+        <span className="rp-look-foot">
+          <span className="rp-avs" aria-hidden="true">
+            {c.readerNames.slice(0, 6).map((nm, i) => (
+              <span key={i} className={`rp-av ${c.valence}`}>{initials(nm)}</span>
+            ))}
+          </span>
+          <span className="rp-look-read"><b>{c.readerCount} of {total} readers</b> · {mix}</span>
+        </span>
+      </span>
+    </button>
+  );
+}
+
+// The abandonment card — where reach ends and doesn't resume. Styled silent (a
+// reach signal, not a valence), sits just below the passage cards.
+function AbandonmentCard({ d, rank, onJump }: { d: ReaderDropoff; rank: number; onJump: JumpFn }) {
+  const where = d.chapterTitle || `Chapter ${d.chapterIndex}`;
+  return (
+    <button className="rp-look silent" onClick={() => onJump(d.chapterIndex)} title={`Jump to ${where}`}>
+      <span className="rp-look-rank">{rank}</span>
+      <span className="rp-look-body">
+        <span className="rp-look-top">
+          <span className="rp-vtag silent">■ Where the room thinned</span>
+          <span className="rp-look-where">after {where}</span>
+        </span>
+        <span className="rp-look-quote rp-look-quote--muted">{d.readersStopped} of {d.readersReached} readers stopped here and did not return.</span>
+        <span className="rp-look-foot">
+          <span className="rp-look-read">Reach ends here — the sharpest drop in the room across the book. Not what readers said, but where they stopped saying anything.</span>
+        </span>
+      </span>
+    </button>
+  );
+}
+
+function OneVoice({ c, onJump }: { c: PassageConvergence; onJump: JumpFn }) {
+  const name = c.readerNames[0] || 'One reader';
+  return (
+    <button className="rp-voice" onClick={() => onJump(c.chapterIndex, { annotate: true, annotationId: c.annotationIds[0] })}
+      title={`Jump to ${c.chapterTitle || `Chapter ${c.chapterIndex}`}`}>
+      <span className="rp-av silent" aria-hidden="true">{initials(name)}</span>
+      <span className="rp-voice-b">
+        <span className="rp-voice-h">One voice · <b>{name}, {c.chapterTitle || `Chapter ${c.chapterIndex}`}</b></span>
+        <span className="rp-voice-p">A single reader flagged this passage. Kept and shown so you can weigh it — held apart from the room, never counted as agreement. One thoughtful reaction is taste, not consensus.</span>
+      </span>
+    </button>
+  );
+}
+
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '··';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
 function ReportBody({ signals, onJump }: { signals: EditorialSignals; onJump: JumpFn }) {
@@ -204,6 +399,8 @@ function ReportBody({ signals, onJump }: { signals: EditorialSignals; onJump: Ju
 // must not be). Consensus only ever appears when readers exist.
 function tierLabel(tier: ManuscriptInsight['tier']): string {
   switch (tier) {
+    case 'convergence':  return 'The room converged';
+    case 'abandonment':  return 'Where the room thinned';
     case 'consensus':    return 'Reader agreement';
     case 'reaction':     return 'Reader reactions';
     case 'author-queue': return 'Your revision flags';

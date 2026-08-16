@@ -16,7 +16,7 @@
 // floated a per-reader `session:{id}:{readerId}` key; a per-manuscript list is
 // simpler and consistent with how every other child entity is stored.)
 
-import type { Annotation, Edit, ReaderSession, PublishingMetadata, RevisionGraph, Snapshot, SnapshotMeta } from '../types';
+import type { Annotation, Edit, ReaderSession, PublishingMetadata, ReaderProgress, ResponseBreakdown, RevisionGraph, ShareHandle, Snapshot, SnapshotMeta } from '../types';
 
 /** The flat record persisted per manuscript (matches the v0.9 localStorage schema
  *  for backward compatibility). `combinedMarkdown` is the source of truth. */
@@ -33,6 +33,17 @@ export interface StoredManuscript {
   progress?: number; // mirror of the position record; persisted via savePosition
   publishing?: PublishingMetadata; // author-supplied publishing data (optional; absent on legacy records)
   favorite?: boolean; // starred in the library (optional; absent on legacy records)
+  // Beta-reader loop (reframe): share-loop state. Authoritative values arrive with the
+  // sync worker (brief §3.2); optional/absent on legacy records.
+  importedAt?: number;
+  shared?: boolean;
+  readerCount?: number;
+  newResponses?: number;
+  readers?: ReaderProgress[];
+  responses?: ResponseBreakdown;
+  /** The author's hosted-share handle (sync worker, brief §3.2). Holds the manage
+   *  capability token — local-only, never synced to a server. Absent until shared. */
+  share?: ShareHandle;
   /** Monotonically incrementing counter bumped on every author edit (replaceMarkdown).
    *  Absent on legacy records — treat as 0. The seed for cross-device sync: two
    *  devices can tell which copy is newer without a server clock. */

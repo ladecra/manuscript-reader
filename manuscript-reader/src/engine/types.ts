@@ -28,6 +28,45 @@ export interface ManuscriptMetadata {
   progress?: number;         // 0–1 reading position fraction
   publishing?: PublishingMetadata; // author-supplied publishing data, applied to exported artifacts
   favorite?: boolean;        // author-flagged in the library (a starred shelf, not a status)
+  // ─── Beta-reader loop (reframe) ── where the manuscript sits in the share loop.
+  // Authoritative values arrive with the sync worker (brief §3.2); seeded until then.
+  importedAt?: number;       // when the manuscript was imported (distinct from lastOpened)
+  shared?: boolean;          // a share link is live (mirror of share?.state !== 'revoked')
+  readerCount?: number;      // distinct beta readers on the link
+  newResponses?: number;     // reader responses unseen since the author's last visit
+  readers?: ReaderProgress[];        // the roster on the link (console); derived from annotations when absent
+  responses?: ResponseBreakdown;     // aggregate response counts (console); derived from annotations when absent
+  share?: ShareHandle;       // the author's live handle on a hosted share (sync worker; brief §3.2)
+}
+
+/** The author's handle on a hosted share (brief §3.2). Present once a share link is
+ *  created. `authorToken` is the manage capability and lives ONLY here in local
+ *  storage — there is no server account that can recover it, so losing this record
+ *  means losing the ability to freeze/revoke or pull feedback for that link. */
+export interface ShareHandle {
+  shareId: string;
+  authorToken: string;
+  readerUrl: string;                          // the unlisted /r/:id link readers open
+  state: 'live' | 'frozen' | 'revoked';
+  versionId: string;                          // the frozen manuscript version this share published
+  createdAt: number;
+  askName: boolean;                           // settings mirror (server is source of truth)
+  privateNotes: boolean;
+}
+
+/** A beta reader's progress through the shared link (console roster). Target-state
+ *  data that will arrive from the sync worker; derived from annotations meanwhile. */
+export interface ReaderProgress {
+  name: string;
+  progress: number;          // 0–1 through the manuscript
+  state?: 'reading' | 'finished';
+}
+
+/** Aggregate reader responses, split by the reframe's default taxonomy. */
+export interface ResponseBreakdown {
+  highlights: number;
+  notes: number;             // includes editorial notes (pacing / continuity / voice / structure)
+  questions: number;
 }
 
 // ─── Publishing metadata (author-supplied, flows into exported artifacts) ──────
@@ -683,6 +722,63 @@ export interface ChapterAgreementSignal {
   agreement: number;            // readersWhoAnnotated / readersWhoReached (falls back to /readerCount), 0–1
 }
 
+// ─── Passage convergence (the report's passage-level pass) ────────────────────
+// The net-new resolution layer: where DISTINCT readers land on the same passage
+// (a structural block / paragraph), not merely the same chapter. A pure pass over
+// marks the engine already stores — each annotation carries a durable anchor
+// (quote) and a stable reader identity — so it computes without a data-model
+// change. Two readers on one paragraph is signal; one reader marking twice is not.
+// See engine/passageConvergence.ts and raw/report-convergence-brief.md.
+
+/** The deterministic TYPE signature of a convergence — what the marks *encode*,
+ *  never an asserted emotion (a bare highlight is not reliably "love"). Copy must
+ *  soften accordingly: warm = "leaned in / reacted", never "loved". */
+export type ConvergenceValence =
+  | 'warm'      // reaction-weighted: highlights + notes, NO concern flags present
+  | 'cool'      // concern-weighted: questions + editorial flags dominate
+  | 'divided';  // both classes present from distinct readers (a genuine split)
+
+export interface PassageConvergence {
+  id: string;
+  chapterIndex: number;
+  chapterTitle: string;
+  /** Stable block identity within the chapter (the block's normalized-markdown
+   *  `sourceStart`), so the passage survives re-computation. */
+  blockKey: string;
+  /** 1-based paragraph position within the chapter, for display ("¶3"). */
+  blockOrdinal: number;
+  /** End of a merged beat spanning consecutive paragraphs ("¶3–5", v2 beat merge).
+   *  Absent (or === blockOrdinal) when the convergence is a single paragraph. */
+  blockOrdinalEnd?: number;
+  /** Readers who reached this passage (session progress past its position) — the
+   *  honest denominator for "N of M". Falls back to the total reader pool when no
+   *  progress data is available. Always ≥ readerCount (a marker proves reach). */
+  readersReached: number;
+  /** The exact sentence to show — the representative (earliest-anchored) mark's quote. */
+  quote: string;
+  valence: ConvergenceValence;
+  /** Distinct reader identities on this passage. `1` = one voice (kept, shown, but
+   *  NEVER ranked and never counted as the room — see soloPassages). */
+  readerCount: number;
+  readerNames: string[];      // display names, deduped, in first-seen order
+  annotationIds: string[];    // contributing annotation ids, ordered by anchor for display
+  reactionMarks: number;      // highlight + note count (bookmarks excluded — private nav)
+  concernMarks: number;       // question/continuity/structural/pacing/voice count
+  reactionReaders: number;    // distinct readers with a reaction-class mark
+  concernReaders: number;     // distinct readers with a concern-class mark
+}
+
+/** Where the room thinned — a chapter after which ≥2 readers' reach ends and does
+ *  not resume (pass 5, attention & abandonment). Derived from the session reach
+ *  curve, so it only exists with reader progress data. The strongest pacing
+ *  signal there is: not what readers said, but where they stopped saying anything. */
+export interface ReaderDropoff {
+  chapterIndex: number;       // the last chapter this group reached before stopping
+  chapterTitle: string;
+  readersStopped: number;     // readers whose reach ends here and don't return
+  readersReached: number;     // readers who had reached this chapter (the denominator)
+}
+
 /**
  * The canonical structured output of the report engine (Phase 6) — the single
  * object that the in-app panel, the DOCX/HTML exports, and the future AI layer
@@ -720,6 +816,18 @@ export interface EditorialSignals {
 
   // ── Cross-reader signal ──
   readerAgreement: ChapterAgreementSignal[]; // chapters ranked by independent-reader agreement
+  /** Passage-level convergences (≥2 distinct readers on one paragraph), ranked —
+   *  the resolution the chapter-level `readerAgreement` above can't give. Empty
+   *  without source markdown (no structural blocks to resolve anchors against) or
+   *  with <2 overlapping readers; the report degrades to chapter agreement then. */
+  passageConvergences: PassageConvergence[];
+  /** One-voice passages: a lone reader's concern on a paragraph. Kept and shown
+   *  (so the author can weigh it) but held apart — never ranked, never counted as
+   *  the room. Every entry has readerCount === 1. */
+  soloPassages: PassageConvergence[];
+  /** Where the room thinned — reach-ending cliffs (pass 5). Empty without reader
+   *  progress data. Ranked most-readers-lost first. */
+  readerDropoff: ReaderDropoff[];
   unresolvedConcerns: number;         // open (not 'resolved') question/continuity/structural — ALL marks (author + reader); kept for cross-version delta continuity
   unresolvedReaderConcerns: number;   // of those, the reader-authored ones (the true "reader concern" number)
   openAuthorFlags: number;            // of those, the author's own open to-dos (revision queue, not reader concern). unresolvedConcerns === unresolvedReaderConcerns + openAuthorFlags
@@ -747,7 +855,14 @@ export interface EditorialSignals {
 // 'author-queue' is the author's OWN revision flags surfaced as navigational
 // pointers — distinct from 'reaction' (reader marks). An author flagging their
 // own line is not reader confusion, so it never shares the reaction tier's copy.
-export type InsightTier = 'consensus' | 'reaction' | 'author-queue' | 'prose';
+// 'convergence' is the passage-level room signal (≥2 distinct readers on one
+// paragraph) — it OUTRANKS the chapter-level 'consensus' tier because it resolves
+// the same agreement to the exact lines. Consensus remains as the coarse fallback
+// when anchors only resolve to the chapter (no source markdown, or spans a break).
+// 'abandonment' is where the room thinned — ≥2 readers' reach ends and doesn't
+// resume (pass 5). A reach signal, not a mark signal; ranked high because where
+// readers STOP is the strongest pacing evidence there is.
+export type InsightTier = 'convergence' | 'abandonment' | 'consensus' | 'reaction' | 'author-queue' | 'prose';
 
 export interface ManuscriptInsight {
   id: string;
@@ -760,12 +875,13 @@ export interface ManuscriptInsight {
 }
 
 export interface InsightEvidence {
-  kind: 'prose-length' | 'cluster' | 'agreement';
+  kind: 'prose-length' | 'cluster' | 'agreement' | 'convergence';
   label: string;                     // short structured tag for a chip, e.g. "2.1× avg", "3/4 readers", "5 questions"
   ratio?: number;                    // prose-length: chapter words / mean chapter words
   count?: number;                    // cluster: annotations of the signal in range
   readers?: [number, number];        // agreement: [annotated, reached]
-  annotationIds?: string[];          // cluster: representative annotation ids for jump/export
+  annotationIds?: string[];          // cluster/convergence: representative annotation ids for jump/export
+  valence?: ConvergenceValence;      // convergence: the passage's type signature (warm/cool/divided)
 }
 
 // ─── Prose analysis (Phase A — deterministic metrics on the TEXT itself) ──────

@@ -1,0 +1,3 @@
+# Copy to `.dev.vars` (gitignored) for local `wrangler dev`.
+# Generate a real one with:  openssl rand -base64 32
+SHARE_SIGNING_KEY="dev-only-insecure-signing-key-change-me"

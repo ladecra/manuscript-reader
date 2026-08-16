@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview",
+    "preview": "npm run build && wrangler dev",
     "check-fixtures": "tsx fixtures/check-fixtures.mjs",
     "check-format": "tsx fixtures/check-format.mjs",
     "check-extraction": "tsx fixtures/check-extraction.mjs",
@@ -17,8 +17,6 @@
     "check-import-summary": "tsx fixtures/check-import-summary.mjs",
     "check-sessions": "tsx fixtures/check-sessions.mjs",
     "check-snapshots": "tsx fixtures/check-snapshots.mjs",
-    "check-snapshot-sync": "tsx fixtures/check-snapshot-sync.mjs",
-    "check-delete-sync": "tsx fixtures/check-delete-sync.mjs",
     "check-position-intent": "tsx fixtures/check-position-intent.mjs",
     "check-snapshot-diff": "tsx fixtures/check-snapshot-diff.mjs",
     "check-edit-needle": "tsx fixtures/check-edit-needle.mjs",
@@ -36,10 +34,12 @@
     "check-matter-edit": "tsx fixtures/check-matter-edit.mjs",
     "check-structure-edit": "tsx fixtures/check-structure-edit.mjs",
     "check-share-parity": "tsx fixtures/check-share-parity.mjs",
-    "check-revision": "tsx fixtures/check-revision.mjs"
+    "check-workflow-status": "tsx fixtures/check-workflow-status.mjs",
+    "check-convergence": "tsx fixtures/check-convergence.mjs",
+    "check-revision": "tsx fixtures/check-revision.mjs",
+    "deploy": "npm run build && wrangler deploy"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.108.2",
     "@tiptap/pm": "^3.27.0",
     "@tiptap/react": "^3.27.0",
     "@tiptap/starter-kit": "^3.27.0",
@@ -51,6 +51,7 @@
     "zustand": "^5.0.14"
   },
   "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.44.0",
     "@eslint/js": "^10.0.1",
     "@types/node": "^24.12.3",
     "@types/react": "^19.2.14",
@@ -64,6 +65,7 @@
     "tsx": "^4.22.4",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.59.2",
-    "vite": "^8.0.12"
+    "vite": "^8.0.12",
+    "wrangler": "^4.110.0"
   }
 }

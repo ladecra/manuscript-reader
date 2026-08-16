@@ -5,13 +5,28 @@ import { ANNOTATION_LABELS, ANNOTATION_COLORS } from '../types';
 import {
   ANNOTATION_MENU_GLYPHS,
   ANNOTATION_MENU_ITEMS,
+  ANNOTATION_PRIMARY,
+  ANNOTATION_EDITORIAL,
   ANNOTATION_NOTE_TYPES,
 } from '../annotations/annotationMenu';
 import { manuscriptVersionIdSource } from '../manuscript/manuscriptVersion';
+import { READER_MARKING_CSS, READER_MARGIN_CSS } from './readerStyles';
+
+/** Binds the reader file to a hosted share so sessions POST to the worker. Mirrors
+ *  `ShareSyncConfig` in shareableReader.ts; kept local to avoid a cross-file import
+ *  in this runtime-string builder. */
+export interface AnnotationRuntimeSyncConfig {
+  endpoint: string;
+  shareId: string;
+}
 
 /** Plain JS block inserted into the exported reader (not executed in Node). */
-export function buildShareableAnnotationRuntimeScript(): string {
+export function buildShareableAnnotationRuntimeScript(syncConfig?: AnnotationRuntimeSyncConfig): string {
+  const syncEndpointJson = JSON.stringify(syncConfig?.endpoint ?? '');
+  const syncShareIdJson = JSON.stringify(syncConfig?.shareId ?? '');
   const menuJson = JSON.stringify(ANNOTATION_MENU_ITEMS);
+  const primaryJson = JSON.stringify(ANNOTATION_PRIMARY);
+  const editorialJson = JSON.stringify(ANNOTATION_EDITORIAL);
   const glyphsJson = JSON.stringify(ANNOTATION_MENU_GLYPHS);
   const noteTypesJson = JSON.stringify([...ANNOTATION_NOTE_TYPES]);
   const colorsJson = JSON.stringify(ANNOTATION_COLORS);
@@ -27,7 +42,13 @@ export function buildShareableAnnotationRuntimeScript(): string {
   var NAME_KEY = 'shared_reader_name';
   var RID_KEY  = 'shared_reader_id';
   var START_KEY = 'shared_started_' + SLUG;
+  var RTOKEN_KEY = 'shared_reader_token_' + SLUG;
+  // Hosted-share binding (empty when the file is a standalone offline reader).
+  var SYNC_ENDPOINT = ${syncEndpointJson};
+  var SYNC_SHARE_ID = ${syncShareIdJson};
   var ANN_MENU = ${menuJson};
+  var ANN_PRIMARY = ${primaryJson};
+  var ANN_EDITORIAL = ${editorialJson};
   var ANN_GLYPHS = ${glyphsJson};
   var ANN_NOTE_TYPES = ${noteTypesJson};
   var ANN_COLORS = ${colorsJson};
@@ -45,124 +66,85 @@ export function buildShareableAnnotationRuntimeScript(): string {
   try { readerId = localStorage.getItem(RID_KEY) || ''; } catch(e){}
   if(!readerId){ readerId = 'r'+Date.now().toString(36)+Math.random().toString(36).slice(2,8); try{ localStorage.setItem(RID_KEY, readerId); }catch(e){} }
 
+  // Reader token: minted by the worker on this reader's first sync and kept here, so
+  // later syncs from this browser update THIS reader's session and no one else's.
+  var readerToken = '';
+  try { readerToken = localStorage.getItem(RTOKEN_KEY) || ''; } catch(e){}
+
+  // Optimistic-sync state (declared once here; the machinery is defined below).
+  var syncStatusEl = null, syncTimer = 0, syncInFlight = false, syncPending = false;
+  var SYNC_STATUS = 'off';
+
   var startedAt = 0;
   try { startedAt = parseInt(localStorage.getItem(START_KEY)||'0',10) || 0; } catch(e){}
   if(!startedAt){ startedAt = Date.now(); try{ localStorage.setItem(START_KEY, String(startedAt)); }catch(e){} }
 
-  function saveAnns(){ try{ localStorage.setItem(ANN_KEY, JSON.stringify(anns)); }catch(e){} }
+  function saveAnns(){ try{ localStorage.setItem(ANN_KEY, JSON.stringify(anns)); }catch(e){} scheduleSync(); }
   function saveName(){ try{ localStorage.setItem(NAME_KEY, readerName); }catch(e){} }
   function annId(){ return 'a'+Date.now()+Math.random().toString(36).slice(2,6); }
   function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-  function isDesktop(){ return window.matchMedia('(min-width: 1080px)').matches; }
+  function isDesktop(){ return window.matchMedia('(min-width: 1200px)').matches; }
 
   var versionId = ${versionIdSrc};
   var MS_VERSION = versionId(md);
 
   var css = [
-    ':root{--line:var(--border);--gold:var(--brand);--gold-soft:#d2b576;--gold-line:rgba(189,161,98,.28);--ann-highlight:rgba(189,161,98,.13);--ann-note:rgba(142,145,146,.22);--ann-bookmark:rgba(99,102,241,.22);--ann-question:rgba(239,100,97,.22);--ann-continuity:rgba(52,211,153,.22);--ann-structural:rgba(251,146,60,.22);--ann-pacing:rgba(56,189,248,.22);--ann-voice:rgba(192,132,252,.22);--bar-glass:rgba(24,24,22,.72)}',
-    ':root.light{--gold-soft:#c2a868;--gold-line:rgba(181,151,87,.4);--ann-highlight:rgba(181,151,87,.14);--bar-glass:rgba(249,243,236,.86)}',
-    'mark[data-ann]{--mark-bg:var(--ann-highlight);background:var(--mark-bg);color:inherit;cursor:pointer;padding:1px 0;border-radius:1px}',
-    'mark[data-ann].type-note{--mark-bg:var(--ann-note)}',
-    'mark[data-ann].type-bookmark{--mark-bg:var(--ann-bookmark)}',
-    'mark[data-ann].type-question{--mark-bg:var(--ann-question)}',
-    'mark[data-ann].type-continuity{--mark-bg:var(--ann-continuity)}',
-    'mark[data-ann].type-structural{--mark-bg:var(--ann-structural)}',
-    'mark[data-ann].type-pacing{--mark-bg:var(--ann-pacing)}',
-    'mark[data-ann].type-voice{--mark-bg:var(--ann-voice)}',
-    'mark[data-ann]:hover{filter:brightness(1.12)}',
-    '#selection-popup{position:fixed;z-index:200;background:#181818;border:1px solid rgba(255,255,255,.07);border-radius:10px;display:none;flex-direction:column;min-width:0;width:460px;box-shadow:0 20px 60px -8px rgba(0,0,0,.8),0 4px 16px rgba(0,0,0,.5)}',
-    ':root.light #selection-popup{background:#FDFAF4;border-color:rgba(33,29,21,.1);box-shadow:0 8px 40px -8px rgba(0,0,0,.18),0 2px 8px rgba(0,0,0,.08)}',
-    '#selection-popup.visible{display:flex}',
-    '.popup-grid{display:grid;grid-template-columns:1fr 1fr;gap:2px 8px;padding:14px}',
-    '.ann-type-btn{display:flex;align-items:center;gap:10px;padding:8px 12px;background:none;border:none;border-radius:7px;font-family:"Hanken Grotesk",system-ui,sans-serif;font-weight:400;font-size:10px;letter-spacing:.13em;text-transform:uppercase;color:rgba(255,255,255,.5);cursor:pointer;white-space:nowrap;text-align:left;transition:color .16s,background .16s}',
-    ':root.light .ann-type-btn{color:var(--muted)}',
-    '.ann-type-btn:hover{color:#fff;background:rgba(255,255,255,.06)}',
-    '.ann-type-btn.active-type{color:#fff;background:rgba(255,255,255,.09)}',
-    ':root.light .ann-type-btn:hover{color:var(--primary);background:rgba(33,29,21,.045)}',
-    ':root.light .ann-type-btn.active-type{color:var(--primary);background:rgba(33,29,21,.07)}',
-    '.ann-type-icon{display:inline-flex;flex-shrink:0;color:rgba(255,255,255,.5)}',
-    ':root.light .ann-type-icon{color:var(--muted)}',
-    '.ann-type-btn:hover .ann-type-icon,.ann-type-btn.active-type .ann-type-icon{color:inherit}',
-    '.ann-type-dot{width:5px;height:5px;border-radius:50%;flex-shrink:0}',
-    '.ann-type-name{min-width:0;overflow:hidden;text-overflow:ellipsis}',
-    '#popup-note-row{display:none;flex-direction:column;gap:10px;padding:14px 16px;border-top:1px solid rgba(255,255,255,.05)}',
-    ':root.light #popup-note-row{border-top-color:rgba(33,29,21,.07)}',
-    '#popup-note-row.visible{display:flex}',
-    '#popup-textarea{width:100%;background:none;border:none;border-bottom:1px solid rgba(255,255,255,.1);font-family:"EB Garamond",Georgia,serif;font-size:16px;color:rgba(255,255,255,.85);padding:4px 0;outline:none;resize:none;min-height:60px;line-height:1.6}',
-    ':root.light #popup-textarea{border-bottom-color:rgba(33,29,21,.15);color:var(--primary)}',
-    '#popup-textarea::placeholder{color:rgba(255,255,255,.22);font-style:italic}',
-    ':root.light #popup-textarea::placeholder{color:var(--dim)}',
-    '#popup-textarea:focus{border-bottom-color:var(--brand)}',
-    '.popup-save-row{display:flex;justify-content:space-between;align-items:center}',
-    '.btn-ghost{font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);background:none;border:none;cursor:pointer;padding:4px}',
-    '.btn-outline{font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);background:none;border:1px solid rgba(255,255,255,.1);padding:5px 12px;cursor:pointer}',
-    ':root.light .btn-outline{border-color:rgba(33,29,21,.15)}',
-    '.btn-outline:hover{border-color:var(--muted);color:var(--primary)}',
+    // Tokens (--gold, --ann-*, --bar-glass, …) come from readerStyles.ts via the
+    // page's canonical <style>; this block styles only the annotation layer.
+    // Marking bar + composer come from the canonical READER_MARKING_CSS (shared with
+    // the in-app SelectionPopup). Marks themselves are styled by READER_SURFACE_CSS.
+    ${JSON.stringify(READER_MARKING_CSS)},
     '#ann-edit-popup{position:fixed;z-index:201;background:#181818;border:1px solid rgba(255,255,255,.07);border-radius:2px;width:min(320px,90vw);padding:16px 18px;display:none;flex-direction:column;gap:12px;box-shadow:0 16px 48px -8px rgba(0,0,0,.7)}',
     ':root.light #ann-edit-popup{background:#FDFAF4;border-color:rgba(33,29,21,.1)}',
     '#ann-edit-popup.visible{display:flex}',
-    '.ann-edit-label{font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim)}',
-    '#popup-textarea-edit{width:100%;min-height:64px;background:none;border:none;border-bottom:1px solid var(--border);color:var(--on-surface);font-family:"EB Garamond",Georgia,serif;font-size:15px;line-height:1.5;outline:none;resize:none;padding:0 0 8px}',
+    '.ann-edit-label{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim)}',
+    '#popup-textarea-edit{width:100%;min-height:64px;background:none;border:none;border-bottom:1px solid var(--border);color:var(--ink);font-family:"Iowan Old Style","Charter","Palatino Linotype","Book Antiqua",Georgia,serif;font-size:15px;line-height:1.5;outline:none;resize:none;padding:0 0 8px}',
     '#popup-textarea-edit:focus{border-bottom-color:var(--brand)}',
     '.ann-edit-actions{display:flex;justify-content:space-between;align-items:center}',
-    '.ann-edit-del{font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);background:none;border:none;cursor:pointer;padding:4px}',
+    '.ann-edit-del{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);background:none;border:none;cursor:pointer;padding:4px}',
     '.ann-edit-del:hover{color:#c0392b}',
-    '.ann-edit-save{font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--primary);background:none;border:1px solid var(--primary);padding:5px 14px;cursor:pointer}',
+    '.ann-edit-save{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;font-size:10px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--ink);background:none;border:1px solid var(--ink);padding:5px 14px;cursor:pointer}',
     '#reader-body.ann-open{display:block}',
-    '#ann-margin{display:none}',
-    '@media(min-width:1080px){#screen-reader.beta-reader{padding-left:0;padding-right:0}#reader-body.ann-open{display:grid;grid-template-columns:minmax(0,1fr) var(--max-w) minmax(0,1fr);align-items:start}#reader-body.ann-open #content{grid-column:2;margin:0}#reader-body.ann-open #ann-margin{grid-column:3;display:flex;flex-direction:column;gap:12px;align-self:start;position:sticky;top:calc(var(--topbar-h) + 16px);max-height:calc(100dvh - var(--topbar-h) - 32px);width:100%;max-width:280px;padding-left:20px;opacity:1;pointer-events:auto;overflow-y:auto;scrollbar-width:thin}}',
-    '.ann-margin-list{display:flex;flex-direction:column;gap:18px;padding-bottom:24px}',
-    '.ann-margin-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:4px;padding-left:12px}',
-    '.ann-margin-head-label{font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:9px;font-weight:600;letter-spacing:.18em;text-transform:uppercase;color:var(--dim)}',
-    '.ann-margin-index-btn{background:none;border:none;cursor:pointer;padding:0;font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:9px;font-weight:500;letter-spacing:.1em;text-transform:uppercase;color:var(--gold)}',
-    '.ann-margin-card{padding:12px 0 12px 12px;border-left:2px solid var(--line);cursor:pointer;transition:border-color .16s,opacity .16s}',
-    '.ann-margin-card:hover{border-left-color:var(--gold-line)}',
-    '.ann-margin-card.faded{opacity:.4}',
-    '.ann-margin-card.emph{opacity:1;border-left-width:3px}',
-    '.ann-margin-card.emph .ann-margin-tag{color:var(--gold-soft)}',
-    '.ann-margin-tag{font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:8px;font-weight:600;letter-spacing:.18em;text-transform:uppercase;color:var(--gold);margin-bottom:7px}',
-    '.ann-margin-chapter{color:var(--dim);font-weight:400}',
-    '.ann-margin-quote{font-family:"EB Garamond",Georgia,serif;font-size:13px;font-style:italic;color:var(--dim);line-height:1.5;margin-bottom:5px}',
-    '.ann-margin-note{font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:11px;color:var(--on-surface);line-height:1.6}',
-    '.ann-margin-reader{font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:10px;color:var(--dim);font-style:italic;margin-top:4px}',
-    '.ann-margin-empty{padding:24px 12px;font-family:"EB Garamond",Georgia,serif;font-size:15px;font-style:italic;color:var(--dim)}',
-    '.ann-side{position:fixed;top:var(--topbar-h);right:0;width:min(340px,90vw);height:calc(100dvh - var(--topbar-h));background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column;z-index:110;transform:translateX(100%);transition:transform .32s var(--ease-expo)}',
+    // Desktop margin column (anchored cascade + browse + orphans) — canonical, shared
+    // with the app's AnnMarginColumn. Placement of each card is done in JS below.
+    ${JSON.stringify(READER_MARGIN_CSS)},
+    '.ann-side{position:fixed;top:var(--topbar-h);right:0;width:min(340px,90vw);height:calc(100dvh - var(--topbar-h));background:var(--raised);border-left:1px solid var(--border);display:flex;flex-direction:column;z-index:110;transform:translateX(100%);transition:transform .32s var(--ease-expo)}',
     ':root.light .ann-side{background:#f9f3ec}',
     '.ann-side.open{transform:translateX(0)}',
     '.ann-side.topbar-hidden{top:0;height:100dvh}',
     '.ann-side-head{padding:20px 20px 0;border-bottom:1px solid var(--border);flex-shrink:0}',
     '.ann-side-title-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}',
-    '.ann-side-title{font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:9px;font-weight:600;letter-spacing:.2em;text-transform:uppercase;color:var(--dim)}',
+    '.ann-side-title{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;font-size:9px;font-weight:600;letter-spacing:.2em;text-transform:uppercase;color:var(--dim)}',
     '.ann-side-x{background:none;border:none;cursor:pointer;color:var(--dim);padding:2px}',
-    '.ann-name{width:100%;background:var(--surface-high);border:1px solid var(--border);font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:11px;color:var(--on-surface);padding:8px 10px;outline:none;margin-bottom:14px}',
+    '.ann-name{width:100%;background:var(--surface-high);border:1px solid var(--border);font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;font-size:11px;color:var(--ink);padding:8px 10px;outline:none;margin-bottom:14px}',
     ':root.light .ann-name{background:#fffaf4;border-color:rgba(33,29,21,.12)}',
     '.ann-name:focus{border-color:var(--brand)}',
     '.ann-name-margin{display:none;margin:0 0 4px 12px;max-width:calc(100% - 12px)}',
-    '@media(min-width:1080px){.ann-name-margin{display:block}}',
+    '@media(min-width:1200px){.ann-name-margin{display:block}}',
     '.ann-list{flex:1;overflow-y:auto;padding:0}',
-    '.ann-empty{padding:56px 24px;text-align:center;font-family:"EB Garamond",Georgia,serif;font-size:17px;font-style:italic;color:var(--dim);line-height:1.7}',
+    '.ann-empty{padding:56px 24px;text-align:center;font-family:"Iowan Old Style","Charter","Palatino Linotype","Book Antiqua",Georgia,serif;font-size:17px;font-style:italic;color:var(--dim);line-height:1.7}',
     '.ann-item{padding:14px 20px 14px 18px;border-bottom:1px solid var(--line);border-left:2px solid var(--line);cursor:pointer;transition:border-color .16s}',
     '.ann-item:hover{border-left-color:var(--gold-line)}',
     '.ann-item-header{display:flex;align-items:center;gap:8px;margin-bottom:7px}',
     '.ann-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;opacity:.75}',
-    '.ann-type-label{font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:8px;font-weight:600;letter-spacing:.18em;text-transform:uppercase;color:var(--gold);flex:1}',
-    '.ann-loc{font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:9px;color:var(--dim);opacity:.45}',
+    '.ann-type-label{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;font-size:8px;font-weight:600;letter-spacing:.18em;text-transform:uppercase;color:var(--gold);flex:1}',
+    '.ann-loc{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;font-size:9px;color:var(--dim);opacity:.45}',
     '.ann-ix{background:none;border:none;cursor:pointer;color:var(--dim);opacity:0;padding:2px}',
     '.ann-item:hover .ann-ix{opacity:1}',
-    '.ann-quote{font-family:"EB Garamond",Georgia,serif;font-size:13px;font-style:italic;color:var(--dim);line-height:1.5;margin-bottom:5px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}',
-    '.ann-note-text{font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:11px;color:var(--on-surface);line-height:1.6}',
+    '.ann-quote{font-family:"Iowan Old Style","Charter","Palatino Linotype","Book Antiqua",Georgia,serif;font-size:13px;font-style:italic;color:var(--dim);line-height:1.5;margin-bottom:5px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}',
+    '.ann-note-text{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;font-size:11px;color:var(--ink);line-height:1.6}',
     '.ann-side-foot{padding:14px 20px;border-top:1px solid var(--border);flex-shrink:0}',
-    '.ann-export{width:100%;padding:11px;background:var(--surface-high);border:1px solid var(--line);font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:9px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--on-surface);cursor:pointer}',
+    '.ann-export{width:100%;padding:11px;background:var(--surface-high);border:1px solid var(--line);font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;font-size:9px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--ink);cursor:pointer}',
     ':root.light .ann-export{background:#fffaf4;border-color:rgba(33,29,21,.12)}',
-    '.ann-export:hover{border-color:var(--muted);color:var(--primary)}',
+    '.ann-export:hover{border-color:var(--muted);color:var(--ink)}',
     '.ann-export:disabled{opacity:.4;cursor:default}',
-    '.ann-foot-hint{font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:9px;color:var(--dim);text-align:center;margin-top:9px;line-height:1.5}',
+    '.ann-foot-hint{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;font-size:9px;color:var(--dim);text-align:center;margin-top:9px;line-height:1.5}',
     '.ann-badge{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--brand);margin-left:5px;vertical-align:middle;opacity:0;transition:opacity .3s}',
     '.ann-badge.vis{opacity:1}',
-    '.ann-hint{position:fixed;top:calc(var(--topbar-h) + 8px);left:50%;transform:translateX(-50%);background:var(--surface);border:1px solid var(--border);font-family:"Hanken Grotesk",system-ui,sans-serif;font-size:10px;color:var(--dim);padding:7px 16px;z-index:79;white-space:nowrap;pointer-events:none;opacity:1;transition:opacity 1s}',
+    '.ann-hint{position:fixed;top:calc(var(--topbar-h) + 8px);left:50%;transform:translateX(-50%);background:var(--raised);border:1px solid var(--border);font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;font-size:10px;color:var(--dim);padding:7px 16px;z-index:79;white-space:nowrap;pointer-events:none;opacity:1;transition:opacity 1s}',
     '.ann-hint.fade{opacity:0}',
-    '.ann-hint.prompt{z-index:120;white-space:normal;max-width:min(420px,92vw);text-align:center;line-height:1.45;border-color:var(--brand);color:var(--primary);padding:10px 18px}',
-    '@media(max-width:560px){#selection-popup{left:10px!important;right:10px!important;top:10px!important;width:auto!important;max-height:calc(100dvh - 20px);overflow-y:auto}}'
+    '.ann-hint.prompt{z-index:120;white-space:normal;max-width:min(420px,92vw);text-align:center;line-height:1.45;border-color:var(--brand);color:var(--ink);padding:10px 18px}'
+    // (mobile selection-popup layout now lives in the canonical READER_MARKING_CSS bottom-sheet block)
   ].join(${JSON.stringify(nl)});
   var styleEl = document.createElement('style');
   styleEl.textContent = css;
@@ -170,14 +152,33 @@ export function buildShareableAnnotationRuntimeScript(): string {
 
   var readerBody = document.getElementById('reader-body');
   if(!readerBody){ console.error('Shared reader: missing #reader-body — re-download the annotating reader file.'); }
+  // Desktop margin column. The head + name field are persistent (so typing a name is
+  // never interrupted by a re-render); only the cards are rebuilt. Cards are direct
+  // children so they can be absolutely positioned beside their <mark> (anchored mode).
+  // Mirrors the app's AnnMarginColumn.
   var marginEl = document.createElement('div');
   marginEl.id = 'ann-margin';
   marginEl.className = 'open';
   marginEl.setAttribute('aria-label','Annotations');
-  marginEl.innerHTML = '<div class="ann-margin-head"><span class="ann-margin-head-label">Margin</span><button type="button" class="ann-margin-index-btn ann-export-inline" style="display:none">Export ›</button></div><input class="ann-name ann-name-margin" type="text" placeholder="Your name (for the author)" autocomplete="name"><div class="ann-margin-list"></div>';
+  marginEl.innerHTML =
+    '<div class="ann-margin-head">' +
+      '<span class="ann-margin-head-label">Margin</span>' +
+      '<button type="button" class="ann-margin-index-btn" style="display:none"></button>' +
+    '</div>' +
+    '<input class="ann-name ann-name-margin" type="text" placeholder="Your name (for the author)" autocomplete="name">';
   if(readerBody) readerBody.appendChild(marginEl);
-  var marginListEl = marginEl.querySelector('.ann-margin-list');
-  var marginExportBtn = marginEl.querySelector('.ann-export-inline');
+  var marginHeadEl   = marginEl.querySelector('.ann-margin-head');
+  var marginBrowseBtn= marginEl.querySelector('.ann-margin-index-btn');
+  var nameInputMargin= marginEl.querySelector('.ann-name-margin');
+  var marginBrowse = false;   // false = cards anchored beside prose; true = flat index
+  var marginSettled = false;  // marks have had a beat to land (orphan partition gate)
+  var orphansOpen = false;
+  var markInfo = {};          // id -> {rank, chapter} read live from the DOM
+  marginBrowseBtn.addEventListener('click', function(){
+    marginBrowse = !marginBrowse;
+    marginEl.classList.toggle('browse', marginBrowse);
+    renderMargin();
+  });
 
   function glyphSvg(d){
     var paths = d.split('|').map(function(p){ return '<path d="'+p+'"/>'; }).join('');
@@ -197,18 +198,44 @@ export function buildShareableAnnotationRuntimeScript(): string {
   tgl.appendChild(badge);
   document.getElementById('topbar-right').insertBefore(tgl, document.getElementById('topbar-right').firstChild);
 
+  // The marking popup mirrors the in-app SelectionPopup (redesign-reader.html):
+  // a thin navy toolbar (Highlight · Note · Question) + an "Editorial" expander of
+  // craft chips, and a paper note composer that replaces the bar once a note type
+  // is chosen. Highlight saves on the tap; note/question/craft open the composer.
   var popup = document.createElement('div');
   popup.id = 'selection-popup';
-  var gridHtml = '<div class="popup-grid">';
-  ANN_MENU.forEach(function(item){
-    gridHtml += '<button type="button" class="ann-type-btn" data-type="'+item.type+'"><span class="ann-type-icon">'+glyphSvg(ANN_GLYPHS[item.type])+'</span><span class="ann-type-dot" style="background:'+ANN_COLORS[item.type]+'"></span><span class="ann-type-name">'+item.label+'</span></button>';
+  var chevron = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>';
+  var toolHtml = '<div class="anntool">';
+  ANN_PRIMARY.forEach(function(item){
+    toolHtml += '<button type="button" class="anntool-btn" data-type="'+item.type+'">'+glyphSvg(ANN_GLYPHS[item.type])+item.label+'</button>';
   });
-  gridHtml += '</div><div id="popup-note-row"><textarea id="popup-textarea" rows="3"></textarea><div class="popup-save-row"><button type="button" class="btn-ghost" id="popup-cancel">Cancel</button><button type="button" class="btn-outline" id="popup-save">Save</button></div></div>';
-  popup.innerHTML = gridHtml;
+  toolHtml += '<span class="anntool-div" aria-hidden="true"></span>';
+  toolHtml += '<button type="button" class="anntool-btn anntool-more" data-more="1" aria-expanded="false">Editorial'+chevron+'</button>';
+  toolHtml += '</div>';
+  var edHtml = '<div class="edrow" style="display:none">';
+  ANN_EDITORIAL.forEach(function(item){
+    edHtml += '<button type="button" class="edchip" data-type="'+item.type+'"><span class="edchip-dot" aria-hidden="true"></span>'+item.label+'</button>';
+  });
+  edHtml += '</div>';
+  popup.innerHTML = toolHtml + edHtml +
+    '<div class="composer" id="popup-composer" style="display:none">' +
+      '<div class="composer-head" id="composer-head"></div>' +
+      '<textarea class="composer-body" id="popup-textarea" rows="3"></textarea>' +
+      '<div class="composer-foot"><span class="composer-anchor">Anchored to your selection</span>' +
+        '<div class="composer-actions">' +
+          '<button type="button" class="composer-cancel" id="popup-cancel">Cancel</button>' +
+          '<button type="button" class="composer-save" id="popup-save">Save ⌘↵</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
   document.body.appendChild(popup);
   popup.addEventListener('mousedown', function(e){ e.preventDefault(); e.stopPropagation(); });
-  var noteRow = popup.querySelector('#popup-note-row');
-  var noteTA  = popup.querySelector('#popup-textarea');
+  var anntoolEl   = popup.querySelector('.anntool');
+  var edrowEl     = popup.querySelector('.edrow');
+  var moreBtn     = popup.querySelector('.anntool-more');
+  var composerEl  = popup.querySelector('#popup-composer');
+  var composerHead= popup.querySelector('#composer-head');
+  var noteTA      = popup.querySelector('#popup-textarea');
 
   var editPop = document.createElement('div');
   editPop.id = 'ann-edit-popup';
@@ -231,17 +258,29 @@ export function buildShareableAnnotationRuntimeScript(): string {
   document.body.appendChild(side);
   var sideList   = side.querySelector('.ann-list');
   var nameInput  = side.querySelector('.ann-name');
-  var nameInputMargin = marginEl.querySelector('.ann-name-margin');
   var exportBtn  = side.querySelector('.ann-export');
+  var footHint   = side.querySelector('.ann-foot-hint');
+  if(SYNC_ENDPOINT){
+    // Hosted share: notes stream to the author automatically, so the .json export is
+    // a secondary "keep a copy" affordance, and the foot line shows live sync status.
+    exportBtn.textContent = 'Download a copy (.json)';
+    if(footHint) syncStatusEl = footHint;
+    setSyncStatus('idle');
+  }
   nameInput.value = readerName;
   if(nameInputMargin) nameInputMargin.value = readerName;
   function syncNameInputs(){
-    nameInput.value = readerName;
-    if(nameInputMargin) nameInputMargin.value = readerName;
+    // Only write a field whose value actually differs, so we never reset the caret of
+    // the input the reader is actively typing in.
+    if(nameInput.value !== readerName) nameInput.value = readerName;
+    if(nameInputMargin && nameInputMargin.value !== readerName) nameInputMargin.value = readerName;
   }
   function onNameInput(val){
-    readerName = val.trim(); saveName();
-    anns.forEach(function(a){ if(!a.readerName) a.readerName = readerName || null; });
+    // Keep the raw value (internal spaces let a reader type "First Last"); trim only
+    // where the name is actually used. Trimming on every keystroke reset the field the
+    // instant a space was typed, making a two-word name impossible.
+    readerName = val; saveName();
+    anns.forEach(function(a){ if(!a.readerName) a.readerName = readerName.trim() || null; });
     saveAnns();
     syncNameInputs();
   }
@@ -281,7 +320,7 @@ export function buildShareableAnnotationRuntimeScript(): string {
   function updateBadge(){
     badge.classList.toggle('vis', anns.length>0);
     exportBtn.disabled = anns.length===0;
-    if(marginExportBtn) marginExportBtn.style.display = anns.length && isDesktop() ? '' : 'none';
+    if(marginBrowseBtn) marginBrowseBtn.style.display = (anns.length && isDesktop()) ? '' : 'none';
   }
 
   function chapterForRange(range){
@@ -367,45 +406,72 @@ export function buildShareableAnnotationRuntimeScript(): string {
       } else if(!popup.contains(e.target)) { hidePopup(); }
     },10);
   }
-  function showPopup(range){
-    popup.classList.add('visible');
-    noteRow.classList.remove('visible');
-    noteTA.value = ''; pendingType = null;
-    pendingQuote = quoteFromPending();
-    popup.querySelectorAll('.ann-type-btn').forEach(function(b){ b.classList.remove('active-type'); });
-    var r = range.getBoundingClientRect();
-    var pw = popup.offsetWidth||460, ph = popup.offsetHeight||120;
+  // Reset to the default view: the thin toolbar showing, the Editorial expander and
+  // the composer both closed. Called on open and on close so the popup never reopens
+  // mid-note.
+  function resetPopupView(){
+    anntoolEl.style.display = '';
+    edrowEl.style.display = 'none';
+    composerEl.style.display = 'none';
+    popup.classList.remove('composing');
+    moreBtn.classList.remove('open');
+    moreBtn.setAttribute('aria-expanded','false');
+    noteTA.value = '';
+    pendingType = null;
+  }
+  function openComposer(type){
+    pendingType = type;
+    anntoolEl.style.display = 'none';
+    edrowEl.style.display = 'none';
+    composerEl.style.display = '';
+    popup.classList.add('composing'); // phones: pin composer to top, clear of the keyboard
+    composerHead.innerHTML = glyphSvg(ANN_GLYPHS[type]) + '<span>' + esc(menuLabelForType(type)) + '</span>';
+    noteTA.placeholder = 'Add a ' + (ANN_LABELS[type] || type).toLowerCase() + '…';
+    reposition();
+    setTimeout(function(){ noteTA.focus(); },0);
+  }
+  function reposition(){
+    if(!pendingRange) return;
+    var r = pendingRange.getBoundingClientRect();
+    var pw = popup.offsetWidth||300, ph = popup.offsetHeight||120;
     var left = r.left + r.width/2 - pw/2;
     var top  = r.top - ph - 10;
     left = Math.max(8, Math.min(left, window.innerWidth-pw-8));
     if(top < 60) top = r.bottom + 8;
     popup.style.left = left+'px'; popup.style.top = top+'px';
   }
+  function showPopup(range){
+    popup.classList.add('visible');
+    resetPopupView();
+    pendingQuote = quoteFromPending();
+    reposition();
+  }
   function hidePopup(){
     popup.classList.remove('visible');
-    noteRow.classList.remove('visible');
-    noteTA.value='';
+    resetPopupView();
     pendingRange=null;
     pendingQuote='';
-    pendingType=null;
-    popup.querySelectorAll('.ann-type-btn').forEach(function(b){ b.classList.remove('active-type'); });
   }
 
-  popup.querySelectorAll('.ann-type-btn').forEach(function(btn){
+  // Thin default: highlight saves on the tap; note/question open the composer.
+  popup.querySelectorAll('.anntool-btn[data-type]').forEach(function(btn){
     btn.addEventListener('click', function(e){
       e.stopPropagation();
       var type = btn.dataset.type;
-      popup.querySelectorAll('.ann-type-btn').forEach(function(b){ b.classList.remove('active-type'); });
-      if(NOTE_TYPES[type]){
-        pendingType = type;
-        btn.classList.add('active-type');
-        noteRow.classList.add('visible');
-        noteTA.placeholder = 'Add a ' + (ANN_LABELS[type] || type).toLowerCase() + '…';
-        setTimeout(function(){ noteTA.focus(); },0);
-      } else {
-        commit(type, '');
-      }
+      if(NOTE_TYPES[type]) openComposer(type); else commit(type, '');
     });
+  });
+  // Editorial expander: reveal the craft chips (no writing required per chip).
+  moreBtn.addEventListener('click', function(e){
+    e.stopPropagation();
+    var open = edrowEl.style.display === 'none';
+    edrowEl.style.display = open ? 'flex' : 'none';
+    moreBtn.classList.toggle('open', open);
+    moreBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    reposition();
+  });
+  popup.querySelectorAll('.edchip[data-type]').forEach(function(btn){
+    btn.addEventListener('click', function(e){ e.stopPropagation(); openComposer(btn.dataset.type); });
   });
   popup.querySelector('#popup-cancel').addEventListener('click', function(e){ e.stopPropagation(); hidePopup(); });
   popup.querySelector('#popup-save').addEventListener('click', function(e){ e.stopPropagation(); if(pendingType) commit(pendingType, noteTA.value.trim()); });
@@ -529,38 +595,129 @@ export function buildShareableAnnotationRuntimeScript(): string {
     return item;
   }
 
+  // ── Desktop margin column (anchored cascade + browse + orphans) ──────────────
+  // Ported from the app's AnnMarginColumn: each card pins beside its <mark>, ordered
+  // by the mark's live vertical position (robust to edits/renumbering), cascading so
+  // cards never overlap. "All N ›" flattens them into a scrollable index; notes whose
+  // passage the text no longer holds collect in a collapsed "Unlinked" section.
+  var MARGIN_GAP = 16;
+  var cardEls = {}; // id -> card element in the current render
+
+  // The live chapter a mark sits in, read from the DOM. Chapter ids are positional
+  // (ch-N: marker span → h1 → .chapter-block), so this stays correct after edits.
+  function liveChapterOfMark(mark){
+    var block = mark.closest ? mark.closest('.chapter-block') : null;
+    if(!block) return null;
+    var marker = block.previousElementSibling && block.previousElementSibling.previousElementSibling;
+    var id = (marker && marker.id) || '';
+    if(id.indexOf('ch-') !== 0) return null;
+    var n = parseInt(id.slice(3),10);
+    return isNaN(n) ? null : n;
+  }
+  function computeMarkInfo(){
+    var next = {};
+    var marks = contentEl.querySelectorAll('mark[data-ann]');
+    for(var i=0;i<marks.length;i++){
+      var id = marks[i].getAttribute('data-ann');
+      if(id && !(id in next)) next[id] = { rank:i, chapter:liveChapterOfMark(marks[i]) };
+    }
+    markInfo = next;
+  }
+  // Order by the mark's live document position; anchored notes precede orphaned ones.
+  function marginSorted(){
+    return anns.slice().sort(function(a,b){
+      var ra = markInfo[a.id] ? markInfo[a.id].rank : null;
+      var rb = markInfo[b.id] ? markInfo[b.id].rank : null;
+      if(ra != null && rb != null) return ra - rb;
+      if(ra != null) return -1;
+      if(rb != null) return 1;
+      return (a.chapterIndex-b.chapterIndex)
+        || (((a.anchor&&a.anchor.offset)||0)-((b.anchor&&b.anchor.offset)||0))
+        || (a.createdAt-b.createdAt);
+    });
+  }
+  function buildMarginCard(ann){
+    var card = document.createElement('div');
+    var isSel = selectedId === ann.id;
+    var faded = selectedId != null && !isSel;
+    card.className = 'ann-margin-card' + (isSel ? ' emph' : '') + (faded ? ' faded' : '');
+    card.style.borderLeftColor = isSel ? 'var(--gold)' : (ANN_COLORS[ann.type] + '88');
+    var liveCh = markInfo[ann.id] ? markInfo[ann.id].chapter : null;
+    var chNum = (liveCh != null) ? liveCh : (ann.chapterTitle ? ann.chapterIndex : null);
+    card.innerHTML =
+      '<div class="ann-margin-tag">'+menuLabelForType(ann.type)+
+        (chNum != null ? '<span class="ann-margin-chapter"> · Ch.&nbsp;'+String(chNum).padStart(2,'0')+'</span>' : '') +
+      '</div>' +
+      (ann.quote ? '<div class="ann-margin-quote">"'+esc(ann.quote.length>100?ann.quote.slice(0,100)+'…':ann.quote)+'"</div>' : '') +
+      (ann.note ? '<div class="ann-margin-note">'+esc(ann.note)+'</div>' : '') +
+      (ann.readerName ? '<div class="ann-margin-reader">— '+esc(ann.readerName)+'</div>' : '');
+    card.addEventListener('click', function(){
+      selectedId = ann.id;
+      renderAll();
+      var mark = contentEl.querySelector('mark[data-ann="'+ann.id+'"]');
+      if(mark) mark.scrollIntoView({behavior:'smooth',block:'center'});
+    });
+    return card;
+  }
   function renderMargin(){
-    if(!marginListEl || !isDesktop()) return;
-    marginListEl.innerHTML = '';
-    var list = sortedAnns();
+    if(!isDesktop()) return;
+    // Remove the last render's cards/orphans/empty, keeping the persistent head + name.
+    var old = marginEl.querySelectorAll('.ann-margin-card, .ann-margin-orphans, .ann-margin-empty');
+    for(var i=0;i<old.length;i++) old[i].parentNode.removeChild(old[i]);
+    cardEls = {};
+    marginEl.style.height = '';
+    computeMarkInfo();
+    var list = marginSorted();
     if(!list.length){
       var empty = document.createElement('div');
       empty.className = 'ann-margin-empty';
       empty.textContent = 'Select any passage to annotate.';
-      marginListEl.appendChild(empty);
+      marginEl.appendChild(empty);
+      marginBrowseBtn.style.display = 'none';
       return;
     }
-    list.forEach(function(ann){
-      var card = document.createElement('div');
-      var isSel = selectedId === ann.id;
-      var faded = selectedId != null && !isSel;
-      card.className = 'ann-margin-card' + (isSel ? ' emph' : '') + (faded ? ' faded' : '');
-      card.style.borderLeftColor = isSel ? 'var(--gold)' : (ANN_COLORS[ann.type] + '88');
-      card.innerHTML =
-        '<div class="ann-margin-tag">'+menuLabelForType(ann.type)+
-          (ann.chapterIndex ? '<span class="ann-margin-chapter"> · Ch.&nbsp;'+String(ann.chapterIndex).padStart(2,'0')+'</span>' : '') +
-        '</div>' +
-        (ann.quote ? '<div class="ann-margin-quote">"'+esc(ann.quote.length>100?ann.quote.slice(0,100)+'…':ann.quote)+'"</div>' : '') +
-        (ann.note ? '<div class="ann-margin-note">'+esc(ann.note)+'</div>' : '') +
-        (ann.readerName ? '<div class="ann-margin-reader">— '+esc(ann.readerName)+'</div>' : '');
-      card.addEventListener('click', function(){
-        selectedId = ann.id;
-        renderAll();
-        var mark = contentEl.querySelector('mark[data-ann="'+ann.id+'"]');
-        if(mark) mark.scrollIntoView({behavior:'smooth',block:'center'});
-      });
-      marginListEl.appendChild(card);
+    marginBrowseBtn.textContent = marginBrowse ? 'Margin ›' : ('All ' + list.length + ' ›');
+    marginBrowseBtn.style.display = '';
+    var anchored = [], orphaned = [];
+    list.forEach(function(ann){ (markInfo[ann.id] ? anchored : orphaned).push(ann); });
+    (marginBrowse ? list : anchored).forEach(function(ann){
+      var c = buildMarginCard(ann); cardEls[ann.id] = c; marginEl.appendChild(c);
     });
+    if(!marginBrowse && orphaned.length){
+      var sec = document.createElement('div');
+      sec.className = 'ann-margin-orphans' + (orphansOpen ? ' open' : '');
+      var head = document.createElement('button');
+      head.type = 'button'; head.className = 'ann-margin-orphans-head';
+      head.setAttribute('aria-expanded', orphansOpen ? 'true' : 'false');
+      head.innerHTML = '<span class="ann-margin-orphans-title">Unlinked<span class="ann-margin-orphans-count">'+orphaned.length+'</span></span><span class="ann-margin-orphans-chevron" aria-hidden="true">'+(orphansOpen?'▾':'▸')+'</span>';
+      head.addEventListener('click', function(){ orphansOpen = !orphansOpen; renderMargin(); });
+      sec.appendChild(head);
+      if(orphansOpen){ orphaned.forEach(function(ann){ sec.appendChild(buildMarginCard(ann)); }); }
+      else { var hint = document.createElement('div'); hint.className='ann-margin-orphans-hint'; hint.textContent='Notes whose passage the current text no longer contains.'; sec.appendChild(hint); }
+      marginEl.appendChild(sec);
+    }
+    if(!marginBrowse) layoutMargin();
+  }
+  // Place each anchored card beside its mark, cascading downward so none overlap. Cards
+  // live in document space (absolute in a full-height container) so they scroll with
+  // the prose; re-run only on reflow, never per-scroll.
+  function layoutMargin(){
+    if(marginBrowse || !isDesktop()) return;
+    var cTop = marginEl.getBoundingClientRect().top;
+    var items = [];
+    anns.forEach(function(ann){
+      var card = cardEls[ann.id];
+      var mark = card ? contentEl.querySelector('mark[data-ann="'+ann.id+'"]') : null;
+      if(card && mark) items.push({ card:card, markTop: mark.getBoundingClientRect().top - cTop });
+    });
+    items.sort(function(a,b){ return a.markTop - b.markTop; });
+    var prevBottom = 0;
+    items.forEach(function(it){
+      var top = Math.max(it.markTop, prevBottom ? prevBottom + MARGIN_GAP : 0);
+      it.card.style.top = Math.round(top) + 'px';
+      prevBottom = top + it.card.offsetHeight;
+    });
+    marginEl.style.height = contentEl.offsetHeight + 'px';
   }
 
   function renderAll(){ renderSide(); renderMargin(); }
@@ -573,21 +730,80 @@ export function buildShareableAnnotationRuntimeScript(): string {
 
   renderAll();
 
+  // The chunked reading-entrance reveals and web-font metrics can shift mark positions
+  // a frame or two after render; re-cascade on any content reflow (coalesced into one
+  // rAF), so freshly-placed cards track their marks instead of parking at stale tops.
+  if(window.ResizeObserver){
+    var layoutRaf = 0;
+    var scheduleLayout = function(){ if(layoutRaf) cancelAnimationFrame(layoutRaf); layoutRaf = requestAnimationFrame(layoutMargin); };
+    var ro = new ResizeObserver(scheduleLayout);
+    ro.observe(contentEl);
+  }
+
   var maxProgress = 0;
   function trackProgress(){ var docH=document.documentElement.scrollHeight-window.innerHeight; var p=docH>0?window.scrollY/docH:0; if(p>maxProgress) maxProgress=p; }
   window.addEventListener('scroll', trackProgress, {passive:true});
   trackProgress();
 
+  // The one payload builder — used by both the .json download and the sync POST, so
+  // the two paths can never drift. Stamps identity onto any bare annotations first.
+  function buildPayload(){
+    anns.forEach(function(a){ if(!a.readerName) a.readerName = readerName || null; if(!a.readerId) a.readerId = readerId; });
+    var prog = Math.min(1, Math.max(0, maxProgress));
+    return { readerId: readerId, readerName: readerName.trim() || null, manuscript: title,
+             manuscriptVersionId: MS_VERSION,
+             snapshotId: SHARE_SNAPSHOT_ID, snapshotLabel: SHARE_SNAPSHOT_LABEL,
+             startedAt: startedAt, completedAt: prog>=0.985 ? Date.now() : null,
+             exportedAt: Date.now(), progress: prog, annotations: anns };
+  }
+
+  // ── Optimistic sync to the hosted share (brief §3.2) ─────────────────────────
+  // localStorage stays the reader's source of truth; the worker is a mirror. Every
+  // change schedules a debounced POST; a failure leaves the status 'retry' and a slow
+  // loop heals it. Entirely inert when the file isn't bound to a share (no endpoint).
+  function setSyncStatus(s){
+    SYNC_STATUS = s;
+    if(!syncStatusEl) return;
+    syncStatusEl.textContent =
+      s==='synced'  ? 'Saved to the author' :
+      s==='syncing' ? 'Saving…' :
+      s==='queued'  ? 'Saving…' :
+      s==='retry'   ? 'Couldn’t reach the author — will retry' :
+                      'Your notes save to the author automatically';
+  }
+  function syncNow(){
+    if(!SYNC_ENDPOINT || !anns.length) return;
+    if(syncInFlight){ syncPending = true; return; }
+    syncInFlight = true; setSyncStatus('syncing');
+    var headers = { 'Content-Type':'application/json' };
+    if(readerToken) headers['Authorization'] = 'Bearer ' + readerToken;
+    fetch(SYNC_ENDPOINT.replace(/\\/+$/,'') + '/v1/shares/' + encodeURIComponent(SYNC_SHARE_ID) + '/sessions',
+          { method:'POST', headers:headers, body:JSON.stringify(buildPayload()) })
+      .then(function(res){ if(!res.ok) throw new Error('http '+res.status); return res.json(); })
+      .then(function(out){
+        if(out && out.readerToken){ readerToken = out.readerToken; try{ localStorage.setItem(RTOKEN_KEY, readerToken); }catch(e){} }
+        syncInFlight = false; setSyncStatus('synced');
+        if(syncPending){ syncPending = false; scheduleSync(); }
+      })
+      .catch(function(){ syncInFlight = false; setSyncStatus('retry'); });
+  }
+  function scheduleSync(){
+    if(!SYNC_ENDPOINT) return;
+    if(SYNC_STATUS==='synced' || SYNC_STATUS==='idle') setSyncStatus('queued');
+    if(syncTimer) clearTimeout(syncTimer);
+    syncTimer = setTimeout(syncNow, 1400);
+  }
+  if(SYNC_ENDPOINT){
+    // Slow heal loop for transient outages, and a one-shot mirror on load so notes
+    // made while the worker was unreachable eventually land.
+    setInterval(function(){ if((SYNC_STATUS==='retry' || SYNC_STATUS==='queued') && !syncInFlight) syncNow(); }, 20000);
+    if(anns.length) scheduleSync();
+  }
+
   function doExport(){
     if(!anns.length) return;
-    anns.forEach(function(a){ if(!a.readerName) a.readerName = readerName || null; if(!a.readerId) a.readerId = readerId; });
+    var payload = buildPayload();
     saveAnns();
-    var prog = Math.min(1, Math.max(0, maxProgress));
-    var payload = { readerId: readerId, readerName: readerName || null, manuscript: title,
-                    manuscriptVersionId: MS_VERSION,
-                    snapshotId: SHARE_SNAPSHOT_ID, snapshotLabel: SHARE_SNAPSHOT_LABEL,
-                    startedAt: startedAt, completedAt: prog>=0.985 ? Date.now() : null,
-                    exportedAt: Date.now(), progress: prog, annotations: anns };
     var blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
     var url  = URL.createObjectURL(blob);
     var a    = document.createElement('a');
@@ -596,7 +812,6 @@ export function buildShareableAnnotationRuntimeScript(): string {
     setTimeout(function(){ URL.revokeObjectURL(url); document.body.removeChild(a); },1000);
   }
   exportBtn.addEventListener('click', doExport);
-  if(marginExportBtn) marginExportBtn.addEventListener('click', doExport);
 
   document.addEventListener('mousedown', function(e){
     if(!popup.contains(e.target) && !contentEl.contains(e.target)) hidePopup();
