@@ -154,6 +154,16 @@ export function App() {
     [library],
   );
 
+  const continueManuscript = useMemo(() => {
+    if (library.length === 0) return null;
+    return [...library].sort((a, b) => (b.metadata.lastOpened ?? 0) - (a.metadata.lastOpened ?? 0))[0] ?? null;
+  }, [library]);
+
+  function handleContinueReading() {
+    if (!continueManuscript) return;
+    handleReadFromLibrary(continueManuscript);
+  }
+
   function handleSwitchManuscript(id: string) {
     const ms = library.find(m => m.id === id);
     if (!ms) return;
@@ -377,6 +387,8 @@ export function App() {
           onSwitchManuscript={handleSwitchManuscript}
           onNewManuscript={() => setLoadModalOpen(true)}
           onHome={handleHomeNav}
+          continueTitle={continueManuscript?.metadata.title}
+          onContinue={continueManuscript ? handleContinueReading : undefined}
           bareTop={bareTop}
         >
           {screen === 'library' && (

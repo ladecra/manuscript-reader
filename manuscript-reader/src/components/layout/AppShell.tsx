@@ -22,6 +22,8 @@ interface AppShellProps {
   workspaceManuscripts?: WorkspaceManuscriptRow[];
   onSwitchManuscript?: (id: string) => void;
   onNewManuscript?: () => void;
+  continueTitle?: string;
+  onContinue?: () => void;
   /** Wordmark is the "home" affordance — back out to the marketing landing. */
   onHome?: () => void;
   /** When the global topbar is hidden (library), the rail carries the wordmark
@@ -62,8 +64,13 @@ export function AppShell({
   variant,
   libraryFilter,
   onLibraryFilter,
+  activeManuscriptId,
+  workspaceManuscripts = [],
+  onSwitchManuscript,
   onNewManuscript,
   onHome,
+  continueTitle,
+  onContinue,
   bareTop = false,
 }: AppShellProps) {
   const [collapsed, setCollapsed] = useState(false);
@@ -100,16 +107,44 @@ export function AppShell({
             {!collapsed && (
               <span className="app-shell-brand-text">
                 <span className="app-shell-brand-word">Vellibris</span>
-                <span className="app-shell-brand-sub">Manuscript Reader</span>
               </span>
             )}
           </button>
         )}
         <div className="app-shell-scroll">
           <nav className="app-shell-nav" aria-label="Library">
+            {onContinue && continueTitle && (
+              <button
+                type="button"
+                className="app-shell-item app-shell-item--continue"
+                onClick={onContinue}
+                title={continueTitle}
+              >
+                <span className="app-shell-item-icon"><ClockIcon size={15} /></span>
+                {!collapsed && <span className="app-shell-item-label">Continue</span>}
+              </button>
+            )}
+            {railItem('recent', <ClockIcon size={15} />, 'Recent')}
             {railItem('all', <LibraryIcon size={15} />, 'Library')}
             {railItem('favorites', <StarIcon size={14} />, 'Favorites')}
-            {railItem('recent', <ClockIcon size={15} />, 'Recent Files')}
+            {workspaceManuscripts.length > 0 && !collapsed && (
+              <div className="app-shell-works" aria-label="Works">
+                <div className="app-shell-works-label">Works</div>
+                <div className="app-shell-works-list">
+                  {workspaceManuscripts.map(row => (
+                    <button
+                      key={row.id}
+                      type="button"
+                      className={`app-shell-work${row.id === activeManuscriptId ? ' active' : ''}`}
+                      onClick={() => onSwitchManuscript?.(row.id)}
+                      title={row.title}
+                    >
+                      {row.title}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <SettingsMenu variant="rail-item" />
           </nav>
         </div>
