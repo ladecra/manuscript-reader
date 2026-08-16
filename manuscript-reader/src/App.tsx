@@ -157,10 +157,8 @@ export function App() {
   function handleSwitchManuscript(id: string) {
     const ms = library.find(m => m.id === id);
     if (!ms) return;
-    // Same id is already the open manuscript on the hub — no-op. From elsewhere
-    // the author still expects Recent to open the hub page.
-    if (manuscript?.id === id && screen === 'manuscript') return;
-    handleOpenHub(ms);
+    if (manuscript?.id === id && screen === 'reader') return;
+    handleReadFromLibrary(ms);
   }
 
   function resetShellScroll() {
@@ -236,9 +234,8 @@ export function App() {
     showToast(`Loaded ${chapters.length} chapter${chapters.length !== 1 ? 's' : ''}.`);
   }
 
-  // Open a manuscript's page (its home) — the beta-reader loop console.
-  // The card lands here; the reader ("Play") is entered from the page.
-  function handleOpenHub(ms: Manuscript) {
+  // Manuscript record — structure, export, and secondary share (not the daily entry).
+  function handleOpenRecord(ms: Manuscript) {
     if (!ms.metadata.combinedMarkdown) {
       showToast('Files need reloading — use Load to re-import.');
       setLoadModalOpen(true);
@@ -314,10 +311,10 @@ export function App() {
           {screen === 'reader' ? (
             <>
               <IconBtn onClick={toggleNav} title="Chapters"><MenuIcon /></IconBtn>
-              <button className="topbar-back-hub" onClick={goManuscriptPage} title="Back to manuscript page" aria-label="Back to manuscript page">
+              <button className="topbar-back-hub" onClick={goManuscriptPage} title="Manuscript details" aria-label="Manuscript details">
                 <ChevronLeftIcon size={12} />
               </button>
-              <button id="topbar-title" className="topbar-title-btn" onClick={goManuscriptPage} title="Manuscript page">{title}</button>
+              <button id="topbar-title" className="topbar-title-btn" onClick={goManuscriptPage} title="Manuscript details">{title}</button>
               {chapterLabel && (
                 <>
                   <span id="topbar-sep" aria-hidden="true">›</span>
@@ -389,7 +386,7 @@ export function App() {
                   library={library}
                   libraryFilter={libraryFilter}
                   onLibraryFilter={f => setLibraryFilter(f)}
-                  onOpen={handleOpenHub}
+                  onOpenRecord={handleOpenRecord}
                   onRead={handleReadFromLibrary}
                   onNew={() => setLoadModalOpen(true)}
                   onDelete={deleteManuscript}

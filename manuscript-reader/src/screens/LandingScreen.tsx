@@ -216,20 +216,18 @@ export function LandingScreen({ onOpenApp }: LandingScreenProps) {
         <div className="lp-container lp-hero-inner">
           <div className="lp-hero-copy">
             <h1 className="lp-h1 lp-rise d1">
-              Read your manuscript<br />like a <em>reader.</em>
+              A quiet place for<br />long-form <em>work.</em>
             </h1>
             <p className="lp-lead lp-rise d2">
-              Step outside the drafting process. Experience your work with fresh eyes,
-              capture authentic reactions, and discover what your manuscript is actually
-              doing on the page.
+              Read, write, and mark manuscripts in one calm surface. Pick up where you
+              left off, keep structure faithful, and return to the same words over time.
             </p>
             <div className="lp-hero-cta lp-rise d3">
               <button className="lp-btn lp-btn-lg lp-btn-amber" onClick={onOpenApp}>Open a manuscript</button>
               <button className="lp-btn lp-btn-lg lp-btn-ghost" onClick={() => scrollTo('lp-problem')}>See how it works</button>
             </div>
             <p className="lp-hero-note lp-rise d4">
-              For authors, beta readers, ARC readers &amp; editors&nbsp;·&nbsp;runs in your
-              browser&nbsp;·&nbsp;your manuscript never leaves your device
+              Private by default&nbsp;·&nbsp;runs in your browser&nbsp;·&nbsp;your library stays on your device
             </p>
           </div>
 
