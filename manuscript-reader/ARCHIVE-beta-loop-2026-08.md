@@ -18,7 +18,7 @@ Recover beta-loop UI, Supabase sync sources, or studio code from this commit or 
 
 ## Commit
 
-**SHA:** _Recorded in follow-up commit after archive creation._
+**SHA:** `725b5b94350fbef4ad2050757cba494ab96b5306`
 
 ## Check baseline (Phase 0, 2026-08-16)
 
