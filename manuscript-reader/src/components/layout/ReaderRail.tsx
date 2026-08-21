@@ -15,7 +15,7 @@ interface ReaderRailProps {
 /** The reader's left rail. A differently-styled sibling of the library/hub
  *  AppShell rail: collapsed by default, no Recent Files, and the background
  *  matches the reader topbar so the two read as one chrome surface. It carries
- *  the three cross-app links (home / library / manuscript page) and the settings
+ *  the three cross-app links (home / library / Details) and the settings
  *  gear. */
 export function ReaderRail({
   collapsed,
@@ -38,9 +38,9 @@ export function ReaderRail({
           <span className="app-shell-item-icon"><LibraryIcon size={15} /></span>
           {!collapsed && <span className="app-shell-item-label">Library</span>}
         </button>
-        <button type="button" className="app-shell-item" onClick={onManuscriptPage} title="Manuscript page">
+        <button type="button" className="app-shell-item" onClick={onManuscriptPage} title="Details">
           <span className="app-shell-item-icon"><PanelIcon size={15} /></span>
-          {!collapsed && <span className="app-shell-item-label">Manuscript page</span>}
+          {!collapsed && <span className="app-shell-item-label">Details</span>}
         </button>
       </nav>
 

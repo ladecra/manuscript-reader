@@ -1,8 +1,8 @@
 import { useMemo, useState, useRef, useEffect } from 'react';
 import type { Manuscript, PublishingMetadata } from '../engine/types';
 import { LibraryCardEditModal } from '../components/library/LibraryCardEditModal';
-import { loadAnnotations, loadSessions, listSnapshots } from '../engine/storage';
-import { sortLibraryManuscripts, deriveWorkflowStatus, type LibrarySortKey } from '../engine/library';
+import { loadAnnotations, listSnapshots } from '../engine/storage';
+import { sortLibraryManuscripts, type LibrarySortKey } from '../engine/library';
 import { PlusIcon, StarIcon, DotsIcon, ListLayoutIcon, GridLayoutIcon } from '../components/ui/Icons';
 import { CoverImage } from '../components/ui/CoverImage';
 import type { LibraryNavFilter } from '../components/layout/AppShell';
@@ -18,26 +18,31 @@ interface LibraryScreenProps {
   library: Manuscript[];
   libraryFilter: LibraryNavFilter;
   onLibraryFilter?: (filter: LibraryNavFilter) => void;
-  onOpen: (ms: Manuscript) => void;
+  onOpenRecord: (ms: Manuscript) => void;
   onRead: (ms: Manuscript) => void;
   onNew: () => void;
   onDelete: (id: string) => void;
   onUpdateManuscript: (id: string, patch: { title?: string; publishing?: PublishingMetadata }) => void;
+  onReplaceMarkdown?: (id: string, markdown: string) => void;
   onCycleStatus: (id: string) => void;
   onToggleFavorite: (id: string) => void;
   getReadingPosition: (id: string) => number;
 }
 
 export function LibraryScreen({
-  library, libraryFilter, onLibraryFilter, onOpen, onNew, onDelete, onUpdateManuscript, onToggleFavorite,
+  library, libraryFilter, onLibraryFilter, onOpenRecord, onRead, onNew, onDelete, onUpdateManuscript, onReplaceMarkdown, onToggleFavorite,
+  getReadingPosition,
 }: LibraryScreenProps) {
   const [sortKey, setSortKey] = useState<LibrarySortKey>('lastOpened');
   const [viewMode, setViewMode] = useState<LibraryViewMode>('list');
   const [query, setQuery] = useState('');
 
-  const sharedCount = library.filter(m => m.metadata.shared).length;
-  const newResponsesTotal = library.reduce((sum, m) => sum + (m.metadata.newResponses ?? 0), 0);
   const favCount = library.filter(m => m.metadata.favorite).length;
+
+  const continueMs = useMemo(() => {
+    if (library.length === 0) return null;
+    return [...library].sort((a, b) => (b.metadata.lastOpened ?? 0) - (a.metadata.lastOpened ?? 0))[0] ?? null;
+  }, [library]);
 
   const filtered = useMemo(() => library.filter(m => {
     if (libraryFilter === 'favorites' && !m.metadata.favorite) return false;
@@ -61,8 +66,11 @@ export function LibraryScreen({
           {library.length > 0 && (
             <p className="library-stats-line">
               <span className="tnum">{library.length}</span> manuscript{library.length !== 1 ? 's' : ''}
-              {' · '}<span className="tnum">{sharedCount}</span> shared
-              {' · '}<span className={`tnum${newResponsesTotal > 0 ? ' lib-stat-new' : ''}`}>{newResponsesTotal.toLocaleString()}</span> new response{newResponsesTotal !== 1 ? 's' : ''}
+              {favCount > 0 && (
+                <>
+                  {' · '}<span className="tnum">{favCount}</span> favorite{favCount !== 1 ? 's' : ''}
+                </>
+              )}
             </p>
           )}
         </div>
@@ -137,6 +145,29 @@ export function LibraryScreen({
         </div>
       ) : (
         <>
+          {continueMs && (
+            <button
+              type="button"
+              className="library-continue"
+              onClick={() => onRead(continueMs)}
+            >
+              <span className="library-continue-kicker">Continue</span>
+              <span className="library-continue-title">{continueMs.metadata.title}</span>
+              <span className="library-continue-meta">
+                {continueMs.metadata.chapterCount ? (
+                  <><span className="tnum">{continueMs.metadata.chapterCount}</span> chapters · </>
+                ) : null}
+                {continueMs.metadata.wordCount ? (
+                  <><span className="tnum">{continueMs.metadata.wordCount.toLocaleString()}</span> words · </>
+                ) : null}
+                <span className="tnum">{Math.round(getReadingPosition(continueMs.id) * 100)}%</span> read
+              </span>
+              <span className="library-continue-bar" aria-hidden="true">
+                <i style={{ width: `${Math.round(getReadingPosition(continueMs.id) * 100)}%` }} />
+              </span>
+            </button>
+          )}
+
           {onLibraryFilter && favCount > 0 && (
             <div className="library-filters library-filters--shell-mobile">
               <button type="button" className={`tab${libraryFilter === 'all' ? ' active' : ''}`} style={{ padding: '10px 16px 10px 0', opacity: libraryFilter === 'all' ? 1 : 0.55 }} onClick={() => onLibraryFilter('all')}>All</button>
@@ -160,8 +191,11 @@ export function LibraryScreen({
                 <LibraryListRow
                   key={ms.id}
                   ms={ms}
-                  onOpen={() => onOpen(ms)}
+                  onRead={() => onRead(ms)}
+                  onOpenRecord={() => onOpenRecord(ms)}
                   onDelete={() => onDelete(ms.id)}
+                  onUpdate={(patch) => onUpdateManuscript(ms.id, patch)}
+                  onReplaceMarkdown={md => onReplaceMarkdown?.(ms.id, md)}
                   onToggleFavorite={() => onToggleFavorite(ms.id)}
                 />
               ))}
@@ -172,9 +206,11 @@ export function LibraryScreen({
                 <LibraryGridCard
                   key={ms.id}
                   ms={ms}
-                  onOpen={() => onOpen(ms)}
+                  onRead={() => onRead(ms)}
+                  onOpenRecord={() => onOpenRecord(ms)}
                   onDelete={() => onDelete(ms.id)}
                   onUpdate={(patch) => onUpdateManuscript(ms.id, patch)}
+                  onReplaceMarkdown={md => onReplaceMarkdown?.(ms.id, md)}
                   onToggleFavorite={() => onToggleFavorite(ms.id)}
                 />
               ))}
@@ -186,23 +222,19 @@ export function LibraryScreen({
   );
 }
 
-function LibraryListRow({ ms, onOpen, onDelete, onToggleFavorite }: {
-  ms: Manuscript; onOpen: () => void; onDelete: () => void; onToggleFavorite: () => void;
+function LibraryListRow({ ms, onRead, onOpenRecord, onDelete, onUpdate, onReplaceMarkdown, onToggleFavorite }: {
+  ms: Manuscript;
+  onRead: () => void;
+  onOpenRecord: () => void;
+  onDelete: () => void;
+  onUpdate: (patch: { title?: string; publishing?: PublishingMetadata }) => void;
+  onReplaceMarkdown?: (markdown: string) => void;
+  onToggleFavorite: () => void;
 }) {
-  const { title, author, wordCount, chapterCount, importedAt, shared, readerCount, newResponses, uncached, favorite, publishing } = ms.metadata;
+  const { title, author, wordCount, chapterCount, importedAt, uncached, favorite, publishing } = ms.metadata;
   const genre = publishing?.genre;
-  // Reader count reflects real sessions (pulled/imported), not the stale metadata
-  // field — same pattern as the annotation-count fallback in the grid card.
-  const liveReaderCount = readerCount || loadSessions(ms.id).length;
-  // Loop lifecycle position — leads the row instead of the bare `shared` boolean,
-  // so an imported-feedback manuscript reads "Responses available," not "Not shared".
-  const workflow = deriveWorkflowStatus({
-    shareState: ms.metadata.share?.state,
-    legacyShared: shared,
-    readerCount: liveReaderCount,
-    newResponses,
-  });
   const [menuOpen, setMenuOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -216,17 +248,11 @@ function LibraryListRow({ ms, onOpen, onDelete, onToggleFavorite }: {
 
   const metaParts = [author, genre, formatImported(importedAt) && `Imported ${formatImported(importedAt)}`].filter(Boolean);
 
-  // Status presentation — the pip colour IS the state: gray = not shared,
-  // green = shared (no readers yet), blue = N readers responded. No "Responses
-  // available" prefix; the reader count carries the meaning.
-  const hasReaders = workflow.readerCount > 0;
-  const statusTone = hasReaders ? 'readers' : workflow.stage === 'draft' ? 'unshared' : 'shared';
-
   return (
     <article
       className="lib-row"
-      onClick={onOpen}
-      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } }}
+      onClick={onRead}
+      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onRead(); } }}
       role="button"
       tabIndex={0}
     >
@@ -257,20 +283,6 @@ function LibraryListRow({ ms, onOpen, onDelete, onToggleFavorite }: {
         <span className="lib-num-k">chapters</span>
       </div>
 
-      <div className="lib-row-status">
-        <span className={`lib-status lib-status--${statusTone}`}>
-          <span className={`lib-pip lib-pip--${statusTone}`} />
-          <span className="lib-status-text">
-            {hasReaders
-              ? <><span className="tnum">{workflow.readerCount}</span> reader{workflow.readerCount === 1 ? '' : 's'}</>
-              : statusTone === 'unshared' ? 'Not shared' : 'Shared'}
-          </span>
-        </span>
-        {workflow.newResponses > 0 && (
-          <span className="lib-new"><span className="lib-new-count tnum">{workflow.newResponses} new</span> response{workflow.newResponses === 1 ? '' : 's'}</span>
-        )}
-      </div>
-
       <div className="lib-row-end" onClick={e => e.stopPropagation()}>
         <span className="lib-chevron" aria-hidden="true">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 6l6 6-6 6" /></svg>
@@ -291,6 +303,22 @@ function LibraryListRow({ ms, onOpen, onDelete, onToggleFavorite }: {
                 type="button"
                 role="menuitem"
                 className="lib-row-menu-item"
+                onClick={() => { setMenuOpen(false); onOpenRecord(); }}
+              >
+                Details
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="lib-row-menu-item"
+                onClick={() => { setMenuOpen(false); setEditOpen(true); }}
+              >
+                Edit
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="lib-row-menu-item"
                 onClick={() => { setMenuOpen(false); onToggleFavorite(); }}
               >
                 <StarIcon filled={!!favorite} /> {favorite ? 'Remove from favorites' : 'Add to favorites'}
@@ -307,15 +335,34 @@ function LibraryListRow({ ms, onOpen, onDelete, onToggleFavorite }: {
           )}
         </div>
       </div>
+      {editOpen && (
+        <LibraryCardEditModal
+          key={ms.id}
+          manuscriptId={ms.id}
+          title={title}
+          genre={genre ?? ''}
+          combinedMarkdown={ms.metadata.combinedMarkdown}
+          onClose={() => setEditOpen(false)}
+          onSave={({ title: nextTitle, genre: nextGenre, markdown }) => {
+            onUpdate({
+              title: nextTitle,
+              publishing: { ...publishing, genre: nextGenre || undefined },
+            });
+            if (markdown) onReplaceMarkdown?.(markdown);
+          }}
+        />
+      )}
     </article>
   );
 }
 
-export function LibraryGridCard({ ms, onOpen, onDelete, onUpdate, onToggleFavorite }: {
+export function LibraryGridCard({ ms, onRead, onOpenRecord, onDelete, onUpdate, onReplaceMarkdown, onToggleFavorite }: {
   ms: Manuscript;
-  onOpen: () => void;
+  onRead: () => void;
+  onOpenRecord: () => void;
   onDelete: () => void;
   onUpdate: (patch: { title?: string; publishing?: PublishingMetadata }) => void;
+  onReplaceMarkdown?: (markdown: string) => void;
   onToggleFavorite: () => void;
 }) {
   const { title, wordCount, chapterCount, publishing, favorite } = ms.metadata;
@@ -342,8 +389,8 @@ export function LibraryGridCard({ ms, onOpen, onDelete, onUpdate, onToggleFavori
       <button
         type="button"
         className="lib-card-open lib-card-open--cover"
-        onClick={onOpen}
-        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } }}
+        onClick={onRead}
+        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onRead(); } }}
       >
         <span className="lib-card-cover-wrap">
           <CoverImage manuscriptId={ms.id} title={title} />
@@ -354,7 +401,7 @@ export function LibraryGridCard({ ms, onOpen, onDelete, onUpdate, onToggleFavori
       </button>
 
       <div className="lib-card-title-row">
-        <button type="button" className="lib-card-title" onClick={onOpen}>{title}</button>
+        <button type="button" className="lib-card-title" onClick={onRead}>{title}</button>
         <div className="lib-card-menu-wrap" ref={menuRef} onClick={e => e.stopPropagation()}>
           <button
             type="button"
@@ -367,6 +414,17 @@ export function LibraryGridCard({ ms, onOpen, onDelete, onUpdate, onToggleFavori
           </button>
           {menuOpen && (
             <div className="lib-card-menu" role="menu">
+              <button
+                type="button"
+                role="menuitem"
+                className="lib-row-menu-item"
+                onClick={() => {
+                  setMenuOpen(false);
+                  onOpenRecord();
+                }}
+              >
+                Details
+              </button>
               <button
                 type="button"
                 role="menuitem"
@@ -397,10 +455,10 @@ export function LibraryGridCard({ ms, onOpen, onDelete, onUpdate, onToggleFavori
       <button
         type="button"
         className="lib-card-open lib-card-open--tail"
-        onClick={onOpen}
-        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } }}
+        onClick={onRead}
+        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onRead(); } }}
       >
-        <span className="lib-card-genre">{genre || ' '}</span>
+        <span className="lib-card-genre">{genre || ' '}</span>
         <span className="lib-card-meta">
           <span className="lib-card-meta-cell">
             <span className="lib-card-meta-num">{wordCount ? wordCount.toLocaleString() : '—'}</span>
@@ -433,12 +491,14 @@ export function LibraryGridCard({ ms, onOpen, onDelete, onUpdate, onToggleFavori
           manuscriptId={ms.id}
           title={title}
           genre={genre ?? ''}
+          combinedMarkdown={ms.metadata.combinedMarkdown}
           onClose={() => setEditOpen(false)}
-          onSave={({ title: nextTitle, genre: nextGenre }) => {
+          onSave={({ title: nextTitle, genre: nextGenre, markdown }) => {
             onUpdate({
               title: nextTitle,
               publishing: { ...publishing, genre: nextGenre || undefined },
             });
+            if (markdown) onReplaceMarkdown?.(markdown);
           }}
         />
       )}

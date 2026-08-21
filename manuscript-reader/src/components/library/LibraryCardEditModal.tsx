@@ -1,20 +1,24 @@
 import { useEffect, useState } from 'react';
 import { CoverImage } from '../ui/CoverImage';
 import { XIcon } from '../ui/Icons';
+import { ChapterTree } from './ChapterTree';
+import { applyChapterEdits, chapterEditsDirty, type ChapterEdit } from '../../engine/manuscript/chapterEdit';
 
 interface LibraryCardEditModalProps {
   manuscriptId: string;
   title: string;
   genre: string;
+  combinedMarkdown?: string;
   onClose: () => void;
-  onSave: (patch: { title: string; genre: string }) => void;
+  onSave: (patch: { title: string; genre: string; markdown?: string }) => void;
 }
 
 export function LibraryCardEditModal({
-  manuscriptId, title, genre, onClose, onSave,
+  manuscriptId, title, genre, combinedMarkdown, onClose, onSave,
 }: Omit<LibraryCardEditModalProps, 'open'>) {
   const [titleInput, setTitleInput] = useState(title);
   const [genreInput, setGenreInput] = useState(genre);
+  const [chapterEdits, setChapterEdits] = useState<ChapterEdit[] | null>(null);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose(); }
@@ -23,9 +27,19 @@ export function LibraryCardEditModal({
   }, [onClose]);
 
   function save() {
+    let markdown: string | undefined;
+    if (combinedMarkdown && chapterEdits && chapterEditsDirty(combinedMarkdown, chapterEdits)) {
+      const next = applyChapterEdits(combinedMarkdown, chapterEdits);
+      if (!next) {
+        window.alert('Keep at least one chapter.');
+        return;
+      }
+      markdown = next;
+    }
     onSave({
       title: titleInput.trim() || 'Untitled',
       genre: genreInput.trim(),
+      markdown,
     });
     onClose();
   }
@@ -34,6 +48,7 @@ export function LibraryCardEditModal({
     <div
       className="modal-overlay visible"
       onMouseDown={onClose}
+      onClick={e => e.stopPropagation()}
       role="presentation"
     >
       <div
@@ -74,8 +89,17 @@ export function LibraryCardEditModal({
               onChange={e => setGenreInput(e.target.value)}
             />
           </label>
+          {combinedMarkdown && (
+            <div className="lib-card-edit-field">
+              <span className="instrument-field-label">Chapters</span>
+              <p className="lib-card-edit-hint" style={{ margin: 0 }}>
+                Rename inline. Drag to reorder. × marks a chapter to remove on Save.
+              </p>
+              <ChapterTree combinedMarkdown={combinedMarkdown} onChange={setChapterEdits} />
+            </div>
+          )}
           <p className="lib-card-edit-hint">
-            Cover saves when you choose an image. Title and genre save when you tap Save.
+            Cover saves when you choose an image. Title, genre, and chapter changes save when you tap Save.
           </p>
         </div>
         <div className="modal-footer">
