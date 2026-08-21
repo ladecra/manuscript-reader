@@ -7,6 +7,10 @@ import { isReaderAnnotation } from '../engine/types';
 import type { Annotation, ReaderProgress } from '../engine/types';
 import { CoverImage } from '../components/ui/CoverImage';
 import { ChevronLeftIcon, DotsIcon, BookIcon } from '../components/ui/Icons';
+import { LibraryCardEditModal } from '../components/library/LibraryCardEditModal';
+import { ChapterTree } from '../components/library/ChapterTree';
+import { applyChapterEdits, chapterEditsDirty, type ChapterEdit } from '../engine/manuscript/chapterEdit';
+import { getParsedManuscript } from '../engine/ingestion/parseCache';
 import { showToast } from '../components/ui/Toast';
 import { useManuscriptArtifactExports } from '../hooks/useManuscriptArtifactExports';
 import type { ExtentRequest } from '../engine/exports/manuscriptExtent';
@@ -70,14 +74,16 @@ function initials(name: string): string {
 }
 
 export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps) {
-  const { manuscript, chapters, annotations: rawAnnotations, sessions, importSession } = useReaderStore();
-  const { deleteManuscript, saveShare } = useLibraryStore();
+  const { manuscript, chapters, annotations: rawAnnotations, sessions, importSession, openManuscript } = useReaderStore();
+  const { deleteManuscript, saveShare, updateManuscript, replaceMarkdown } = useLibraryStore();
   const [tab, setTab] = useState<ConsoleTab>('overview');
   const [menuOpen, setMenuOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const [smfExtent, setSmfExtent] = useState<ExtentChoice>('full');
   const [share, setShare] = useState<ShareHandle | null>(manuscript?.metadata.share ?? null);
   const [shareBusy, setShareBusy] = useState(false);
   const [pullBusy, setPullBusy] = useState(false);
+  const [chapterEdits, setChapterEdits] = useState<ChapterEdit[] | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const { exportManuscript, exportSmf } = useManuscriptArtifactExports();
 
@@ -106,6 +112,19 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
   const title = m.title;
   const genre = m.publishing?.genre?.trim();
   const available = !!combinedMarkdown;
+  const structureDirty = !!(combinedMarkdown && chapterEdits && chapterEditsDirty(combinedMarkdown, chapterEdits));
+
+  function persistStructure() {
+    if (!combinedMarkdown || !chapterEdits) return;
+    if (!chapterEditsDirty(combinedMarkdown, chapterEdits)) return;
+    const next = applyChapterEdits(combinedMarkdown, chapterEdits);
+    if (!next) { showToast('Keep at least one chapter.'); return; }
+    const updated = replaceMarkdown(manuscript.id, next);
+    if (!updated) return;
+    const parsed = getParsedManuscript(next);
+    openManuscript(updated, parsed.chapters);
+    showToast('Structure saved.');
+  }
 
   const readers: ReaderProgress[] = sessions.length
     ? sessions.map((s): ReaderProgress => ({
@@ -228,6 +247,7 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
   };
 
   return (
+    <>
     <div className="console">
       <div className="console-wrap">
         <nav className="console-crumbs" aria-label="Breadcrumb">
@@ -248,7 +268,14 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
             <CoverImage manuscriptId={manuscript.id} title={title} />
           </div>
           <div className="console-id">
-            <h1 className="console-title">{title}</h1>
+            <button
+              type="button"
+              className="console-title console-title--edit"
+              onClick={() => setEditOpen(true)}
+              title="Edit manuscript"
+            >
+              {title}
+            </button>
             <div className="console-byline">
               {m.author}{m.author && genre ? ' · ' : ''}{genre}
             </div>
@@ -281,6 +308,7 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
               {menuOpen && (
                 <div className="console-menu" role="menu">
                   <button type="button" role="menuitem" className="console-menu-item" onClick={() => { setMenuOpen(false); onRead(); }} disabled={!available}>Continue reading</button>
+                  <button type="button" role="menuitem" className="console-menu-item" onClick={() => { setMenuOpen(false); setEditOpen(true); }}>Edit manuscript</button>
                   <button
                     type="button"
                     role="menuitem"
@@ -464,16 +492,24 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
         {tab === 'structure' && (
           <div className="console-body">
             <div className="console-panel console-panel--wide">
-              <div className="panel-head"><span className="panel-name">Chapters · {chapterCount}</span></div>
-              <div className="console-chapters">
-                {chapters.map(ch => (
-                  <div className="console-ch" key={ch.index}>
-                    <span className="console-ch-num tnum">{ch.index}</span>
-                    <span className="console-ch-title">{ch.title || 'Untitled chapter'}</span>
-                  </div>
-                ))}
-                {chapters.length === 0 && <p className="panel-foot">No chapters parsed. Re-import to restore the source text.</p>}
+              <div className="panel-head">
+                <span className="panel-name">Chapters · {chapterCount}</span>
+                {available && (
+                  <button
+                    type="button"
+                    className="panel-link"
+                    disabled={!structureDirty}
+                    onClick={persistStructure}
+                  >
+                    Save structure
+                  </button>
+                )}
               </div>
+              {available ? (
+                <ChapterTree combinedMarkdown={combinedMarkdown} onChange={setChapterEdits} />
+              ) : (
+                <p className="panel-foot">No chapters parsed. Re-import to restore the source text.</p>
+              )}
               {importSummary && (importSummary.front.length > 0 || importSummary.back.length > 0) && (
                 <>
                   <div className="panel-head panel-head--sub"><span className="panel-name">Set aside · {setAside}</span></div>
@@ -484,7 +520,7 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
                   </div>
                 </>
               )}
-              <p className="panel-foot">Full boundary review — promoting set-aside sections to chapters, renaming, merging — lands with the import-review screen.</p>
+              <p className="panel-foot">Rename, reorder, or mark chapters to remove, then Save structure. Promoting set-aside sections to chapters still happens at import review.</p>
             </div>
           </div>
         )}
@@ -556,5 +592,27 @@ export function ManuscriptHubScreen({ onRead, onExit }: ManuscriptHubScreenProps
         )}
       </div>
     </div>
+    {editOpen && (
+      <LibraryCardEditModal
+        manuscriptId={manuscript.id}
+        title={title}
+        genre={m.publishing?.genre ?? ''}
+        combinedMarkdown={combinedMarkdown}
+        onClose={() => setEditOpen(false)}
+        onSave={({ title: nextTitle, genre: nextGenre, markdown }) => {
+          updateManuscript(manuscript.id, {
+            title: nextTitle,
+            publishing: { ...m.publishing, genre: nextGenre || undefined },
+          });
+          if (markdown) replaceMarkdown(manuscript.id, markdown);
+          const updated = useLibraryStore.getState().library.find(x => x.id === manuscript.id);
+          if (updated) {
+            const md = updated.metadata.combinedMarkdown;
+            openManuscript(updated, md ? getParsedManuscript(md).chapters : chapters);
+          }
+        }}
+      />
+    )}
+    </>
   );
 }

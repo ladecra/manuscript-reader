@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useUIStore } from './state/uiStore';
+import { useUIStore, readerModeOf } from './state/uiStore';
+import type { ReaderMode } from './engine/reader/positionIntent';
 import { useLibraryStore } from './state/libraryStore';
 import { useReaderStore } from './state/readerStore';
 import { useSnapshotStore } from './state/snapshotStore';
@@ -17,16 +18,17 @@ import { QuillIcon, MenuIcon, LibraryIcon, UndoIcon, RedoIcon, ChevronLeftIcon, 
 import { getParsedManuscript } from './engine/ingestion/parseCache';
 import type { Manuscript } from './engine/types';
 
-function IconBtn({ onClick, active, title, label, disabled, children }: {
+function IconBtn({ onClick, active, title, label, disabled, className, children }: {
   onClick?: () => void;
   active?: boolean;
   title?: string;
   label?: string;
   disabled?: boolean;
+  className?: string;
   children: React.ReactNode;
 }) {
   return (
-    <button className={`btn-icon${active ? ' active' : ''}`} onClick={onClick} title={title} aria-label={title} disabled={disabled}>
+    <button className={`btn-icon${active ? ' active' : ''}${className ? ` ${className}` : ''}`} onClick={onClick} title={title} aria-label={title} disabled={disabled}>
       {children}
       {label && <span className="btn-icon-label">{label}</span>}
     </button>
@@ -68,9 +70,39 @@ function ReaderDisplayMenu({ fontSize, onSmaller, onLarger }: {
   );
 }
 
-/** The reader's quiet right-side controls (redesign-reader.html rd-bar): display
- *  settings (Aa) and My notes. The author-side reader adds a Manuscript-edit
- *  toggle; there are no mode tabs — the manuscript owns the screen. */
+/** Mobile reader postures. Desktop keeps icon controls; these segments are
+ *  first-class on phone (READING / MANUSCRIPT / ANNOTATIONS). Changes stays
+ *  hub-intent only — not a fourth tab. */
+function ReaderModeSegments({ mode, onChange }: {
+  mode: ReaderMode;
+  onChange: (m: ReaderMode) => void;
+}) {
+  const items: { id: 'reading' | 'manuscript' | 'annotations'; label: string }[] = [
+    { id: 'reading', label: 'Reading' },
+    { id: 'manuscript', label: 'Manuscript' },
+    { id: 'annotations', label: 'Annotations' },
+  ];
+  return (
+    <div className="reader-mode-segments" role="tablist" aria-label="Reader mode">
+      {items.map(item => (
+        <button
+          key={item.id}
+          type="button"
+          role="tab"
+          className={`reader-mode-seg${mode === item.id ? ' active' : ''}`}
+          aria-selected={mode === item.id}
+          aria-pressed={mode === item.id}
+          onClick={() => onChange(item.id)}
+        >
+          {item.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Desktop reader controls: Aa, notes, and manuscript-edit. Hidden notes/edit
+ *  icons on mobile — the mode segments cover those postures. */
 function ReaderControls({
   fontSize, onSmaller, onLarger,
   annotationsActive, hasAnnotations, onToggleNotes,
@@ -102,7 +134,7 @@ function ReaderControls({
         <AnnotateIcon />
         {hasAnnotations && <span className="reader-mode-dot" aria-hidden="true" />}
       </button>
-      <IconBtn onClick={onToggleEdit} active={editActive} title={editActive ? 'Done editing' : 'Edit the manuscript'}>
+      <IconBtn className="reader-edit-btn" onClick={onToggleEdit} active={editActive} title={editActive ? 'Done editing' : 'Edit the manuscript'}>
         <PencilIcon />
       </IconBtn>
     </>
@@ -111,9 +143,10 @@ function ReaderControls({
 
 export function App() {
   const {
-    screen, theme, fontSize, annSidebarOpen, editMode,
-    setScreen, toggleNav, toggleAnnSidebar, toggleEditMode, increaseFontSize, decreaseFontSize,
+    screen, theme, fontSize, annSidebarOpen, editMode, changesOpen,
+    setScreen, toggleNav, toggleAnnSidebar, toggleEditMode, setReaderMode, increaseFontSize, decreaseFontSize,
   } = useUIStore();
+  const readerMode = readerModeOf({ editMode, annSidebarOpen, changesOpen });
   const { library, importManuscript, updateManuscript, cycleStatus, toggleFavorite, deleteManuscript, replaceMarkdown, getReadingPosition, seedDemoLibrary } = useLibraryStore();
   const { manuscript, annotations, openManuscript, closeManuscript, undoEdit, redoEdit, setEditReturnScroll, undoStack, redoStack } = useReaderStore();
   const { toastState, showToast } = useToast();
@@ -269,6 +302,13 @@ export function App() {
     setScreen('reader');
   }
 
+  function handleReplaceMarkdown(id: string, markdown: string) {
+    const updated = replaceMarkdown(id, markdown);
+    if (!updated) return;
+    const { chapters } = getParsedManuscript(markdown);
+    if (manuscript?.id === id) openManuscript(updated, chapters);
+  }
+
   function handleLibraryNav() {
     goLibrary(libraryFilter);
   }
@@ -343,7 +383,11 @@ export function App() {
           )}
         </div>
 
-        <div id="topbar-center" />
+        <div id="topbar-center">
+          {screen === 'reader' && (
+            <ReaderModeSegments mode={readerMode} onChange={setReaderMode} />
+          )}
+        </div>
 
         <div id="topbar-right">
           {screen === 'reader' ? (
@@ -403,6 +447,7 @@ export function App() {
                   onNew={() => setLoadModalOpen(true)}
                   onDelete={deleteManuscript}
                   onUpdateManuscript={updateManuscript}
+                  onReplaceMarkdown={handleReplaceMarkdown}
                   onCycleStatus={cycleStatus}
                   onToggleFavorite={toggleFavorite}
                   getReadingPosition={getReadingPosition}

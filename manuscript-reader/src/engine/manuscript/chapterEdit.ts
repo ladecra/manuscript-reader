@@ -79,3 +79,14 @@ export function applyChapterEdits(combinedMarkdown: string, orderedEdits: Chapte
   if (kept.length === 0) return null;
   return kept.join('\n\n');
 }
+
+/** True when the working edit set would change chapter order, titles, or membership. */
+export function chapterEditsDirty(combinedMarkdown: string, edits: ChapterEdit[]): boolean {
+  const { chapters } = parseMarkdown(combinedMarkdown);
+  if (edits.length !== chapters.length) return true;
+  return edits.some((e, i) =>
+    !!e.deleted
+    || e.index !== chapters[i].index
+    || (e.newTitle?.trim() ?? '') !== chapters[i].title.trim(),
+  );
+}

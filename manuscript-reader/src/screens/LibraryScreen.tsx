@@ -23,13 +23,14 @@ interface LibraryScreenProps {
   onNew: () => void;
   onDelete: (id: string) => void;
   onUpdateManuscript: (id: string, patch: { title?: string; publishing?: PublishingMetadata }) => void;
+  onReplaceMarkdown?: (id: string, markdown: string) => void;
   onCycleStatus: (id: string) => void;
   onToggleFavorite: (id: string) => void;
   getReadingPosition: (id: string) => number;
 }
 
 export function LibraryScreen({
-  library, libraryFilter, onLibraryFilter, onOpenRecord, onRead, onNew, onDelete, onUpdateManuscript, onToggleFavorite,
+  library, libraryFilter, onLibraryFilter, onOpenRecord, onRead, onNew, onDelete, onUpdateManuscript, onReplaceMarkdown, onToggleFavorite,
   getReadingPosition,
 }: LibraryScreenProps) {
   const [sortKey, setSortKey] = useState<LibrarySortKey>('lastOpened');
@@ -193,6 +194,8 @@ export function LibraryScreen({
                   onRead={() => onRead(ms)}
                   onOpenRecord={() => onOpenRecord(ms)}
                   onDelete={() => onDelete(ms.id)}
+                  onUpdate={(patch) => onUpdateManuscript(ms.id, patch)}
+                  onReplaceMarkdown={md => onReplaceMarkdown?.(ms.id, md)}
                   onToggleFavorite={() => onToggleFavorite(ms.id)}
                 />
               ))}
@@ -207,6 +210,7 @@ export function LibraryScreen({
                   onOpenRecord={() => onOpenRecord(ms)}
                   onDelete={() => onDelete(ms.id)}
                   onUpdate={(patch) => onUpdateManuscript(ms.id, patch)}
+                  onReplaceMarkdown={md => onReplaceMarkdown?.(ms.id, md)}
                   onToggleFavorite={() => onToggleFavorite(ms.id)}
                 />
               ))}
@@ -218,12 +222,19 @@ export function LibraryScreen({
   );
 }
 
-function LibraryListRow({ ms, onRead, onOpenRecord, onDelete, onToggleFavorite }: {
-  ms: Manuscript; onRead: () => void; onOpenRecord: () => void; onDelete: () => void; onToggleFavorite: () => void;
+function LibraryListRow({ ms, onRead, onOpenRecord, onDelete, onUpdate, onReplaceMarkdown, onToggleFavorite }: {
+  ms: Manuscript;
+  onRead: () => void;
+  onOpenRecord: () => void;
+  onDelete: () => void;
+  onUpdate: (patch: { title?: string; publishing?: PublishingMetadata }) => void;
+  onReplaceMarkdown?: (markdown: string) => void;
+  onToggleFavorite: () => void;
 }) {
   const { title, author, wordCount, chapterCount, importedAt, uncached, favorite, publishing } = ms.metadata;
   const genre = publishing?.genre;
   const [menuOpen, setMenuOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -300,6 +311,14 @@ function LibraryListRow({ ms, onRead, onOpenRecord, onDelete, onToggleFavorite }
                 type="button"
                 role="menuitem"
                 className="lib-row-menu-item"
+                onClick={() => { setMenuOpen(false); setEditOpen(true); }}
+              >
+                Edit
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="lib-row-menu-item"
                 onClick={() => { setMenuOpen(false); onToggleFavorite(); }}
               >
                 <StarIcon filled={!!favorite} /> {favorite ? 'Remove from favorites' : 'Add to favorites'}
@@ -316,16 +335,34 @@ function LibraryListRow({ ms, onRead, onOpenRecord, onDelete, onToggleFavorite }
           )}
         </div>
       </div>
+      {editOpen && (
+        <LibraryCardEditModal
+          key={ms.id}
+          manuscriptId={ms.id}
+          title={title}
+          genre={genre ?? ''}
+          combinedMarkdown={ms.metadata.combinedMarkdown}
+          onClose={() => setEditOpen(false)}
+          onSave={({ title: nextTitle, genre: nextGenre, markdown }) => {
+            onUpdate({
+              title: nextTitle,
+              publishing: { ...publishing, genre: nextGenre || undefined },
+            });
+            if (markdown) onReplaceMarkdown?.(markdown);
+          }}
+        />
+      )}
     </article>
   );
 }
 
-export function LibraryGridCard({ ms, onRead, onOpenRecord, onDelete, onUpdate, onToggleFavorite }: {
+export function LibraryGridCard({ ms, onRead, onOpenRecord, onDelete, onUpdate, onReplaceMarkdown, onToggleFavorite }: {
   ms: Manuscript;
   onRead: () => void;
   onOpenRecord: () => void;
   onDelete: () => void;
   onUpdate: (patch: { title?: string; publishing?: PublishingMetadata }) => void;
+  onReplaceMarkdown?: (markdown: string) => void;
   onToggleFavorite: () => void;
 }) {
   const { title, wordCount, chapterCount, publishing, favorite } = ms.metadata;
@@ -454,12 +491,14 @@ export function LibraryGridCard({ ms, onRead, onOpenRecord, onDelete, onUpdate, 
           manuscriptId={ms.id}
           title={title}
           genre={genre ?? ''}
+          combinedMarkdown={ms.metadata.combinedMarkdown}
           onClose={() => setEditOpen(false)}
-          onSave={({ title: nextTitle, genre: nextGenre }) => {
+          onSave={({ title: nextTitle, genre: nextGenre, markdown }) => {
             onUpdate({
               title: nextTitle,
               publishing: { ...publishing, genre: nextGenre || undefined },
             });
+            if (markdown) onReplaceMarkdown?.(markdown);
           }}
         />
       )}
